@@ -149,6 +149,7 @@ class MailComposeService
         if ($replyToId && ($original = $this->visibleMessage($replyToId))) {
             $form->reply_to_message_id = (int)$original->id;
             if ($replyAll) {
+                $form->reply_all = 1;
                 [$toList, $ccList] = self::replyAllRecipients($original, $this->ourMailboxAddresses());
                 $form->to = implode(', ', $toList);
                 $form->cc = implode(', ', $ccList);

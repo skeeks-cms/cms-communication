@@ -10,6 +10,7 @@
  * @var $canReply bool
  * @var $showImages bool external images are shown in this view
  * @var $alwaysShowImages bool the employee shows them for every letter
+ * @var $replyDraft bool the employee has started an answer to this letter (a draft)
  */
 
 use skeeks\cms\communication\assets\MailClientAsset;
@@ -192,7 +193,9 @@ $composeUrl = static fn(array $params) => Url::to(array_merge(['create', 'inline
     <?php if ($canReply) : ?>
         <div class="sx-letter__reply">
             <button type="button" class="sx-letter__reply-bar" data-sx-letter-compose="<?= Html::encode($composeUrl(['reply_to' => $model->id])) ?>" data-sx-letter-reply-bar>
-                <?= MailUi::icon('reply', 17) ?> <span>Ответить<?= $incoming ? ' '.Html::encode($senderName) : '' ?></span>
+                <?= MailUi::icon('reply', 17) ?> <span><?= !empty($replyDraft)
+                    ? 'Продолжить черновик ответа'
+                    : 'Ответить'.($incoming ? ' '.Html::encode($senderName) : '') ?></span>
             </button>
             <div class="sx-letter__compose" data-sx-letter-compose-box></div>
             <div class="sx-letter__sent" data-sx-letter-sent hidden></div>

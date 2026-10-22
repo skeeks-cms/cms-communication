@@ -33,6 +33,7 @@ use yii\helpers\ArrayHelper;
  * @property int            $can_manage_messages
  * @property int            $is_default
  * @property int            $is_responsible
+ * @property int            $is_notify new incoming letters notify the employee (their own choice)
  *
  * @property CmsCommAccount $account
  * @property CmsUser        $user
@@ -76,9 +77,10 @@ class CmsCommAccountAccess extends ActiveRecord
             [['read_level'], 'default', 'value' => self::READ_LINKED],
             [['send_level'], 'default', 'value' => self::SEND_NONE],
             [['can_manage', 'can_manage_messages', 'is_default', 'is_responsible'], 'default', 'value' => 0],
+            [['is_notify'], 'default', 'value' => 1],
             [['cms_comm_account_id', 'cms_user_id', 'read_level', 'send_level'], 'required'],
             [['cms_comm_account_id', 'cms_user_id'], 'integer'],
-            [['can_manage', 'can_manage_messages', 'is_default', 'is_responsible'], 'boolean'],
+            [['can_manage', 'can_manage_messages', 'is_default', 'is_responsible', 'is_notify'], 'boolean'],
             [['read_level'], 'in', 'range' => array_keys(self::readLevels())],
             [['send_level'], 'in', 'range' => array_keys(self::sendLevels())],
             [['cms_comm_account_id'], 'exist', 'targetClass' => CmsCommAccount::class, 'targetAttribute' => 'id',
@@ -111,6 +113,7 @@ class CmsCommAccountAccess extends ActiveRecord
             'can_manage_messages' => 'Удаление и перемещение писем на сервере',
             'is_default' => 'Ящик по умолчанию',
             'is_responsible' => 'Ответственный за ящик',
+            'is_notify' => 'Уведомлять о новых письмах',
         ]);
     }
 

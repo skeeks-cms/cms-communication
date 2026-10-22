@@ -26,6 +26,8 @@ class MailFolders
     public const ALL = 'all';
     public const CLIENTS = 'clients';
     public const UNLINKED = 'unlinked';
+    /** The employee's drafts (MailDrafts): its counter is the number of drafts. */
+    public const DRAFTS = 'drafts';
 
     private User $user;
     private int $siteId;
@@ -71,13 +73,23 @@ class MailFolders
             $folder['unread'] = (int)$this->query($folder['key'])->andWhere($this->unreadCondition())->count();
         }
         unset($folder);
+        // Right after "Мои клиенты" / "Без привязки", above the mailboxes.
+        $drafts = ['key' => self::DRAFTS, 'title' => 'Черновики', 'group' => null, 'icon' => 'file',
+            'unread' => (new MailDrafts($this->user, $this->siteId))->count()];
+        $position = 0;
+        foreach ($folders as $i => $folder) {
+            if ($folder['group'] === null) {
+                $position = $i + 1;
+            }
+        }
+        array_splice($folders, $position, 0, [$drafts]);
 
         return $folders;
     }
 
     public function isKnown(string $key): bool
     {
-        foreach ([self::ALL, self::CLIENTS, self::UNLINKED] as $fixed) {
+        foreach ([self::ALL, self::CLIENTS, self::UNLINKED, self::DRAFTS] as $fixed) {
             if ($key === $fixed) {
                 return true;
             }

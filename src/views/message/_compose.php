@@ -12,6 +12,9 @@
  * @var $original skeeks\cms\communication\models\CmsCommMessage|null answered or forwarded letter
  * @var $inline bool
  * @var $files array[] attached files: id, name, size, type
+ * @var $uploads array[] files of the opened draft as uploads of this session: token, name, size
+ * @var $signatures array mailbox id => signature HTML of the employee
+ * @var $templates array[] quick reply templates: id, name, html, account (null — any mailbox)
  */
 
 use skeeks\cms\communication\helpers\MailUi;
@@ -46,16 +49,27 @@ $recipients = static fn(string $attribute, string $value, bool $autofocus = fals
     .Html::hiddenInput($attribute, $value, ['data-sx-compose-value' => true]),
     ['class' => 'sx-compose__chips', 'data-sx-compose-chips' => true]);
 ?>
+<?php
+// The form opens the "Мои настройки почты" panel (signatures and templates).
+$personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByParams(['personal'])->enableEmptyLayout()->enableNoActions()->url;
+?>
 <form class="sx-compose<?= $inline ? ' sx-compose--inline' : '' ?>" data-sx-compose
       action="<?= Html::encode(Url::to(['create'])) ?>" method="post" novalidate
       data-contacts-url="<?= Html::encode(Url::to(['contacts'])) ?>"
       data-upload-url="<?= Html::encode(Url::to(['upload'])) ?>"
+      data-draft-url="<?= Html::encode(Url::to(['draft'])) ?>"
+      data-draft-delete-url="<?= Html::encode(Url::to(['draft-delete'])) ?>"
+      data-personal-url="<?= Html::encode($personalUrl) ?>"
+      data-signatures="<?= Html::encode(\yii\helpers\Json::encode((object)$signatures)) ?>"
+      data-templates="<?= Html::encode(\yii\helpers\Json::encode($templates)) ?>"
       data-max-size="<?= \skeeks\cms\communication\services\MailFiles::MAX_SIZE ?>">
     <?= Html::hiddenInput(\Yii::$app->request->csrfParam, \Yii::$app->request->csrfToken) ?>
     <?= Html::hiddenInput($name('context_model_code'), $form->context_model_code) ?>
     <?= Html::hiddenInput($name('context_model_id'), $form->context_model_id) ?>
     <?= Html::hiddenInput($name('reply_to_message_id'), $form->reply_to_message_id) ?>
     <?= Html::hiddenInput($name('forward_message_id'), $form->forward_message_id) ?>
+    <?= Html::hiddenInput($name('reply_all'), (int)$form->reply_all) ?>
+    <?= Html::hiddenInput($name('draft_id'), $form->draft_id, ['data-sx-compose-draft-id' => true]) ?>
 
     <?php if ($inline) : ?>
         <div class="sx-compose__mode">
@@ -131,6 +145,15 @@ $recipients = static fn(string $attribute, string $value, bool $autofocus = fals
                 <?= Html::hiddenInput($name('file_ids').'[]', (int)$file['id']) ?>
             </span>
         <?php endforeach; ?>
+        <?php // Attachments of an opened draft: uploads of this session, as if just attached. ?>
+        <?php foreach ($uploads as $upload) : ?>
+            <span class="sx-compose__file">
+                <span class="sx-compose__file-name" title="<?= Html::encode($upload['name']) ?>"><?= Html::encode($upload['name']) ?></span>
+                <span class="sx-compose__file-size"><?= Html::encode(\Yii::$app->formatter->asShortSize($upload['size'])) ?></span>
+                <button type="button" class="sx-compose__chip-remove" data-sx-compose-file-remove aria-label="Убрать файл">×</button>
+                <?= Html::hiddenInput($name('uploads').'[]', $upload['token']) ?>
+            </span>
+        <?php endforeach; ?>
     </div>
     <div class="sx-compose__error" data-sx-compose-error="file_ids"></div>
     <input type="file" multiple hidden data-sx-compose-file-input>
@@ -175,8 +198,17 @@ $recipients = static fn(string $attribute, string $value, bool $autofocus = fals
         <button type="button" class="sx-compose__attach" data-sx-compose-attach title="Прикрепить файлы (можно перетащить в письмо)">
             <?= MailUi::icon('paperclip', 18) ?> <span>Прикрепить</span>
         </button>
+        <div class="sx-compose__templates" data-sx-compose-templates>
+            <button type="button" class="sx-compose__attach" data-sx-compose-templates-toggle aria-haspopup="true" title="Вставить шаблон ответа">
+                <?= MailUi::icon('file', 18) ?> <span>Шаблоны</span>
+            </button>
+            <div class="sx-compose__templates-menu" data-sx-compose-templates-menu hidden role="menu"></div>
+        </div>
         <span class="sx-compose__hint">Ctrl+Enter</span>
         <span class="sx-compose__status" data-sx-compose-status></span>
+        <span class="sx-compose__draft" data-sx-compose-draft-status><?= $form->draft_id ? 'Черновик' : '' ?></span>
+        <button type="button" class="sx-compose__link sx-compose__draft-delete" data-sx-compose-draft-delete
+                title="Удалить черновик" <?= $form->draft_id ? '' : 'hidden' ?>>Удалить черновик</button>
         <?php if ($inline) : ?>
             <button type="button" class="sx-compose__link sx-compose__cancel" data-sx-compose-cancel>Отменить</button>
         <?php endif; ?>

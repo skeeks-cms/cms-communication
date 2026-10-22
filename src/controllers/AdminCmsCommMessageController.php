@@ -14,9 +14,12 @@ use skeeks\cms\communication\forms\ComposeForm;
 use skeeks\cms\communication\helpers\MailHtml;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\services\MailComposeService;
+use skeeks\cms\communication\services\MailDrafts;
 use skeeks\cms\communication\services\MailFileFetcher;
 use skeeks\cms\communication\services\MailFiles;
 use skeeks\cms\communication\services\MailFolders;
+use skeeks\cms\communication\services\MailNotifier;
+use skeeks\cms\communication\services\MailTemplates;
 use skeeks\cms\grid\DateTimeColumnData;
 use yii\base\Event;
 use yii\helpers\ArrayHelper;
@@ -152,7 +155,113 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'fetch' => $hidden([$this, 'fetch']),
             // GET pk: which files of the letter have a CRM copy now.
             'fetch-status' => $hidden([$this, 'fetchStatus']),
+            // POST the letter form: save it as a draft (autosave), JSON.
+            'draft' => $hidden([$this, 'saveDraft']),
+            // POST id: remove a draft with its files.
+            'draft-delete' => $hidden([$this, 'deleteDraft']),
+            // "Мои настройки почты": notifications, signatures, quick reply templates.
+            'personal' => [
+                'class' => \skeeks\cms\backend\ViewBackendAction::class,
+                'name' => 'Мои настройки почты',
+                'icon' => 'fas fa-user-cog',
+                'isVisible' => false,
+                'callback' => [$this, 'personal'],
+            ],
         ]);
+    }
+
+    /**
+     * Autosave of the letter form. A draft removed meanwhile (sent or deleted
+     * in another window) is not created again: the form gets "gone".
+     */
+    public function saveDraft()
+    {
+        $this->requirePostJson();
+        $service = $this->composeService();
+        if (!$service->sendableAccounts()) {
+            throw new \yii\web\ForbiddenHttpException('Вам нельзя отправлять письма.');
+        }
+        $form = new ComposeForm(['service' => $service]);
+        $form->load(\Yii::$app->request->post());
+        $drafts = $this->drafts();
+        $draft = $drafts->find((int)$form->draft_id);
+        if ($form->draft_id && !$draft) {
+            return ['success' => false, 'gone' => true];
+        }
+        $draft = $drafts->save($form, $service, $draft);
+
+        return [
+            'success' => true,
+            'id' => (int)$draft->id,
+            'savedAt' => \Yii::$app->formatter->asTime($draft->updated_at, 'php:H:i'),
+            'counters' => [MailFolders::DRAFTS => $drafts->count()],
+        ];
+    }
+
+    public function deleteDraft()
+    {
+        $this->requirePostJson();
+        $drafts = $this->drafts();
+        if ($draft = $drafts->find((int)\Yii::$app->request->post('id'))) {
+            MailDrafts::delete($draft);
+        }
+
+        return ['success' => true, 'counters' => [MailFolders::DRAFTS => $drafts->count()]];
+    }
+
+    /**
+     * The employee's own mail settings: notifications for each mailbox they
+     * read, a signature for each mailbox they send from, quick reply
+     * templates (personal and shared by mailboxes they manage).
+     */
+    public function personal()
+    {
+        $request = \Yii::$app->request;
+        $user = \Yii::$app->user->identity;
+        $siteId = (int)\Yii::$app->skeeks->site->id;
+        $templates = new MailTemplates($user, $siteId);
+        $accesses = \skeeks\cms\communication\models\CmsCommAccountAccess::find()
+            ->andWhere(['cms_user_id' => (int)$user->id])
+            ->andWhere(['!=', 'read_level', \skeeks\cms\communication\models\CmsCommAccountAccess::READ_NONE])
+            ->andWhere(['cms_comm_account_id' => \skeeks\cms\communication\models\CmsCommAccount::find()->select('id')->andWhere(['cms_site_id' => $siteId])])
+            ->with('account')->all();
+
+        if ($request->isPost) {
+            $section = (string)$request->post('section');
+            $done = true;
+            if ($section === 'notify') {
+                $on = array_map('intval', array_keys(array_filter((array)$request->post('notify', []))));
+                foreach ($accesses as $access) {
+                    $value = (int)in_array((int)$access->cms_comm_account_id, $on, true);
+                    if ((int)$access->is_notify !== $value) {
+                        $access->is_notify = $value;
+                        $access->save(false, ['is_notify', 'updated_at', 'updated_by']);
+                    }
+                }
+            } elseif ($section === 'signatures') {
+                foreach ((array)$request->post('signatures', []) as $accountId => $html) {
+                    $done = $templates->saveSignature((int)$accountId, (string)$html) && $done;
+                }
+            }
+            if ($done) {
+                \Yii::$app->session->setFlash('success', 'Сохранено');
+                return $this->redirect(\yii\helpers\Url::current());
+            }
+            \Yii::$app->session->setFlash('error', 'Не удалось сохранить');
+        }
+
+        return $this->render('@skeeks/cms/communication/views/message/personal', [
+            'accesses' => $accesses,
+            'accounts' => $templates->sendableAccounts(),
+            'signatures' => $templates->signatures(),
+            'templates' => $templates->templates(),
+            'service' => $templates,
+        ]);
+    }
+
+    private function drafts(): MailDrafts
+    {
+        return new MailDrafts(\Yii::$app->user->identity, (int)\Yii::$app->skeeks->site->id);
     }
 
     /**
@@ -375,6 +484,26 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $unreadOnly = (bool)$request->get('unread');
         $portion = max(1, (int)$request->get('portion', 1));
 
+        if ($folder === MailFolders::DRAFTS) {
+            $drafts = $this->drafts()->query($search)->with(['files', 'replyTo', 'forwarded'])->limit(200)->all();
+            if ($request->get('portion')) {
+                \Yii::$app->response->format = Response::FORMAT_JSON;
+                return ['html' => '', 'hasMore' => false];
+            }
+
+            return $this->render('@skeeks/cms/communication/views/message/mail', [
+                'folders' => $folders->folders(),
+                'folder' => $folder,
+                'search' => $search,
+                'unreadOnly' => false,
+                'messages' => [],
+                'drafts' => $drafts,
+                'readIds' => [],
+                'hasMore' => false,
+                'canSend' => (bool)$this->composeService()->sendableAccounts(),
+            ]);
+        }
+
         $query = $folders->query($folder, $search)->with(['links']);
         if ($unreadOnly) {
             $query->andWhere($folders->unreadCondition());
@@ -431,10 +560,14 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         }
 
         $this->mailFolders()->markRead($this->model);
+        MailNotifier::markRead((int)\Yii::$app->user->id, (int)$this->model->id);
+        $canReply = (bool)$this->composeService()->sendableAccounts();
 
         return $this->render('@skeeks/cms/communication/views/message/view', [
             'model' => $this->model,
-            'canReply' => (bool)$this->composeService()->sendableAccounts(),
+            'canReply' => $canReply,
+            // "Ответить" continues an answer started earlier.
+            'replyDraft' => $canReply && $this->drafts()->findFor((int)$this->model->id),
             'showImages' => $showImages,
             'alwaysShowImages' => (bool)$settings->showImages,
         ]);
@@ -469,19 +602,42 @@ class AdminCmsCommMessageController extends BackendModelStandartController
                 return ['success' => false, 'errors' => $form->getFirstErrors()];
             }
             $message = $service->queue($form);
+            // The letter is on its way: its draft goes. Files the letter took stay with the letter.
+            $drafts = $this->drafts();
+            if ($draft = $drafts->find((int)$form->draft_id)) {
+                MailDrafts::delete($draft);
+            }
 
-            return ['success' => true, 'id' => (int)$message->id, 'message' => 'Письмо отправляется'];
+            return ['success' => true, 'id' => (int)$message->id, 'message' => 'Письмо отправляется',
+                'counters' => [MailFolders::DRAFTS => $drafts->count()]];
         }
 
-        $service->prefill($form,
-            $request->get('to'),
-            $request->get('context_model_code'),
-            $request->get('context_model_id') ? (int)$request->get('context_model_id') : null,
-            $request->get('reply_to') ? (int)$request->get('reply_to') : null,
-            $request->get('forward') ? (int)$request->get('forward') : null,
-            (bool)$request->get('all')
-        );
+        // ?draft=ID opens a draft; "Ответить" / "Переслать" continue a draft of that letter.
+        $drafts = $this->drafts();
+        $draft = $request->get('draft') ? $drafts->find((int)$request->get('draft')) : null;
+        if (!$draft) {
+            $service->prefill($form,
+                $request->get('to'),
+                $request->get('context_model_code'),
+                $request->get('context_model_id') ? (int)$request->get('context_model_id') : null,
+                $request->get('reply_to') ? (int)$request->get('reply_to') : null,
+                $request->get('forward') ? (int)$request->get('forward') : null,
+                (bool)$request->get('all')
+            );
+            if ($form->forward_message_id || $form->reply_to_message_id) {
+                $draft = $drafts->findFor((int)($form->forward_message_id ?: $form->reply_to_message_id), (bool)$form->forward_message_id);
+            }
+        }
+        $uploads = [];
+        if ($draft) {
+            $form->cms_comm_account_id = $form->cms_comm_account_id ?: $service->defaultAccountId();
+            $uploads = $drafts->fill($form, $draft);
+        }
+        $templates = new MailTemplates(\Yii::$app->user->identity);
         $params = [
+            'uploads' => $uploads,
+            'signatures' => $templates->signatures(),
+            'templates' => $templates->templatesForForm(),
             'form' => $form,
             'accounts' => $service->sendableAccounts(),
             'contextRecord' => $form->context_model_code && $form->context_model_id

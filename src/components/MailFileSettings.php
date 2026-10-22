@@ -43,6 +43,9 @@ class MailFileSettings extends Component
     /** Copies fetched from the mailbox on demand are removed this many days after the last opening. */
     public $cacheDays = 30;
 
+    /** Drafts not changed for this many days are removed with their files by the daily cleanup. 0 — never. */
+    public $draftKeepDays = 90;
+
     public static function modes(): array
     {
         return [
@@ -55,7 +58,9 @@ class MailFileSettings extends Component
 
     public function rules()
     {
-        return array_merge(parent::rules(), self::fieldRules());
+        return array_merge(parent::rules(), self::fieldRules(), [
+            [['draftKeepDays'], 'integer', 'min' => 0, 'max' => 3650],
+        ]);
     }
 
     /** Rules shared with the mailbox form. */
@@ -72,7 +77,9 @@ class MailFileSettings extends Component
 
     public function attributeLabels()
     {
-        return array_merge(parent::attributeLabels(), self::fieldLabels());
+        return array_merge(parent::attributeLabels(), self::fieldLabels(), [
+            'draftKeepDays' => 'Хранить неотправленные черновики, дней',
+        ]);
     }
 
     public static function fieldLabels(): array
@@ -89,7 +96,9 @@ class MailFileSettings extends Component
 
     public function attributeHints()
     {
-        return array_merge(parent::attributeHints(), self::fieldHints());
+        return array_merge(parent::attributeHints(), self::fieldHints(), [
+            'draftKeepDays' => 'Черновик, который столько дней не меняли, ежедневная уборка удаляет вместе с его файлами. 0 — не удалять.',
+        ]);
     }
 
     public static function fieldHints(): array
@@ -117,7 +126,11 @@ class MailFileSettings extends Component
 
     public function getConfigFormFields()
     {
-        return self::formFields((string)$this->mode, '', null, (bool)$this->storeImages, (bool)$this->storeAttachments, (int)$this->maxStoreSizeMb);
+        // Drafts are kept by the site settings only, not by a mailbox.
+        return array_merge(
+            self::formFields((string)$this->mode, '', null, (bool)$this->storeImages, (bool)$this->storeAttachments, (int)$this->maxStoreSizeMb),
+            ['draftKeepDays' => ['class' => NumberField::class]]
+        );
     }
 
     /**
@@ -180,6 +193,7 @@ class MailFileSettings extends Component
             'maxStoreSizeMb' => (int)$this->maxStoreSizeMb,
             'keepDays' => (int)$this->keepDays,
             'cacheDays' => (int)$this->cacheDays,
+            'draftKeepDays' => (int)$this->draftKeepDays,
         ];
     }
 

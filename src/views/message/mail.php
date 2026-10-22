@@ -14,6 +14,7 @@
  * @var $readIds int[]
  * @var $hasMore bool
  * @var $canSend bool
+ * @var $drafts skeeks\cms\communication\models\CmsCommDraft[]|null the "Черновики" folder
  */
 
 use skeeks\cms\communication\assets\MailClientAsset;
@@ -25,6 +26,8 @@ use yii\helpers\Url;
 MailClientAsset::register($this);
 
 $listParams = ['mail', 'folder' => $folder, 'q' => $search !== '' ? $search : null, 'unread' => $unreadOnly ? 1 : null];
+$drafts = $drafts ?? null;
+$personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByParams(['personal'])->enableEmptyLayout()->enableNoActions()->url;
 $title = 'Все письма';
 $totalUnread = 0;
 foreach ($folders as $f) {
@@ -56,7 +59,7 @@ $hotkeys = [
      data-mark-url="<?= Html::encode(Url::to(['mark'])) ?>"
      data-refresh-url="<?= Html::encode(Url::to(['refresh'])) ?>"
      data-list-url="<?= Html::encode(Url::to($listParams)) ?>"
-     data-unread-total="<?= $totalUnread ?>">
+     data-draft-delete-url="<?= Html::encode(Url::to(['draft-delete'])) ?>"     data-unread-total="<?= $totalUnread ?>">
     <aside class="sx-mail__panel sx-mail__folders">
         <div class="sx-mail__actions">
             <?php if ($canSend) : ?>
@@ -78,13 +81,17 @@ $hotkeys = [
                 <?= Html::a(
                     Html::tag('span', MailUi::icon($f['icon'], 18), ['class' => 'sx-mail__folder-icon'])
                     .Html::tag('span', Html::encode($f['title']), ['class' => 'sx-mail__folder-title'])
-                    .Html::tag('span', $f['unread'] ?: '', ['class' => 'sx-mail__count', 'title' => 'Непрочитанные', 'data-sx-mail-count' => $f['key']]),
+                    .Html::tag('span', $f['unread'] ?: '', ['class' => 'sx-mail__count', 'title' => $f['key'] === \skeeks\cms\communication\services\MailFolders::DRAFTS ? 'Черновики' : 'Непрочитанные', 'data-sx-mail-count' => $f['key']]),
                     Url::to(['mail', 'folder' => $f['key']]),
                     ['class' => 'sx-mail__folder'.($f['key'] === $folder ? ' is-active' : ''), 'data-folder' => $f['key']]
                 ) ?>
             <?php endforeach; ?>
         </nav>
-        <button type="button" class="sx-mail__hotkeys-link" data-sx-mail-hotkeys>Горячие клавиши</button>
+        <div class="sx-mail__links">
+            <a href="#" class="sx-mail__personal-link" data-pjax="0" title="Уведомления, подписи и шаблоны ответов"
+               onclick="<?= Html::encode('new sx.classes.backend.widgets.Action('.\yii\helpers\Json::encode(['isOpenNewWindow' => true, 'url' => $personalUrl]).').go(); return false;') ?>">Мои настройки</a>
+            <button type="button" class="sx-mail__hotkeys-link" data-sx-mail-hotkeys>Горячие клавиши</button>
+        </div>
     </aside>
 
     <section class="sx-mail__panel sx-mail__list">
@@ -96,6 +103,9 @@ $hotkeys = [
             </form>
 
             <div class="sx-mail__toolbar">
+                <?php if ($drafts !== null) : ?>
+                <span class="sx-mail__toolbar-title"><?= Html::encode($title) ?><?= $search !== '' ? ' · поиск «'.Html::encode($search).'»' : '' ?></span>
+                <?php else : ?>
                 <label class="sx-mail__check" title="Выбрать все показанные">
                     <input type="checkbox" data-sx-mail-all>
                 </label>
@@ -105,9 +115,18 @@ $hotkeys = [
                     Url::to(array_merge($listParams, ['unread' => $unreadOnly ? null : 1])),
                     ['class' => 'sx-mail__tool sx-mail__filter'.($unreadOnly ? ' is-active' : ''), 'title' => $unreadOnly ? 'Показать все письма' : 'Показать только непрочитанные']) ?>
                 <span class="sx-mail__toolbar-title"><?= Html::encode($title) ?><?= $search !== '' ? ' · поиск «'.Html::encode($search).'»' : '' ?></span>
+                <?php endif; ?>
             </div>
         </div>
 
+        <?php if ($drafts !== null) : ?>
+            <?php if (!$drafts) : ?>
+                <div class="sx-mail__empty"><?= $search !== '' ? 'Ничего не найдено.' : 'Черновиков нет. Начатое письмо сохраняется здесь само, пока вы его пишете.' ?></div>
+            <?php endif; ?>
+            <div class="sx-mail__rows" data-sx-mail-rows>
+                <?= $this->render('_drafts', ['drafts' => $drafts]) ?>
+            </div>
+        <?php else : ?>
         <?php if (!$messages) : ?>
             <div class="sx-mail__empty"><?= $search !== '' ? 'Ничего не найдено.' : ($unreadOnly ? 'Непрочитанных писем нет.' : 'Писем нет.') ?></div>
         <?php endif; ?>
@@ -115,6 +134,7 @@ $hotkeys = [
         <div class="sx-mail__rows" data-sx-mail-rows>
             <?= $this->render('_rows', ['messages' => $messages, 'readIds' => $readIds]) ?>
         </div>
+        <?php endif; ?>
 
         <div class="sx-mail__more" data-sx-mail-more-wrap <?= $hasMore ? '' : 'hidden' ?>>
             <button type="button" class="sx-mail__more-button" data-sx-mail-more>Показать ещё</button>

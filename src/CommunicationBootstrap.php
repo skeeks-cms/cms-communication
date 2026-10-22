@@ -17,12 +17,23 @@ use yii\base\Event;
 /**
  * Plugs mail into CRM cards: the "write a letter" button next to an email
  * opens the CRM dialog instead of the mail program when the employee has a
- * mailbox to send from.
+ * mailbox to send from. Registers the letter as a CRM record for links.
  */
 class CommunicationBootstrap implements BootstrapInterface
 {
     public function bootstrap($app)
     {
+        // Notifications about new letters (CmsWebNotify) refer to the letter: the standard notification
+        // center links it through modelsConfig and opens it in the panel. Added here, not in the config:
+        // configuring the property would replace the core list.
+        if ($app->has('skeeks')) {
+            $app->skeeks->modelsConfig[\skeeks\cms\communication\models\CmsCommMessage::class] = [
+                'name' => 'Письма',
+                'name_one' => 'Письмо',
+                'controller' => 'cmsCommunication/admin-cms-comm-message',
+            ];
+        }
+
         if (!$app instanceof \yii\web\Application || !defined(CrmContactBlockWidget::class.'::EVENT_CONTACT_ACTIONS')) {
             return;
         }

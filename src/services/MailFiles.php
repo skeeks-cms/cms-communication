@@ -7,6 +7,7 @@
 
 namespace skeeks\cms\communication\services;
 
+use skeeks\cms\communication\models\CmsCommDraftFile;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\models\CmsCommMessageFile;
 use skeeks\cms\models\CmsStorageFile;
@@ -41,11 +42,13 @@ class MailFiles
         return self::findSame(hash('sha256', $bytes), strlen($bytes), $siteId) ?? self::storeBytes($bytes, $name, $type, $siteId);
     }
 
-    /** A stored letter file of this site with this content, still present on disk. */
+    /** A stored letter or draft file of this site with this content, still present on disk. */
     public static function findSame(string $hash, int $size, int $siteId): ?CmsStorageFile
     {
         $ids = CmsCommMessageFile::find()->select('storage_file_id')->distinct()
             ->andWhere(['content_hash' => $hash, 'size' => $size])->andWhere(['not', ['storage_file_id' => null]])->limit(5)->column();
+        $ids = array_merge($ids, CmsCommDraftFile::find()->select('storage_file_id')->distinct()
+            ->andWhere(['content_hash' => $hash, 'size' => $size])->andWhere(['not', ['storage_file_id' => null]])->limit(5)->column());
         foreach (CmsStorageFile::find()->andWhere(['id' => $ids ?: [0], 'cms_site_id' => $siteId])->all() as $file) {
             if ((int)$file->size === $size && is_file((string)$file->rootSrc)) {
                 return $file;
@@ -178,7 +181,25 @@ class MailFiles
         $row->storage_file_id = null;
         $row->is_cached = 0;
         $row->save(false, ['storage_file_id', 'is_cached']);
-        if (CmsCommMessageFile::find()->andWhere(['storage_file_id' => $storageId])->exists()) {
+
+        return self::deleteUnused($storageId);
+    }
+
+    /** A storage file of mail is shared: it is used while any letter or draft file refers to it. */
+    public static function isUsed(int $storageId): bool
+    {
+        return CmsCommMessageFile::find()->andWhere(['storage_file_id' => $storageId])->exists()
+            || CmsCommDraftFile::find()->andWhere(['storage_file_id' => $storageId])->exists();
+    }
+
+    /**
+     * Deletes a storage file of mail once no letter or draft refers to it.
+     *
+     * @return int bytes freed in the storage
+     */
+    public static function deleteUnused(int $storageId): int
+    {
+        if (!$storageId || self::isUsed($storageId)) {
             return 0;
         }
         $file = CmsStorageFile::findOne($storageId);

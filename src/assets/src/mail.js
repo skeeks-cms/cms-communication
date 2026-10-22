@@ -322,13 +322,43 @@
         }
     }
 
-    // The letter panel moves through the list with j / k.
+    // The letter panel moves through the list with j / k; panels update the folder counters.
     window.sxMail = {
         step: step,
+        applyCounters: applyCounters,
         hasList: function () {
             return $(root).length > 0;
+        },
+        folder: function () {
+            return String($(root).find('.sx-mail__folder.is-active').data('folder') || '');
         }
     };
+
+    /** Counters changed in a panel (drafts saved or removed): into the list behind it. */
+    function applyMainCounters(counters) {
+        var w = mainWindow();
+        try {
+            if (counters && w.sxMail && w.sxMail.hasList()) {
+                w.sxMail.applyCounters(counters);
+            }
+        } catch (e) {
+        }
+    }
+
+    // "Черновики": × removes a draft with its files.
+    $(document).on('click', root + ' [data-sx-mail-draft-delete]', function (e) {
+        e.stopPropagation();
+        var $row = $(this).closest('.sx-mail__row');
+        if (!window.confirm('Удалить черновик?')) {
+            return;
+        }
+        $.post($mail().data('draft-delete-url'), csrf({id: $(this).data('sx-mail-draft-delete')})).done(function (response) {
+            $row.remove();
+            applyCounters(response.counters);
+        }).fail(function () {
+            notify('error', 'Не удалось удалить черновик.');
+        });
+    });
 
     function selectedIds() {
         return $mail().find('[data-sx-mail-select]:checked').map(function () {
@@ -562,10 +592,13 @@
         return $('[data-sx-letter]');
     }
 
-    /** Refreshes the list behind the panel, if it is open there. */
-    function reloadList() {
+    /** Refreshes the list behind the panel, if it is open there (only the given folder, when set). */
+    function reloadList(onlyFolder) {
         var w = mainWindow();
         try {
+            if (onlyFolder && !(w.sxMail && w.sxMail.hasList() && w.sxMail.folder() === onlyFolder)) {
+                return;
+            }
             if (w.jQuery && w.jQuery('#sx-mail-pjax').length) {
                 w.jQuery.pjax.reload({container: '#sx-mail-pjax', timeout: 15000});
             }
@@ -874,6 +907,7 @@
         $chips.find('[data-sx-compose-value]').val(chipsValue($chips).join(', '));
         // The recipients changed: the old complaint about them no longer applies.
         $chips.closest('.sx-compose__row').removeClass('has-error').find('[data-sx-compose-error]').text('');
+        markDirty($chips.closest('[data-sx-compose]'));
     }
 
     function addChip($chips, email, name) {
@@ -1116,6 +1150,7 @@
                 $chip.find('.sx-compose__file-size').text(response.sizeText);
                 $chip.append('<button type="button" class="sx-compose__chip-remove" data-sx-compose-file-remove aria-label="Убрать файл">×</button>');
                 $('<input type="hidden">').attr('name', name + '[]').val(response.token).appendTo($chip);
+                markDirty($form);
             }).fail(function () {
                 $chip.remove();
             });
@@ -1132,7 +1167,9 @@
     });
 
     $(document).on('click', '[data-sx-compose-file-remove]', function () {
+        var $form = $(this).closest('[data-sx-compose]');
         $(this).closest('.sx-compose__file').remove();
+        markDirty($form);
     });
 
     // The editor's "Прикрепить файлом" drop zone, and non-image files pasted or dropped into the text.
@@ -1160,6 +1197,8 @@
     /* Sending */
 
     function initCompose($form) {
+        // Filling the form is not a change of the letter: no draft for it.
+        $form.data('quiet', true);
         $form.find('[data-sx-compose-chips]').each(function () {
             var $chips = $(this);
             var value = $chips.find('[data-sx-compose-value]').val();
@@ -1167,8 +1206,259 @@
             commitTyped($chips);
         });
         sx.RichText.init(composeEditor($form));
+        // A draft has its signature in the text already.
+        if (!draftId($form)) {
+            setSignature($form, currentAccount($form));
+        }
+        $form.data('quiet', false);
         fetchSourceFiles($form);
     }
+
+    /* Signatures and quick reply templates */
+
+    var SIGNATURE = 'data-sx-mail-signature';
+
+    function currentAccount($form) {
+        return parseInt($form.find('[name$="[cms_comm_account_id]"]').val(), 10) || 0;
+    }
+
+    function editorElement($form) {
+        return composeEditor($form).find('[data-sx-rte-editor]').get(0);
+    }
+
+    /** The edited text into the form value, as typing does (the shared editor syncs on "input"). */
+    function editorChanged($form) {
+        var editor = editorElement($form);
+        if (editor) {
+            $(editor).trigger('input');
+        }
+    }
+
+    /**
+     * The employee's signature of the mailbox below the text (the quote is
+     * added on sending, so the signature stays above it). Another mailbox
+     * replaces it; a mailbox without a signature removes it.
+     */
+    function setSignature($form, accountId) {
+        var editor = editorElement($form);
+        if (!editor) {
+            return;
+        }
+        var html = ($form.data('signatures') || {})[accountId] || '';
+        var $old = $(editor).find('[' + SIGNATURE + ']');
+        var block = html ? '<div ' + SIGNATURE + '="1"><div>--&nbsp;</div>' + html + '</div>' : '';
+        if ($old.length) {
+            if (block) {
+                $old.first().replaceWith(block);
+            } else {
+                $old.remove();
+            }
+        } else if (block) {
+            // An empty line above it: the letter is typed there.
+            $(editor).append('<div><br></div>' + block);
+        } else {
+            return;
+        }
+        editorChanged($form);
+    }
+
+    $(document).on('change', '[data-sx-compose] select[name$="[cms_comm_account_id]"]', function () {
+        var $form = $(this).closest('[data-sx-compose]');
+        setSignature($form, currentAccount($form));
+        $form.find('[data-sx-compose-templates-menu]').prop('hidden', true);
+    });
+
+    /** Inserts a template where the caret is, otherwise at the start of the text (above the signature). */
+    function insertTemplate($form, html) {
+        var editor = editorElement($form);
+        if (!editor) {
+            return;
+        }
+        var selection = window.getSelection();
+        if (!selection.rangeCount || !editor.contains(selection.anchorNode)) {
+            editor.focus();
+            var range = document.createRange();
+            var first = editor.firstChild;
+            // An empty first line (a reply over its signature) is replaced by the template.
+            if (first && first.nodeType === 1 && !first.hasAttribute(SIGNATURE) && $.trim(first.textContent) === '' && !$(first).find('img').length) {
+                range.selectNodeContents(first);
+            } else if (first) {
+                range.setStartBefore(first);
+                range.collapse(true);
+            } else {
+                range.selectNodeContents(editor);
+            }
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+        document.execCommand('insertHTML', false, html);
+        editorChanged($form);
+    }
+
+    // The caret stays in the text while the menu is used.
+    $(document).on('mousedown', '[data-sx-compose-templates-toggle], [data-sx-compose-template]', function (e) {
+        e.preventDefault();
+    });
+
+    $(document).on('click', '[data-sx-compose-templates-toggle]', function () {
+        var $form = $(this).closest('[data-sx-compose]');
+        var $menu = $form.find('[data-sx-compose-templates-menu]');
+        if (!$menu.prop('hidden')) {
+            $menu.prop('hidden', true);
+            return;
+        }
+        var account = currentAccount($form);
+        var list = ($form.data('templates') || []).filter(function (t) {
+            return !t.account || t.account === account;
+        });
+        $menu.empty();
+        if (!list.length) {
+            $('<div class="sx-compose__templates-empty"></div>').text('Шаблонов для этого ящика пока нет.').appendTo($menu);
+        }
+        list.forEach(function (t) {
+            $('<button type="button" class="sx-compose__templates-item" role="menuitem" data-sx-compose-template></button>')
+                .text(t.name).data('html', t.html).appendTo($menu);
+        });
+        $('<button type="button" class="sx-compose__templates-item is-manage" role="menuitem" data-sx-compose-templates-manage></button>')
+            .text('Шаблоны и подпись…').appendTo($menu);
+        $menu.prop('hidden', false);
+    });
+
+    $(document).on('click', '[data-sx-compose-template]', function () {
+        var $form = $(this).closest('[data-sx-compose]');
+        $form.find('[data-sx-compose-templates-menu]').prop('hidden', true);
+        insertTemplate($form, $(this).data('html'));
+    });
+
+    $(document).on('click', '[data-sx-compose-templates-manage]', function () {
+        var $form = $(this).closest('[data-sx-compose]');
+        $form.find('[data-sx-compose-templates-menu]').prop('hidden', true);
+        new sx.classes.backend.widgets.Action({isOpenNewWindow: true, url: $form.data('personal-url')}).go();
+    });
+
+    $(document).on('click', function (e) {
+        if (!$(e.target).closest('[data-sx-compose-templates]').length) {
+            $('[data-sx-compose-templates-menu]').prop('hidden', true);
+        }
+    });
+
+    /* Drafts: the form saves itself while the employee writes */
+
+    function draftId($form) {
+        return parseInt($form.find('[data-sx-compose-draft-id]').val(), 10) || 0;
+    }
+
+    function markDirty($form) {
+        if (!$form.length || $form.data('quiet') || $form.data('sent')) {
+            return;
+        }
+        $form.data('dirty', true);
+        clearTimeout($form.data('draftTimer'));
+        $form.data('draftTimer', setTimeout(function () {
+            saveDraft($form);
+        }, 2000));
+    }
+
+    function saveDraft($form) {
+        if ($form.data('sent') || !$form.data('dirty')) {
+            return $.Deferred().resolve().promise();
+        }
+        // One save at a time: a second one waits, so a new draft is never created twice.
+        if ($form.data('draftXhr')) {
+            $form.data('draftAgain', true);
+            return $form.data('draftXhr');
+        }
+        if ($form.data('uploads') > 0 || sx.RichText.isBusy(composeEditor($form))) {
+            clearTimeout($form.data('draftTimer'));
+            $form.data('draftTimer', setTimeout(function () {
+                saveDraft($form);
+            }, 1500));
+            return $.Deferred().resolve().promise();
+        }
+        $form.data('dirty', false);
+        var created = !draftId($form);
+        var xhr = $.post($form.data('draft-url'), $form.serialize()).done(function (response) {
+            if (response.success) {
+                $form.find('[data-sx-compose-draft-id]').val(response.id);
+                $form.find('[data-sx-compose-draft-status]').text('Черновик сохранён в ' + response.savedAt);
+                $form.find('[data-sx-compose-draft-delete]').prop('hidden', false);
+                applyMainCounters(response.counters);
+                if (created) {
+                    reloadList('drafts');
+                }
+            } else if (response.gone) {
+                // Sent or removed in another window.
+                $form.data('sent', true);
+                $form.find('[data-sx-compose-draft-status]').text('');
+            }
+        }).fail(function () {
+            $form.data('dirty', true);
+            $form.find('[data-sx-compose-draft-status]').text('Черновик не сохранён');
+        }).always(function () {
+            $form.removeData('draftXhr');
+            if ($form.data('draftAgain')) {
+                $form.removeData('draftAgain');
+                saveDraft($form);
+            }
+        });
+        $form.data('draftXhr', xhr);
+        return xhr;
+    }
+
+    $(document).on('input change', '[data-sx-compose] input, [data-sx-compose] select, [data-sx-compose] textarea', function () {
+        // The recipient being typed is saved once it becomes a chip.
+        if (!$(this).is('[data-sx-compose-chips-input], [data-sx-compose-file-input]')) {
+            markDirty($(this).closest('[data-sx-compose]'));
+        }
+    });
+
+    // Closing the window or the panel: the last changes are saved on the way out.
+    window.addEventListener('pagehide', function () {
+        $('[data-sx-compose]').each(function () {
+            var $form = $(this);
+            if (!$form.data('dirty') || $form.data('sent') || $form.data('draftXhr') || !navigator.sendBeacon) {
+                return;
+            }
+            $form.data('dirty', false);
+            navigator.sendBeacon($form.data('draft-url'), new FormData(this));
+        });
+    });
+
+    function deleteDraft($form) {
+        var id = draftId($form);
+        clearTimeout($form.data('draftTimer'));
+        $form.data('sent', true);
+        if (!id) {
+            return $.Deferred().resolve().promise();
+        }
+        return $.post($form.data('draft-delete-url'), csrf({id: id})).done(function (response) {
+            applyMainCounters(response.counters);
+            reloadList('drafts');
+        });
+    }
+
+    $(document).on('click', '[data-sx-compose-draft-delete]', function () {
+        var $form = $(this).closest('[data-sx-compose]');
+        if (!window.confirm('Удалить черновик?')) {
+            return;
+        }
+        var wait = $form.data('draftXhr') || $.Deferred().resolve().promise();
+        $form.data('sent', true);
+        $.when(wait).always(function () {
+            deleteDraft($form).done(function () {
+                var $letterEl = $form.closest('[data-sx-letter]');
+                if ($letterEl.length) {
+                    $form.remove();
+                    $letterEl.find('[data-sx-letter-reply-bar]').prop('hidden', false).find('span').text('Ответить');
+                } else if (!closeOwnPanel()) {
+                    $form.replaceWith('<div class="sx-compose__done">Черновик удалён.</div>');
+                }
+            }).fail(function () {
+                $form.data('sent', false);
+                notify('error', 'Не удалось удалить черновик.');
+            });
+        });
+    });
 
     /**
      * Forwarding or quoting a letter whose files lie only in the mailbox: they
@@ -1239,19 +1529,29 @@
         // The editor keeps its text in the body_html field itself.
         $send.prop('disabled', true);
         $form.find('[data-sx-compose-status]').text('Отправка…');
-
-        $.post($form.attr('action'), $form.serialize()).done(function (response) {
-            if (!response.success) {
-                $form.find('[data-sx-compose-status]').text('');
-                showErrors($form, response.errors);
-                $send.prop('disabled', false);
-                return;
-            }
-            afterSent($form, response);
-        }).fail(function () {
-            $form.find('[data-sx-compose-status]').text('');
+        // No autosave while sending; a save under way finishes first, so the draft id is known.
+        clearTimeout($form.data('draftTimer'));
+        $form.data('sent', true);
+        var resume = function () {
+            $form.data('sent', false);
             $send.prop('disabled', false);
-            notify('error', 'Письмо не отправлено: ошибка на сервере. Попробуйте ещё раз.');
+        };
+
+        $.when($form.data('draftXhr')).always(function () {
+            $.post($form.attr('action'), $form.serialize()).done(function (response) {
+                if (!response.success) {
+                    $form.find('[data-sx-compose-status]').text('');
+                    showErrors($form, response.errors);
+                    resume();
+                    return;
+                }
+                applyMainCounters(response.counters);
+                afterSent($form, response);
+            }).fail(function () {
+                $form.find('[data-sx-compose-status]').text('');
+                resume();
+                notify('error', 'Письмо не отправлено: ошибка на сервере. Попробуйте ещё раз.');
+            });
         });
     }
 
@@ -1265,7 +1565,8 @@
             }).get().join(', ');
             $form.closest('[data-sx-letter-compose-box]').empty();
             $letterEl.find('[data-sx-letter-sent]').text('Письмо отправляется: ' + to + '. Оно появится в «Отправленных».').prop('hidden', false);
-            $letterEl.find('[data-sx-letter-reply-bar]').prop('hidden', false);
+            // The draft of the answer is gone with the sent letter.
+            $letterEl.find('[data-sx-letter-reply-bar]').prop('hidden', false).find('span').text('Ответить');
             return;
         }
         if (!closeOwnPanel()) {
@@ -1290,9 +1591,17 @@
         if (composeHasText($form) && !window.confirm('Удалить начатое письмо?')) {
             return;
         }
+        // "Отменить" discards the answer: its draft goes too.
+        var wait = $form.data('draftXhr') || $.Deferred().resolve().promise();
+        clearTimeout($form.data('draftTimer'));
+        $form.data('sent', true);
+        $.when(wait).always(function () {
+            deleteDraft($form);
+        });
         var $letterEl = $form.closest('[data-sx-letter]');
-        $form.remove();
-        $letterEl.find('[data-sx-letter-reply-bar]').prop('hidden', false);
+        // detach(), not remove(): the form keeps its state until its draft is deleted.
+        $form.detach();
+        $letterEl.find('[data-sx-letter-reply-bar]').prop('hidden', false).find('span').text('Ответить');
     });
 
     // A full-page editor ("Написать" panel) is ready on load.

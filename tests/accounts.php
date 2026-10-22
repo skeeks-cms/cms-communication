@@ -50,10 +50,10 @@ new \yii\console\Application([
 
 $db = Yii::$app->db;
 $common = ['id' => 'pk', 'created_by' => 'integer', 'updated_by' => 'integer', 'created_at' => 'integer', 'updated_at' => 'integer'];
-$db->createCommand()->createTable('cms_user', ['id' => 'pk', 'username' => 'string', 'first_name' => 'string', 'last_name' => 'string', 'email' => 'string', 'phone' => 'string', 'is_worker' => 'integer'])->execute();
+$db->createCommand()->createTable('cms_user', ['id' => 'pk', 'username' => 'string', 'first_name' => 'string', 'last_name' => 'string', 'email' => 'string', 'phone' => 'string', 'is_worker' => 'integer', 'is_active' => 'integer not null default 1'])->execute();
 $db->createCommand()->createTable('cms_comm_connection', $common + ['cms_site_id' => 'integer not null', 'name' => 'string not null', 'driver' => 'string not null', 'driver_config' => 'text', 'secret' => 'text', 'is_active' => 'integer not null default 1'])->execute();
 $db->createCommand()->createTable('cms_comm_account', $common + ['cms_site_id' => 'integer not null', 'cms_comm_connection_id' => 'integer', 'channel' => "string not null default 'email'", 'address' => 'string not null', 'name' => 'string', 'reply_to' => 'string', 'is_expose_linked' => 'integer not null default 1', 'is_active' => 'integer not null default 1'])->execute();
-$db->createCommand()->createTable('cms_comm_account_access', $common + ['cms_comm_account_id' => 'integer not null', 'cms_user_id' => 'integer not null', 'read_level' => "string not null default 'linked'", 'send_level' => "string not null default 'none'", 'can_manage' => 'integer not null default 0', 'can_manage_messages' => 'integer not null default 0', 'is_default' => 'integer not null default 0', 'is_responsible' => 'integer not null default 0'])->execute();
+$db->createCommand()->createTable('cms_comm_account_access', $common + ['cms_comm_account_id' => 'integer not null', 'cms_user_id' => 'integer not null', 'read_level' => "string not null default 'linked'", 'send_level' => "string not null default 'none'", 'can_manage' => 'integer not null default 0', 'can_manage_messages' => 'integer not null default 0', 'is_default' => 'integer not null default 0', 'is_responsible' => 'integer not null default 0', 'is_notify' => 'integer not null default 1'])->execute();
 $db->createCommand()->batchInsert('cms_user', ['id', 'username', 'is_worker'], [[1, 'semenov', 1], [2, 'svetlana', 1]])->execute();
 
 $component = Yii::$app->communication;
@@ -254,5 +254,67 @@ commExpect($save->validate() && $save->criteria()['accountId'] === 3 && $save->c
     && !$save->criteria()['images'] && $save->criteria()['maxSizeMb'] === 0, 'One mailbox, 3 months, attachments only, any size.');
 commExpect(\skeeks\cms\communication\services\MailFileSave::criteria(['images' => 1]) === ['accountId' => null, 'since' => 0, 'images' => true, 'attachments' => false, 'maxSizeMb' => 0],
     'The job normalizes its payload.');
+
+// Notifications about new letters: who gets them (MailNotifier::recipients()).
+$db->createCommand()->createTable('cms_comm_message', ['id' => 'pk', 'created_at' => 'integer', 'updated_at' => 'integer', 'cms_site_id' => 'integer',
+    'cms_comm_account_id' => 'integer', 'direction' => 'string', 'is_history' => 'integer not null default 0', 'from_address' => 'string',
+    'from_name' => 'string', 'subject' => 'string', 'message_at' => 'integer', 'sent_by_user_id' => 'integer'])->execute();
+$db->createCommand()->createTable('cms_comm_message_mailbox', ['id' => 'pk', 'cms_comm_message_id' => 'integer', 'cms_comm_account_id' => 'integer'])->execute();
+$db->createCommand()->createTable('cms_comm_message_read', ['id' => 'pk', 'cms_comm_message_id' => 'integer', 'cms_user_id' => 'integer', 'read_at' => 'integer'])->execute();
+$db->createCommand()->batchInsert('cms_user', ['id', 'username', 'is_worker', 'is_active'], [[3, 'fired', 1, 0], [4, 'muted', 1, 1], [5, 'reader', 1, 1]])->execute();
+foreach ([[1, 'all', 1], [3, 'all', 1], [4, 'all', 0], [5, 'all', 1]] as [$userId, $level, $notify]) {
+    $db->createCommand()->insert('cms_comm_account_access', ['cms_comm_account_id' => $info->id, 'cms_user_id' => $userId,
+        'read_level' => $level, 'send_level' => 'none', 'is_notify' => $notify])->execute();
+}
+$letter = static function (array $values) use ($db, $info): \skeeks\cms\communication\models\CmsCommMessage {
+    $db->createCommand()->insert('cms_comm_message', $values + ['cms_site_id' => 1, 'cms_comm_account_id' => $info->id, 'direction' => 'in',
+        'from_address' => 'ivan@client.ru', 'subject' => 'Счёт', 'message_at' => time()])->execute();
+    return \skeeks\cms\communication\models\CmsCommMessage::findOne((int)$db->getLastInsertID());
+};
+$fresh = $letter([]);
+$history = $letter(['is_history' => 1]);
+$outgoing = $letter(['direction' => 'out']);
+$copyOnly = $letter(['cms_comm_account_id' => null]);
+$db->createCommand()->insert('cms_comm_message_mailbox', ['cms_comm_message_id' => $copyOnly->id, 'cms_comm_account_id' => $info->id])->execute();
+$db->createCommand()->insert('cms_comm_message_read', ['cms_comm_message_id' => $fresh->id, 'cms_user_id' => 5, 'read_at' => time()])->execute();
+$recipients = (new \skeeks\cms\communication\services\MailNotifier())->recipients([$fresh, $copyOnly]);
+ksort($recipients);
+commExpect($recipients === [1 => [$fresh->id, $copyOnly->id], 2 => [$fresh->id, $copyOnly->id], 5 => [$copyOnly->id]],
+    'Readers of the mailbox are notified; not inactive employees, not those who switched it off, not about letters they read: '.json_encode($recipients));
+// notifyNew() itself skips letters collected from the history and outgoing ones before choosing recipients.
+commExpect(\skeeks\cms\communication\models\CmsCommMessage::find()->andWhere(['id' => [$history->id, $outgoing->id]])
+    ->andWhere(['direction' => 'in', 'is_history' => 0])->count() == 0, 'History and outgoing letters are never new.');
+$info->is_active = 0;
+$info->save(false, ['is_active']);
+commExpect((new \skeeks\cms\communication\services\MailNotifier())->recipients([$fresh]) === [], 'A switched off mailbox notifies nobody.');
+$info->is_active = 1;
+$info->save(false, ['is_active']);
+
+// Signatures and templates keep the letter formatting but no pictures (temporary uploads would expire).
+$signature = \skeeks\cms\helpers\RichTextHtml::clean('<div><b>Семёнов</b> <img data-sx-upload="mail-0123456789abcdef0123456789abcdef/logo.png"><img src="https://x.ru/l.png"></div><script>x</script>',
+    \skeeks\cms\communication\services\MailTemplates::EDITOR_PRESET);
+commExpect($signature === '<div><b>Семёнов</b> </div>', 'A signature keeps formatting and drops pictures: '.$signature);
+
+// The letter form carries the draft it continues and "Ответить всем".
+$compose = new \skeeks\cms\communication\forms\ComposeForm();
+$compose->load(['ComposeForm' => ['draft_id' => '7', 'reply_all' => '1', 'to' => 'a@b.ru']]);
+commExpect((int)$compose->draft_id === 7 && (int)$compose->reply_all === 1, 'draft_id and reply_all are form attributes.');
+
+// A draft keeps recipients as typed and forwarded attachments as a list.
+$db->createCommand()->createTable('cms_comm_draft', ['id' => 'pk', 'created_at' => 'integer', 'updated_at' => 'integer', 'cms_site_id' => 'integer',
+    'cms_user_id' => 'integer', 'to_list' => 'text', 'body_html' => 'text', 'file_ids' => 'text'])->execute();
+$draft = new \skeeks\cms\communication\models\CmsCommDraft(['to_list' => 'Иван <Ivan@Client.ru>, недописан', 'body_html' => '<div>Привет,<br>это <b>черновик</b></div>']);
+$draft->setFileIds(['3', 3, 0, '5']);
+commExpect($draft->getFileIds() === [3, 5] && $draft->getToAddresses()[0] === 'ivan@client.ru' && $draft->getSnippet() === 'Привет, это черновик',
+    'Draft file ids, recipients and snippet: '.json_encode([$draft->getFileIds(), $draft->getToAddresses(), $draft->getSnippet()], JSON_UNESCAPED_UNICODE));
+$draft->setFileIds([]);
+commExpect($draft->file_ids === null, 'A draft without forwarded attachments stores nothing.');
+
+// Unsent drafts are removed by the daily cleanup after "Хранить неотправленные черновики, дней".
+$settings = new \skeeks\cms\communication\components\MailFileSettings();
+commExpect((int)$settings->draftKeepDays === 90 && $settings->values()['draftKeepDays'] === 90, 'Drafts are kept 90 days by default.');
+$settings->draftKeepDays = -1;
+commExpect(!$settings->validate(['draftKeepDays']), 'The draft term cannot be negative.');
+commExpect(\skeeks\cms\communication\services\MailDrafts::cleanupExpired(1, 0) === ['removed' => 0, 'freed' => 0], 'A zero term keeps drafts forever.');
 
 echo "cms-communication accounts: OK\n";

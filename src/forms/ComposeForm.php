@@ -53,6 +53,12 @@ class ComposeForm extends Model
     /** Quote the answered letter below the reply. */
     public $include_quote = 1;
 
+    /** "Ответить всем": kept with a draft, so the draft opens as it was started. */
+    public $reply_all = 0;
+
+    /** The draft this form continues (MailDrafts): removed when the letter is sent. */
+    public $draft_id;
+
     /** @var int[] attachments kept from the forwarded letter: its storage file ids */
     public $file_ids = [];
 
@@ -68,8 +74,8 @@ class ComposeForm extends Model
             [['to', 'cc', 'bcc', 'subject', 'body', 'context_model_code'], 'filter', 'filter' => static fn($v) => trim((string)$v)],
             [['body_html'], 'filter', 'filter' => static fn($v) => RichTextHtml::clean((string)$v, self::EDITOR_PRESET)],
             [['cms_comm_account_id', 'to'], 'required'],
-            [['cms_comm_account_id', 'context_model_id', 'reply_to_message_id', 'forward_message_id'], 'integer'],
-            [['include_quote'], 'boolean'],
+            [['cms_comm_account_id', 'context_model_id', 'reply_to_message_id', 'forward_message_id', 'draft_id'], 'integer'],
+            [['include_quote', 'reply_all'], 'boolean'],
             [['file_ids'], 'filter', 'filter' => static fn($v) => array_values(array_unique(array_filter(array_map('intval', (array)$v)))), 'skipOnEmpty' => false],
             [['uploads'], 'filter', 'filter' => static fn($v) => array_values(array_unique(array_filter(array_map('strval', (array)$v)))), 'skipOnEmpty' => false],
             [['file_ids'], 'validateFiles', 'skipOnEmpty' => false],

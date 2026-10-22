@@ -12,6 +12,7 @@ use skeeks\cms\communication\mail\MailSessionInterface;
 use skeeks\cms\communication\models\CmsCommConnection;
 use skeeks\cms\communication\models\CmsCommSyncState;
 use skeeks\cms\communication\services\MailIngestService;
+use skeeks\cms\communication\services\MailNotifier;
 use skeeks\cms\job\contracts\JobReporterInterface;
 use skeeks\cms\job\exceptions\JobPermanentException;
 use skeeks\cms\job\handlers\AbstractJobHandler;
@@ -24,6 +25,10 @@ use skeeks\cms\job\runtime\JobContext;
  * transaction as the letters of each batch, so a crash never skips or
  * duplicates letters. A first run takes the last `initialDays` days.
  * A letter that cannot be parsed is reported and skipped.
+ *
+ * New incoming letters of a run notify employees once, after the run
+ * (MailNotifier): never the first receipt of a folder (the last
+ * `initialDays` days) or a rescan after the server renumbered the folder.
  */
 class MailPollJobHandler extends AbstractJobHandler
 {
@@ -57,6 +62,7 @@ class MailPollJobHandler extends AbstractJobHandler
         $ingest = new MailIngestService();
         $initialDays = (int)CmsCommConnection::component()->initialDays;
         $received = 0;
+        $fresh = [];
         try {
             foreach ($session->folders() as $folder) {
                 if ($folder['role'] === null) {
@@ -65,7 +71,7 @@ class MailPollJobHandler extends AbstractJobHandler
                 if ($reporter->isCancelled()) {
                     break;
                 }
-                $received += $this->pollFolder($connection, $session, $ingest, $folder['name'], $folder['role'], $initialDays, $reporter);
+                $received += $this->pollFolder($connection, $session, $ingest, $folder['name'], $folder['role'], $initialDays, $reporter, $fresh);
             }
         } catch (\Throwable $e) {
             $this->saveError($connection, null, $e->getMessage());
@@ -74,11 +80,24 @@ class MailPollJobHandler extends AbstractJobHandler
             $session->close();
         }
 
-        $reporter->setResult(['connectionId' => (int)$connection->id, 'received' => $received]);
+        $notified = 0;
+        if ($fresh) {
+            try {
+                $notified = (new MailNotifier())->notifyNew($fresh);
+            } catch (\Throwable $e) {
+                // Notifications never undo received letters.
+                \Yii::warning('Уведомления о новых письмах не созданы: '.$e->getMessage(), self::class);
+            }
+        }
+
+        $reporter->setResult(['connectionId' => (int)$connection->id, 'received' => $received, 'notified' => $notified]);
         $reporter->setStage('complete', $received ? "Получено писем: {$received}" : 'Новых писем нет');
     }
 
-    private function pollFolder(CmsCommConnection $connection, MailSessionInterface $session, MailIngestService $ingest, string $folder, string $role, int $initialDays, JobReporterInterface $reporter): int
+    /**
+     * @param int[] $fresh ids of new incoming letters to notify about, added by the method
+     */
+    private function pollFolder(CmsCommConnection $connection, MailSessionInterface $session, MailIngestService $ingest, string $folder, string $role, int $initialDays, JobReporterInterface $reporter, array &$fresh = []): int
     {
         $state = CmsCommSyncState::find()->andWhere(['cms_comm_connection_id' => $connection->id, 'folder' => $folder])->one()
             ?? new CmsCommSyncState(['cms_comm_connection_id' => $connection->id, 'folder' => $folder, 'last_uid' => 0]);
@@ -90,6 +109,8 @@ class MailPollJobHandler extends AbstractJobHandler
             // The server renumbered the folder: scan the window again; known letters are skipped by Message-ID.
             $state->last_uid = 0;
         }
+        // Only letters arriving after a receipt that already ran are new to people.
+        $notify = $role === CmsCommSyncState::ROLE_INBOX && (int)$state->last_uid > 0;
         $state->uidvalidity = $selected['uidvalidity'];
 
         $uids = (int)$state->last_uid > 0
@@ -110,7 +131,10 @@ class MailPollJobHandler extends AbstractJobHandler
                         continue;
                     }
                     try {
-                        $ingest->ingest($connection, $role, $folder, $state->uidvalidity !== null ? (int)$state->uidvalidity : null, (int)$uid, $raws[$uid]);
+                        $message = $ingest->ingest($connection, $role, $folder, $state->uidvalidity !== null ? (int)$state->uidvalidity : null, (int)$uid, $raws[$uid]);
+                        if ($notify && $ingest->lastCreated) {
+                            $fresh[] = (int)$message->id;
+                        }
                         $count++;
                         $reporter->countSuccess();
                     } catch (\Throwable $e) {

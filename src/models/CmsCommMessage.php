@@ -160,6 +160,15 @@ class CmsCommMessage extends ActiveRecord
         return mb_strlen($text) > $length ? mb_substr($text, 0, $length).'…' : $text;
     }
 
+    /**
+     * The letter as a record name (skeeks->modelsConfig consumers: the
+     * notification center, entity links): its subject.
+     */
+    public function getAsText(): string
+    {
+        return trim((string)$this->subject) !== '' ? (string)$this->subject : '(без темы)';
+    }
+
     public function getStatusName(): string
     {
         return self::statuses()[$this->status] ?? (string)$this->status;
