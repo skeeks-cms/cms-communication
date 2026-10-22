@@ -1,0 +1,1605 @@
+/*
+ * "Почта": folders | wide letter list, like a familiar web mail client.
+ * Colors come from the shared --sx-* theme, so light and dark both work.
+ */
+.sx-mail {
+    --sx-mail-row-hover: var(--sx-color-surface-hover, #f4f6f8);
+    --sx-mail-selected: var(--sx-color-accent-soft, #fdedf2);
+    --sx-mail-unread: var(--sx-color-accent, #ee4d7d);
+    display: grid;
+    grid-template-columns: 236px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+}
+
+.sx-mail__panel {
+    background: var(--sx-color-surface, #fff);
+    border: 1px solid var(--sx-color-border, #dedede);
+    border-radius: var(--sx-radius-panel, 8px);
+    min-width: 0;
+}
+
+/* Folders */
+/* The page scrolls; folders and the list head stay in place below the header.
+ * The shell wrapper clips its overflow with "hidden", which makes it a scroll
+ * container and breaks position: sticky; "clip" clips the same way. */
+.sx-main-wrapper:has(.sx-mail) {
+    overflow: clip;
+}
+
+.sx-mail__folders {
+    --sx-mail-top: calc(var(--sx-shell-top-offset, 65px) + 12px);
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    position: sticky;
+    top: var(--sx-mail-top);
+    max-height: calc(100vh - var(--sx-mail-top) - 12px);
+    overflow-y: auto;
+}
+
+.sx-mail__folder-list {
+    flex: 1;
+    min-height: 0;
+}
+
+.sx-mail__hotkeys-link {
+    margin-top: 12px;
+    padding: 6px 10px;
+    border: 0;
+    background: transparent;
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.sx-mail__hotkeys-link:hover {
+    color: var(--sx-color-text, #262626);
+}
+
+/* Search and toolbar of the list: sticky under the header. */
+.sx-mail__head {
+    position: sticky;
+    top: var(--sx-shell-top-offset, 65px);
+    z-index: 5;
+    padding-top: 1px;
+    background: var(--sx-color-surface, #fff);
+    border-radius: var(--sx-radius-panel, 8px) var(--sx-radius-panel, 8px) 0 0;
+}
+
+.sx-mail__actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.sx-mail__compose {
+    display: block;
+    flex: 1;
+    text-align: center;
+}
+
+.sx-mail__refresh {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 44px;
+    border: 1px solid var(--sx-color-border, #dedede);
+    border-radius: var(--sx-radius-sm, 6px);
+    background: var(--sx-color-surface, #fff);
+    color: var(--sx-color-text-muted, #6f7484);
+    cursor: pointer;
+    outline: none;
+}
+
+.sx-mail__refresh:hover {
+    background: var(--sx-mail-row-hover);
+    color: var(--sx-color-text, #262626);
+}
+
+/* No focus ring after a mouse click; keyboard focus stays visible. */
+.sx-mail__refresh:focus:not(:focus-visible),
+.sx-mail__tool:focus:not(:focus-visible) {
+    outline: none;
+    box-shadow: none;
+}
+
+.sx-mail__refresh:focus-visible,
+.sx-mail__tool:focus-visible {
+    outline: 2px solid var(--sx-color-focus-ring, rgba(238, 77, 125, .28));
+    outline-offset: 2px;
+}
+
+.sx-mail__refresh.is-busy svg,
+.sx-mail__refresh.is-busy i {
+    animation: sx-mail-spin 1s linear infinite;
+}
+
+@keyframes sx-mail-spin {
+    to { transform: rotate(360deg); }
+}
+
+.sx-mail__group {
+    margin: 14px 0 4px;
+    padding: 0 8px;
+    font-size: 12px;
+    color: var(--sx-color-text-muted, #6f7484);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sx-mail__folder {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: var(--sx-radius-sm, 6px);
+    color: var(--sx-color-text, #262626);
+    text-decoration: none;
+}
+
+.sx-mail__folder:hover,
+.sx-mail__folder:focus {
+    background: var(--sx-mail-row-hover);
+    color: var(--sx-color-text, #262626);
+    text-decoration: none;
+}
+
+.sx-mail__folder.is-active {
+    background: var(--sx-mail-selected);
+    font-weight: 600;
+}
+
+.sx-mail__folder-icon {
+    display: inline-flex;
+    width: 18px;
+    justify-content: center;
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+.sx-mail__folder.is-active .sx-mail__folder-icon {
+    color: var(--sx-color-accent, #ee4d7d);
+}
+
+.sx-mail__tool svg,
+.sx-mail__clip svg {
+    flex: none;
+}
+
+.sx-mail__clip {
+    display: inline-flex;
+}
+
+.sx-mail__folder-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sx-mail__count {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--sx-mail-unread);
+}
+
+/* Search and toolbar */
+.sx-mail__search {
+    position: relative;
+    margin: 12px 12px 4px;
+}
+
+.sx-mail__search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    display: inline-flex;
+    transform: translateY(-50%);
+    color: var(--sx-color-text-muted, #6f7484);
+    pointer-events: none;
+}
+
+.sx-mail__search input {
+    width: 100%;
+    padding: 10px 14px 10px 40px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: var(--sx-color-surface-muted, #f4f6f8);
+    color: var(--sx-color-text, #262626);
+    font-size: 15px;
+    outline: none;
+}
+
+.sx-mail__search input:focus {
+    border-color: var(--sx-color-accent-border, #f8b4c8);
+    background: var(--sx-color-surface, #fff);
+}
+
+.sx-mail__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--sx-color-border, #dedede);
+    min-height: 46px;
+}
+
+.sx-mail__tool {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 0;
+    border-radius: var(--sx-radius-sm, 6px);
+    background: transparent;
+    color: var(--sx-color-text, #262626);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.sx-mail__tool:hover:not(:disabled) {
+    background: var(--sx-mail-row-hover);
+}
+
+.sx-mail__tool:disabled {
+    color: var(--sx-color-text-subtle, #9aa0aa);
+    cursor: default;
+}
+
+.sx-mail__toolbar-title {
+    margin-left: auto;
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sx-mail__check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    margin: 0;
+    flex: none;
+    cursor: pointer;
+}
+
+.sx-mail__check input {
+    width: 17px;
+    height: 17px;
+    margin: 0;
+    cursor: pointer;
+    accent-color: var(--sx-color-accent, #ee4d7d);
+}
+
+/* Letter rows */
+.sx-mail__row {
+    display: grid;
+    grid-template-columns: 32px 36px minmax(120px, 210px) 10px minmax(0, 1fr) auto 64px;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px 6px 12px;
+    border-bottom: 1px solid var(--sx-color-border, #dedede);
+    color: var(--sx-color-text, #262626);
+    cursor: pointer;
+    min-height: 54px;
+}
+
+.sx-mail__row:hover {
+    background: var(--sx-mail-row-hover);
+}
+
+.sx-mail__row:focus-visible {
+    outline: 2px solid var(--sx-color-focus-ring, rgba(238, 77, 125, .28));
+    outline-offset: -2px;
+}
+
+.sx-mail__row.is-selected {
+    background: var(--sx-mail-selected);
+}
+
+.sx-mail__row.is-open {
+    box-shadow: inset 3px 0 0 var(--sx-mail-unread);
+}
+
+.sx-mail__avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: hsl(var(--sx-mail-hue, 210), 55%, 52%);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: .02em;
+}
+
+.sx-mail__who {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The unread dot is also the read / unread switch of the row. */
+.sx-mail__dot {
+    position: relative;
+    width: 10px;
+    height: 10px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+}
+
+.sx-mail__dot::after {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border-radius: 50%;
+}
+
+.sx-mail__row:hover .sx-mail__dot:not(:disabled)::after {
+    box-shadow: inset 0 0 0 1.5px var(--sx-color-text-subtle, #9aa0aa);
+}
+
+.sx-mail__dot:disabled {
+    cursor: default;
+}
+
+.sx-mail__row.is-unread .sx-mail__dot::after {
+    background: var(--sx-mail-unread);
+    box-shadow: none;
+}
+
+.sx-mail__row.is-cursor {
+    box-shadow: inset 3px 0 0 var(--sx-color-text-subtle, #9aa0aa);
+}
+
+.sx-mail__count:empty {
+    display: none;
+}
+
+.sx-mail__line {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sx-mail__subject {
+    margin-right: 8px;
+}
+
+.sx-mail__snippet {
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+.sx-mail__row.is-unread .sx-mail__who,
+.sx-mail__row.is-unread .sx-mail__subject {
+    font-weight: 700;
+}
+
+.sx-mail__meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 260px;
+}
+
+.sx-mail__tag {
+    max-width: 180px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--sx-color-surface-muted, #f4f6f8);
+    border: 1px solid var(--sx-color-border, #dedede);
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sx-mail__tag--status {
+    color: var(--sx-color-danger, #bd4348);
+    border-color: var(--sx-color-danger, #bd4348);
+}
+
+.sx-mail__clip {
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+.sx-mail__date {
+    text-align: right;
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.sx-mail__row.is-unread .sx-mail__date {
+    color: var(--sx-color-text, #262626);
+    font-weight: 600;
+}
+
+.sx-mail__more {
+    padding: 14px 16px;
+    text-align: center;
+}
+
+.sx-mail__more[hidden] {
+    display: none;
+}
+
+.sx-mail__more-button {
+    min-width: 220px;
+    padding: 9px 18px;
+    border: 1px solid var(--sx-color-border, #dedede);
+    border-radius: 999px;
+    background: var(--sx-color-surface, #fff);
+    color: var(--sx-color-text, #262626);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.sx-mail__more-button:hover:not(:disabled) {
+    background: var(--sx-mail-row-hover);
+}
+
+.sx-mail__empty {
+    padding: 48px 16px;
+    text-align: center;
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+/* "Выбрано N писем" bar */
+.sx-mail__selection {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    z-index: 1040;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 18px;
+    border-radius: 12px;
+    background: #1f232b;
+    color: #fff;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .28);
+    transform: translateX(-50%);
+}
+
+.sx-mail__selection[hidden] {
+    display: none;
+}
+
+.sx-mail__selection-close {
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+/* One letter in the right-side panel */
+.sx-letter {
+    max-width: 1100px;
+    padding: 4px 8px 24px;
+    color: var(--sx-color-text, #262626);
+}
+
+/* Letter actions stay on top while the letter scrolls. */
+.sx-letter__toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 0 10px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--sx-color-border, #dedede);
+    background: var(--sx-color-surface, #fff);
+}
+
+.sx-letter__toolbar .sx-mail__tool,
+.sx-letter__toolbar .sx-mail__tool:hover {
+    text-decoration: none;
+}
+
+.sx-letter__subject {
+    margin: 0 0 16px;
+    font-size: 24px;
+    font-weight: 500;
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+.sx-letter__head {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.sx-letter__avatar {
+    width: 44px;
+    height: 44px;
+    flex: none;
+    font-size: 16px;
+}
+
+.sx-letter__from {
+    flex: 1;
+    min-width: 0;
+    line-height: 1.6;
+}
+
+.sx-letter__head .sx-letter__records {
+    flex: none;
+    max-width: 50%;
+}
+
+.sx-letter__name {
+    font-weight: 600;
+    margin-right: 6px;
+}
+
+.sx-letter__muted {
+    color: var(--sx-color-text-muted, #6f7484);
+    margin-right: 6px;
+    word-break: break-word;
+}
+
+.sx-letter__error {
+    color: var(--sx-color-danger, #bd4348);
+}
+
+/* CRM records in the panel header (BackendModelHeader side slot) */
+.sx-letter__records {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.sx-letter__record {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 280px;
+    padding: 4px 12px 4px 4px;
+    border: 1px solid var(--sx-color-border, #dedede);
+    border-radius: 999px;
+    background: var(--sx-color-surface, #fff);
+    color: var(--sx-color-text, #262626);
+    text-decoration: none;
+}
+
+a.sx-letter__record:hover,
+a.sx-letter__record:focus {
+    border-color: var(--sx-color-accent-border, #f8b4c8);
+    background: var(--sx-color-accent-soft, #fdedf2);
+    color: var(--sx-color-text, #262626);
+    text-decoration: none;
+}
+
+.sx-letter__record-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.2;
+}
+
+.sx-letter__record-type {
+    font-size: 11px;
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+.sx-letter__record-name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sx-letter__body {
+    margin-top: 8px;
+}
+
+.sx-letter__images {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding: 8px 12px;
+    border-radius: var(--sx-radius-sm, 6px);
+    background: var(--sx-color-surface-muted, #f4f6f8);
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+}
+
+.sx-letter__images a {
+    font-weight: 600;
+}
+
+.sx-letter__frame {
+    display: block;
+    width: 100%;
+    min-height: 360px;
+    border: 0;
+    background: #fff;
+}
+
+.sx-letter__text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 15px;
+    line-height: 1.55;
+}
+
+.sx-letter__attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 18px;
+}
+
+.sx-letter__file {
+    padding: 8px 12px;
+    border: 1px solid var(--sx-color-border, #dedede);
+    border-radius: var(--sx-radius-sm, 6px);
+    background: var(--sx-color-surface-muted, #f9f9f9);
+}
+
+@media (max-width: 600px) {
+    .sx-letter__links {
+        margin-left: 0;
+    }
+
+    .sx-letter__subject {
+        font-size: 20px;
+    }
+}
+
+/* Medium screens: no CRM tags in the row. */
+@media (max-width: 1280px) {
+    .sx-mail__row {
+        grid-template-columns: 32px 36px minmax(110px, 170px) 10px minmax(0, 1fr) auto 56px;
+    }
+
+    .sx-mail__tag {
+        display: none;
+    }
+}
+
+/* Narrow screens: folders on top, two-line rows. */
+@media (max-width: 900px) {
+    .sx-mail {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .sx-mail__folders {
+        position: static;
+    }
+
+    .sx-mail__row {
+        grid-template-columns: 28px 36px minmax(0, 1fr) auto;
+        grid-template-areas:
+            "check avatar who date"
+            "check avatar line line";
+        row-gap: 2px;
+        padding: 8px 12px;
+    }
+
+    .sx-mail__row .sx-mail__check { grid-area: check; }
+    .sx-mail__row .sx-mail__avatar { grid-area: avatar; }
+    .sx-mail__row .sx-mail__who { grid-area: who; }
+    .sx-mail__row .sx-mail__line { grid-area: line; }
+    .sx-mail__row .sx-mail__date { grid-area: date; }
+
+    .sx-mail__row .sx-mail__dot,
+    .sx-mail__row .sx-mail__meta,
+    .sx-mail__toolbar-title {
+        display: none;
+    }
+
+    .sx-mail__row.is-unread .sx-mail__who::before {
+        content: "";
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        margin-right: 6px;
+        border-radius: 50%;
+        background: var(--sx-mail-unread);
+        vertical-align: middle;
+    }
+}
+
+/* "Непрочитанные" filter */
+.sx-mail__filter {
+    margin-left: 8px;
+    color: var(--sx-color-text-muted, #6f7484);
+    text-decoration: none;
+}
+
+.sx-mail__filter:hover,
+.sx-mail__filter:focus {
+    color: var(--sx-color-text, #262626);
+    text-decoration: none;
+}
+
+.sx-mail__filter-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1.5px solid var(--sx-mail-unread);
+}
+
+.sx-mail__filter.is-active {
+    background: var(--sx-mail-selected);
+    color: var(--sx-color-text, #262626);
+}
+
+.sx-mail__filter.is-active .sx-mail__filter-dot {
+    background: var(--sx-mail-unread);
+}
+
+.sx-mail__selection-action {
+    padding: 4px 10px;
+    border: 1px solid rgba(255, 255, 255, .28);
+    border-radius: 999px;
+    background: transparent;
+    color: #fff;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.sx-mail__selection-action:hover {
+    background: rgba(255, 255, 255, .12);
+}
+
+/* Hotkeys help */
+.sx-mail__dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(0, 0, 0, .35);
+}
+
+.sx-mail__dialog[hidden] {
+    display: none;
+}
+
+.sx-mail__dialog-box {
+    width: 100%;
+    max-width: 520px;
+    max-height: 100%;
+    overflow: auto;
+    padding: 18px 20px;
+    border-radius: 12px;
+    background: var(--sx-color-surface, #fff);
+    color: var(--sx-color-text, #262626);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .3);
+}
+
+.sx-mail__dialog-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    font-size: 16px;
+}
+
+.sx-mail__dialog-head .sx-mail__selection-close {
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+.sx-mail__hotkeys {
+    width: 100%;
+    font-size: 14px;
+}
+
+.sx-mail__hotkeys td {
+    padding: 5px 8px 5px 0;
+    vertical-align: top;
+}
+
+.sx-mail__hotkeys kbd {
+    display: inline-block;
+    padding: 1px 6px;
+    border: 1px solid var(--sx-color-border, #dedede);
+    border-radius: 4px;
+    background: var(--sx-color-surface-muted, #f4f6f8);
+    color: var(--sx-color-text, #262626);
+    font-family: inherit;
+    font-size: 12px;
+    white-space: nowrap;
+    box-shadow: none;
+}
+
+.sx-mail__dialog-note {
+    margin: 10px 0 0;
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+}
+
+/* Quick reply under the letter */
+.sx-letter__reply {
+    margin-top: 24px;
+}
+
+.sx-letter__reply-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 14px 18px;
+    border: 1px solid var(--sx-color-border, #dedede);
+    border-radius: 12px;
+    background: var(--sx-color-surface-muted, #f4f6f8);
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 15px;
+    text-align: left;
+    cursor: text;
+}
+
+.sx-letter__reply-bar:hover {
+    border-color: var(--sx-color-accent-border, #f8b4c8);
+    color: var(--sx-color-text, #262626);
+}
+
+.sx-letter__reply-bar[hidden] {
+    display: none;
+}
+
+.sx-letter__sent {
+    margin-top: 10px;
+    padding: 10px 14px;
+    border-radius: var(--sx-radius-sm, 6px);
+    background: var(--sx-color-success-soft, #e9f7ef);
+    color: var(--sx-color-success, #1f7a4d);
+    font-size: 14px;
+}
+
+.sx-letter__sent[hidden],
+.sx-letter__images[hidden] {
+    display: none;
+}
+
+.sx-letter__images .sx-compose__link {
+    font-weight: 600;
+}
+
+/* The letter editor */
+.sx-compose-page {
+    max-width: 1100px;
+    padding: 4px 8px 24px;
+}
+
+.sx-compose {
+    display: flex;
+    flex-direction: column;
+    color: var(--sx-color-text, #262626);
+}
+
+.sx-compose--inline {
+    padding: 4px 16px 14px;
+    border: 1px solid var(--sx-color-border, #dedede);
+    border-radius: 12px;
+    background: var(--sx-color-surface, #fff);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, .06);
+}
+
+.sx-compose__mode {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 0 2px;
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+}
+
+.sx-compose__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0 10px;
+    min-height: 44px;
+    border-bottom: 1px solid var(--sx-color-border, #dedede);
+}
+
+.sx-compose__row[hidden] {
+    display: none;
+}
+
+.sx-compose__label {
+    flex: none;
+    width: 110px;
+    margin: 0;
+    padding-top: 12px;
+    line-height: 20px;
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 14px;
+    font-weight: 400;
+}
+
+.sx-compose__control {
+    flex: 1;
+    min-width: 0;
+}
+
+.sx-compose__more {
+    display: flex;
+    gap: 10px;
+    flex: none;
+    padding-top: 12px;
+    line-height: 20px;
+}
+
+.sx-compose__error {
+    flex-basis: 100%;
+    padding-left: 120px;
+    color: var(--sx-color-danger, #bd4348);
+    font-size: 13px;
+}
+
+.sx-compose__error:empty {
+    display: none;
+}
+
+.sx-compose__editor-wrap .sx-compose__error {
+    padding: 4px 0 0;
+}
+
+.sx-compose__input,
+.sx-compose__select,
+.sx-compose__chips-input {
+    width: 100%;
+    padding: 8px 0;
+    border: 0;
+    background: transparent;
+    color: var(--sx-color-text, #262626);
+    font-size: 15px;
+    outline: none;
+    box-shadow: none;
+}
+
+.sx-compose__select {
+    cursor: pointer;
+}
+
+.sx-compose__select option {
+    background: var(--sx-color-surface, #fff);
+    color: var(--sx-color-text, #262626);
+}
+
+.sx-compose__static {
+    display: inline-block;
+    padding: 8px 0;
+    font-size: 15px;
+}
+
+.sx-compose__link {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--sx-color-accent, #ee4d7d);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.sx-compose__link:hover {
+    text-decoration: underline;
+}
+
+.sx-compose__link[hidden] {
+    display: none;
+}
+
+/* Recipients as chips */
+.sx-compose__chips {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 0;
+    cursor: text;
+}
+
+.sx-compose__chips-input {
+    flex: 1;
+    min-width: 160px;
+    width: auto;
+    padding: 4px 0;
+}
+
+.sx-compose__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    max-width: 100%;
+    padding: 2px 4px 2px 10px;
+    border-radius: 999px;
+    background: var(--sx-color-surface-muted, #eef1f4);
+    color: var(--sx-color-text, #262626);
+    font-size: 14px;
+    line-height: 22px;
+}
+
+.sx-compose__chip.is-invalid {
+    background: var(--sx-color-danger-soft, #fdecec);
+    color: var(--sx-color-danger, #bd4348);
+}
+
+.sx-compose__chip-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sx-compose__chip-remove {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: inherit;
+    font-size: 16px;
+    line-height: 1;
+    opacity: .6;
+    cursor: pointer;
+}
+
+.sx-compose__chip-remove:hover {
+    opacity: 1;
+    background: rgba(127, 127, 127, .18);
+}
+
+.sx-compose__suggest {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 20;
+    width: min(520px, 100%);
+    padding: 6px 0;
+    border: 1px solid var(--sx-color-border, #dedede);
+    border-radius: 10px;
+    background: var(--sx-color-surface, #fff);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .16);
+}
+
+.sx-compose__suggest-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0 10px;
+    width: 100%;
+    padding: 7px 14px;
+    border: 0;
+    background: transparent;
+    color: var(--sx-color-text, #262626);
+    text-align: left;
+    cursor: pointer;
+}
+
+.sx-compose__suggest-item.is-active,
+.sx-compose__suggest-item:hover {
+    background: var(--sx-color-surface-hover, #f4f6f8);
+}
+
+.sx-compose__suggest-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sx-compose__suggest-email {
+    grid-column: 1;
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sx-compose__suggest-type {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 12px;
+}
+
+.sx-compose__context {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 0;
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+}
+
+/* The text editor itself is the shared RichTextInputWidget (skeeks/cms). */
+.sx-compose__editor-wrap {
+    padding-top: 6px;
+}
+
+.sx-compose__quote {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 14px;
+    padding: 10px 12px;
+    margin-top: 6px;
+    border-radius: var(--sx-radius-sm, 6px);
+    background: var(--sx-color-surface-muted, #f4f6f8);
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+}
+
+.sx-compose__quote-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-weight: 400;
+    cursor: pointer;
+}
+
+.sx-compose__quote-text {
+    flex-basis: 100%;
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+    border-left: 2px solid var(--sx-color-border, #ccc);
+    padding-left: 10px;
+}
+
+.sx-compose__quote-text[hidden] {
+    display: none;
+}
+
+.sx-compose__footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 14px;
+    padding-top: 14px;
+}
+
+.sx-compose__send {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 22px;
+    padding-right: 22px;
+}
+
+.sx-compose__hint {
+    color: var(--sx-color-text-subtle, #9aa0aa);
+    font-size: 12px;
+}
+
+.sx-compose__status {
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+}
+
+.sx-compose__cancel {
+    margin-left: auto;
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+.sx-compose__loading,
+.sx-compose__done {
+    padding: 18px;
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+@media (max-width: 900px) {
+    .sx-mail__folders {
+        max-height: none;
+        overflow: visible;
+    }
+
+    .sx-mail__hotkeys-link,
+    .sx-mail__toolbar .sx-mail__tool-text,
+    .sx-letter__toolbar .sx-mail__tool-text {
+        display: none;
+    }
+
+    .sx-mail__selection {
+        left: 16px;
+        right: 16px;
+        bottom: 16px;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px 12px;
+        transform: none;
+    }
+}
+
+@media (max-width: 600px) {
+    .sx-compose__label {
+        width: auto;
+        min-width: 56px;
+    }
+
+    .sx-compose__chips-input {
+        min-width: 90px;
+    }
+
+    .sx-compose__more {
+        flex-basis: 100%;
+        justify-content: flex-end;
+        padding: 0 0 8px;
+    }
+
+    .sx-compose__error {
+        padding-left: 0;
+    }
+
+    .sx-compose__hint {
+        display: none;
+    }
+
+    .sx-compose--inline {
+        padding: 4px 12px 12px;
+    }
+}
+
+/* Links, checkboxes and the caret use the theme accent, not browser blue. */
+.sx-compose input[type="checkbox"] {
+    accent-color: var(--sx-color-accent, #ee4d7d);
+}
+
+.sx-compose__link:hover {
+    color: var(--sx-color-accent-hover, var(--sx-color-accent, #ee4d7d));
+}
+
+.sx-compose__input,
+.sx-compose__chips-input {
+    caret-color: var(--sx-color-accent, #ee4d7d);
+}
+
+/* No focus frame after a mouse click on any mail control; keyboard focus stays visible in the theme color. */
+.sx-mail button:focus:not(:focus-visible),
+.sx-mail a:focus:not(:focus-visible),
+.sx-letter button:focus:not(:focus-visible),
+.sx-letter a:focus:not(:focus-visible),
+.sx-compose button:focus:not(:focus-visible) {
+    outline: none;
+    box-shadow: none;
+}
+
+.sx-mail button:focus-visible,
+.sx-mail a:focus-visible,
+.sx-letter button:focus-visible,
+.sx-letter a:focus-visible,
+.sx-compose button:focus-visible {
+    outline: 2px solid var(--sx-color-focus-ring, rgba(238, 77, 125, .28));
+    outline-offset: 2px;
+}
+
+/* Attachments of the letter being written */
+.sx-compose {
+    position: relative;
+}
+
+.sx-compose__files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 8px;
+}
+
+.sx-compose__files:not(:has(.sx-compose__file)) {
+    display: none;
+}
+
+.sx-compose__file {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 4px 4px 4px 10px;
+    border: 1px solid var(--sx-color-border, #dedede);
+    border-radius: var(--sx-radius-sm, 6px);
+    background: var(--sx-color-surface-muted, #f4f6f8);
+    font-size: 13px;
+}
+
+.sx-compose__file.is-loading {
+    opacity: .7;
+    padding-right: 10px;
+}
+
+.sx-compose__file-name {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sx-compose__file-size {
+    color: var(--sx-color-text-muted, #6f7484);
+    white-space: nowrap;
+}
+
+.sx-compose__attach {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: var(--sx-radius-sm, 6px);
+    background: transparent;
+    color: var(--sx-color-text, #262626);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.sx-compose__attach:hover {
+    background: var(--sx-color-surface-muted, #eef1f4);
+}
+
+/* Attachments under an open letter */
+.sx-letter__attachments {
+    align-items: stretch;
+}
+
+.sx-letter__attachments-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-basis: 100%;
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+}
+
+.sx-letter__file {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 280px;
+    padding: 6px 12px 6px 6px;
+    color: var(--sx-color-text, #262626);
+    text-decoration: none;
+}
+
+a.sx-letter__file:hover,
+a.sx-letter__file:focus {
+    border-color: var(--sx-color-accent-border, #f8b4c8);
+    color: var(--sx-color-text, #262626);
+    text-decoration: none;
+}
+
+.sx-letter__file.is-missing {
+    opacity: .7;
+}
+
+.sx-letter__file-thumb {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 4px;
+    object-fit: cover;
+    background: var(--sx-color-surface, #fff);
+}
+
+.sx-letter__file-icon {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 4px;
+    background: var(--sx-color-surface, #fff);
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+.sx-letter__file-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.sx-letter__file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+    .sx-compose__attach span {
+        display: none;
+    }
+}
+
+/* Files kept only in the mailbox: fetched on demand */
+.sx-letter__fetching {
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+.sx-letter__spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--sx-color-border, #dedede);
+    border-top-color: var(--sx-color-accent, #ee4d7d);
+    border-radius: 50%;
+    animation: sx-mail-spin .8s linear infinite;
+}
+
+button.sx-letter__file {
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.sx-letter__file.is-remote {
+    border-style: dashed;
+}
+
+.sx-letter__file.is-remote:hover {
+    border-color: var(--sx-color-accent-border, #f8b4c8);
+}
+
+.sx-letter__file.is-loading {
+    opacity: .7;
+    cursor: progress;
+}
+
+/* "Настройки почты": file storage and cleanup */
+.sx-mail-settings {
+    max-width: 860px;
+    color: var(--sx-color-text, #262626);
+}
+
+.sx-mail-settings__lead,
+.sx-mail-settings__muted {
+    color: var(--sx-color-text-muted, #6f7484);
+    line-height: 1.55;
+}
+
+.sx-mail-settings__title {
+    margin: 28px 0 8px;
+    font-size: 17px;
+}
+
+.sx-mail-settings__list {
+    padding-left: 18px;
+}
+
+.sx-mail-settings__form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-width: 520px;
+}
+
+.sx-mail-settings__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    border: 0;
+    padding: 0;
+    font-weight: 400;
+}
+
+.sx-mail-settings__field > span,
+.sx-mail-settings__field legend {
+    font-weight: 600;
+    font-size: 14px;
+    border: 0;
+    margin: 0;
+}
+
+.sx-mail-settings__field small {
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+.sx-mail-settings__check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-weight: 400;
+}
+
+.sx-mail-settings__check input {
+    accent-color: var(--sx-color-accent, #ee4d7d);
+}
+
+.sx-mail-settings__error {
+    color: var(--sx-color-danger, #bd4348);
+    font-size: 13px;
+}
+
+.sx-mail-settings__preview,
+.sx-mail-settings__notice {
+    padding: 12px 14px;
+    border-radius: var(--sx-radius-sm, 6px);
+    background: var(--sx-color-surface-muted, #f4f6f8);
+    line-height: 1.5;
+}
+
+.sx-mail-settings__notice.is-success {
+    background: var(--sx-color-success-soft, #e9f7ef);
+    color: var(--sx-color-success, #1f7a4d);
+}
+
+.sx-mail-settings__notice.is-warning,
+.sx-mail-settings__notice.is-error {
+    background: var(--sx-color-danger-soft, #fdecec);
+    color: var(--sx-color-danger, #bd4348);
+}
+
+.sx-mail-settings__buttons {
+    display: flex;
+    gap: 10px;
+}
+
+/* Mailbox card → «Сбор писем»: latest collections */
+
+.sx-mail-settings__history {
+    margin-top: 24px;
+    max-width: 720px;
+}
+
+.sx-mail-settings__history-title {
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.sx-mail-settings__history-row {
+    display: grid;
+    grid-template-columns: 9em 9em 1fr auto;
+    gap: 12px;
+    padding: 8px 0;
+    border-top: 1px solid var(--sx-color-border, #e5e7eb);
+    color: var(--sx-color-text-muted, #6b7280);
+}
+
+@media (max-width: 640px) {
+    .sx-mail-settings__history-row {
+        grid-template-columns: 1fr;
+        gap: 2px;
+    }
+}
+
+/* Mailbox form: buttons of common mail services */
+
+.sx-mail-presets__label {
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.sx-mail-presets__buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.sx-mail-presets__hint {
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--sx-color-text-muted, #6f7484);
+}

@@ -18,8 +18,11 @@
     ],
     "require": {
         "php": ">=8.0",
-        "skeeks/cms": "^6.4.9.59 || dev-master",
-        "skeeks/cms-job": "^1.4.0"
+        "skeeks/cms": "^6.4.9.60",
+        "skeeks/cms-backend": "^2.1.1.15",
+        "skeeks/cms-job": "^1.4.0",
+        "symfony/mime": "^6.4 || ^7.0",
+        "zbateson/mail-mime-parser": "^3.0 || ^4.0"
     },
     "suggest": {
         "skeeks/cms-agent": "periodic polling of mailboxes and bots",
@@ -28,6 +31,18 @@
     "autoload": {
         "psr-4": {
             "skeeks\\cms\\communication\\": "src/"
+        }
+    },
+    "extra": {
+        "config-plugin": {
+            "web": [
+                "src/config/common.php",
+                "src/config/web.php"
+            ],
+            "console": [
+                "src/config/common.php",
+                "src/config/console.php"
+            ]
         }
     }
 }

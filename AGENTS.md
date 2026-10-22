@@ -26,5 +26,13 @@ linked entity through its `forManager()` scope; sending is limited by the
 employee's send right on the account. Notifications use CmsWebNotify only,
 with server-side recipients and no self-notification.
 
+Exception to the queue rule: the interactive "Проверить подключение" action
+logs in to IMAP/SMTP synchronously with the driver timeout; it reads and sends
+nothing. Mail transports implement `mail\MailDriverInterface`; the receive
+algorithm (cursor per folder, Message-ID dedup, threading, links, feed) lives
+in `jobs\MailPollJobHandler` and `services\MailIngestService`, not in drivers.
+`CmsCommMessageQuery::forManager()` relies on core forManager() scopes, which
+read `Yii::$app->user` for subordinates: call it in web requests, not in jobs.
+
 Run isolated tests and PHP syntax checks. No external sends, release,
 commit, push or production deployment are implied by a local code change.
