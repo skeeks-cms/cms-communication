@@ -31,7 +31,10 @@ class CmsCommLink extends ActiveRecord
     public const TYPE_CONTEXT = 'context';
     /** Inherited from earlier letters of the conversation. */
     public const TYPE_THREAD = 'thread';
+    /** Linked by an employee ("Привязать"). */
     public const TYPE_MANUAL = 'manual';
+    /** The record was created from this letter ("Создать задачу / лид / сделку"). */
+    public const TYPE_CREATED = 'created';
 
     public static function tableName()
     {

@@ -30,9 +30,9 @@ $shortDate = static function ($timestamp) use ($formatter) {
     $avatarKey = $incoming ? (string)$m->from_address : (string)array_key_first($m->getTo());
     $tags = [];
     foreach (MailUi::visibleLinks($m) as $link) {
-        $record = $link->getLinkedModel();
-        $tags[] = $record && method_exists($record, 'asText') ? $record->asText() : '#'.$link->model_id;
+        $tags[] = MailUi::linkLabel($link) ?? '#'.$link->model_id;
     }
+    $assignee = $m->conversation ? $m->conversation->assignedUser : null;
     $status = !$incoming && $m->status !== CmsCommMessage::STATUS_SENT ? $m->getStatusName() : '';
     $viewUrl = (string)BackendUrlHelper::createByParams(['view', 'pk' => $m->id])->enableEmptyLayout()->enableNoActions()->url;
     ?>
@@ -51,6 +51,9 @@ $shortDate = static function ($timestamp) use ($formatter) {
             <?php foreach (array_unique($tags) as $tag) : ?>
                 <span class="sx-mail__tag" title="Связано с CRM"><?= Html::encode($tag) ?></span>
             <?php endforeach; ?>
+            <?php if ($assignee) : ?>
+                <span class="sx-mail__tag sx-mail__tag--assignee" title="Ответственный за переписку"><?= MailUi::icon('user', 12) ?> <?= Html::encode($assignee->shortDisplayName) ?></span>
+            <?php endif; ?>
             <?php if ($status) : ?>
                 <span class="sx-mail__tag sx-mail__tag--status"><?= Html::encode($status) ?></span>
             <?php endif; ?>
@@ -59,5 +62,6 @@ $shortDate = static function ($timestamp) use ($formatter) {
             <?php endif; ?>
         </span>
         <span class="sx-mail__date" title="<?= Html::encode($formatter->asDatetime($m->message_at, 'php:d.m.Y H:i')) ?>"><?= Html::encode($shortDate($m->message_at)) ?></span>
+        <button type="button" class="sx-mail__row-menu" data-sx-mail-row-menu title="Действия с письмом" aria-label="Действия с письмом" tabindex="-1"><?= MailUi::icon('more-vertical', 16) ?></button>
     </div>
 <?php endforeach; ?>

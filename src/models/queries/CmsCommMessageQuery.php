@@ -11,10 +11,9 @@ use skeeks\cms\communication\models\CmsCommAccount;
 use skeeks\cms\communication\models\CmsCommAccountAccess;
 use skeeks\cms\communication\models\CmsCommLink;
 use skeeks\cms\communication\models\CmsCommMessage;
+use skeeks\cms\communication\models\CmsCommConversation;
 use skeeks\cms\communication\models\CmsCommMessageMailbox;
-use skeeks\cms\models\CmsCompany;
-use skeeks\cms\models\CmsLead;
-use skeeks\cms\models\CmsUser;
+use skeeks\cms\communication\services\CrmRecords;
 use skeeks\cms\models\User;
 use skeeks\cms\rbac\CmsManager;
 use yii\db\ActiveQuery;
@@ -55,7 +54,7 @@ class CmsCommMessageQuery extends ActiveQuery
      * - administrators: all messages of the site;
      * - mailboxes where the employee reads everything;
      * - letters the employee sent;
-     * - letters linked to a lead, company or client the employee can see,
+     * - letters linked to a lead, company, client, deal or task the employee can see,
      *   unless every mailbox of the letter hides linked access
      *   (CmsCommAccount::$is_expose_linked).
      *
@@ -104,9 +103,30 @@ class CmsCommMessageQuery extends ActiveQuery
     }
 
     /**
-     * Letters linked to a lead, company or client the employee can see in
-     * the CRM ("Мои клиенты"). Reading a whole mailbox does not make its
-     * other clients the employee's.
+     * Letters of conversations the employee is responsible for; null: of
+     * conversations without a responsible person.
+     */
+    public function assignedTo(?int $userId)
+    {
+        $t = CmsCommMessage::tableName();
+
+        return $this->andWhere([$t.'.cms_comm_conversation_id' => CmsCommConversation::find()->select('id')
+            ->andWhere(['assigned_user_id' => $userId])]);
+    }
+
+    /** Letters linked to any CRM record (true) or to none (false). */
+    public function linked(bool $linked = true)
+    {
+        $exists = ['exists', CmsCommLink::find()
+            ->andWhere([CmsCommLink::tableName().'.cms_comm_message_id' => new Expression(CmsCommMessage::tableName().'.id')])];
+
+        return $this->andWhere($linked ? $exists : ['not', $exists]);
+    }
+
+    /**
+     * Letters linked to a lead, company, client, deal or task the employee
+     * can see in the CRM ("Мои клиенты"). Reading a whole mailbox does not
+     * make its other clients the employee's.
      */
     public function linkedToVisible(User $user)
     {
@@ -122,10 +142,13 @@ class CmsCommMessageQuery extends ActiveQuery
                 ->andWhere(['model_code' => $modelCode, 'model_id' => $visibleIds])];
         };
 
-        return ['or',
-            $linkedTo((new CmsLead())->skeeksModelCode, CmsLead::find()->forManager($user)->select(CmsLead::tableName().'.id')),
-            $linkedTo((new CmsCompany())->skeeksModelCode, CmsCompany::find()->forManager($user)->select(CmsCompany::tableName().'.id')),
-            $linkedTo((new CmsUser())->skeeksModelCode, CmsUser::find()->forManager($user)->select(CmsUser::tableName().'.id')),
-        ];
+        // Leads, companies, clients, deals and tasks (a task or deal created from the letter, too).
+        $conditions = ['or'];
+        foreach (CrmRecords::types() as $type => $config) {
+            $class = $config['class'];
+            $conditions[] = $linkedTo($class, CrmRecords::visibleQuery($type, $user)->select($class::tableName().'.id'));
+        }
+
+        return $conditions;
     }
 }

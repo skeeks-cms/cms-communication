@@ -15,18 +15,38 @@
  * @var $hasMore bool
  * @var $canSend bool
  * @var $drafts skeeks\cms\communication\models\CmsCommDraft[]|null the "Черновики" folder
+ * @var $assignee string filter: "", "me", "none" or an employee id
+ * @var $linked string filter: "", "yes" (linked to the CRM), "no" (not sorted)
+ * @var $assignees array id => name: other employees responsible for visible conversations
  */
 
 use skeeks\cms\communication\assets\MailClientAsset;
 use skeeks\cms\communication\helpers\MailUi;
+use skeeks\cms\communication\services\MailFolders;
 use skeeks\cms\widgets\Pjax;
 use yii\helpers\Html;
 use yii\helpers\Url;
 
 MailClientAsset::register($this);
 
-$listParams = ['mail', 'folder' => $folder, 'q' => $search !== '' ? $search : null, 'unread' => $unreadOnly ? 1 : null];
+$assignee = $assignee ?? '';
+$linked = $linked ?? '';
+$assignees = $assignees ?? [];
+$listParams = ['mail', 'folder' => $folder, 'q' => $search !== '' ? $search : null, 'unread' => $unreadOnly ? 1 : null,
+    'assignee' => $assignee !== '' ? $assignee : null, 'linked' => $linked !== '' ? $linked : null];
 $drafts = $drafts ?? null;
+$assigneeItems = ['' => 'Ответственный: все', MailFolders::ASSIGNEE_ME => 'Ответственный: я', MailFolders::ASSIGNEE_NONE => 'Без ответственного'];
+foreach ($assignees as $id => $name) {
+    $assigneeItems[(string)$id] = 'Ответственный: '.$name;
+}
+$linkedItems = ['' => 'Привязка: все', MailFolders::LINKED_YES => 'Привязано к CRM', MailFolders::LINKED_NO => 'Не разобрано'];
+// Row menu ("Создать…", "Привязать"): URLs of a letter with its id put in by mail.js.
+$rowMenu = [
+    'link' => MailUi::linkUrl('__ID__'),
+    'assign' => Url::to(['assign', 'pk' => '__ID__']),
+    'create' => MailUi::createActions('__ID__'),
+    'me' => (int)\Yii::$app->user->id,
+];
 $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByParams(['personal'])->enableEmptyLayout()->enableNoActions()->url;
 $title = 'Все письма';
 $totalUnread = 0;
@@ -49,6 +69,8 @@ $hotkeys = [
     'r' => 'Ответить (в открытом письме)',
     'a' => 'Ответить всем (в открытом письме)',
     'f' => 'Переслать (в открытом письме)',
+    'l' => 'Привязать к лиду, компании, клиенту или сделке (в открытом письме)',
+    'Правая кнопка мыши' => 'Меню письма: привязать, создать задачу, лид или сделку',
     'Ctrl + Enter' => 'Отправить письмо',
     'Esc' => 'Закрыть письмо',
     '?' => 'Эта подсказка',
@@ -114,6 +136,15 @@ $hotkeys = [
                 <?= Html::a(Html::tag('span', '', ['class' => 'sx-mail__filter-dot']).' Непрочитанные',
                     Url::to(array_merge($listParams, ['unread' => $unreadOnly ? null : 1])),
                     ['class' => 'sx-mail__tool sx-mail__filter'.($unreadOnly ? ' is-active' : ''), 'title' => $unreadOnly ? 'Показать все письма' : 'Показать только непрочитанные']) ?>
+                <?php // Filters keep the folder, search and each other: the option value is the URL to open. ?>
+                <?php foreach (['assignee' => [$assigneeItems, $assignee, 'Ответственный за переписку'], 'linked' => [$linkedItems, $linked, 'Привязка к лидам, компаниям, клиентам и сделкам']] as $param => [$items, $current, $hint]) : ?>
+                    <?php if (!isset($items[$current])) { $items[$current] = $current; } ?>
+                    <select class="sx-mail__select<?= $current !== '' ? ' is-active' : '' ?>" data-sx-mail-filter title="<?= Html::encode($hint) ?>" aria-label="<?= Html::encode($hint) ?>">
+                        <?php foreach ($items as $value => $label) : ?>
+                            <option value="<?= Html::encode(Url::to(array_merge($listParams, [$param => $value !== '' ? $value : null]))) ?>" <?= (string)$value === (string)$current ? 'selected' : '' ?>><?= Html::encode($label) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                <?php endforeach; ?>
                 <span class="sx-mail__toolbar-title"><?= Html::encode($title) ?><?= $search !== '' ? ' · поиск «'.Html::encode($search).'»' : '' ?></span>
                 <?php endif; ?>
             </div>
@@ -146,6 +177,21 @@ $hotkeys = [
         <button type="button" class="sx-mail__selection-action" data-sx-mail-mark="1">Прочитано</button>
         <button type="button" class="sx-mail__selection-action" data-sx-mail-mark="0">Не прочитано</button>
         <button type="button" class="sx-mail__selection-close" data-sx-mail-clear aria-label="Снять выбор" title="Снять выбор">×</button>
+    </div>
+
+    <?php // The row menu (right click or "⋯" of a row); mail.js puts the letter id into the URLs. ?>
+    <div class="sx-mail__menu sx-mail__context" data-sx-mail-context hidden role="menu"
+         data-config="<?= Html::encode(\yii\helpers\Json::encode($rowMenu)) ?>">
+        <button type="button" class="sx-mail__menu-item" data-sx-mail-context-action="open"><?= MailUi::icon('mail-open', 16) ?> Открыть</button>
+        <button type="button" class="sx-mail__menu-item" data-sx-mail-context-action="read"><?= MailUi::icon('mail-open', 16) ?> Прочитано</button>
+        <button type="button" class="sx-mail__menu-item" data-sx-mail-context-action="unread"><?= MailUi::icon('mail', 16) ?> Не прочитано</button>
+        <span class="sx-mail__menu-sep"></span>
+        <button type="button" class="sx-mail__menu-item" data-sx-mail-context-action="link"><?= MailUi::icon('link', 16) ?> Привязать…</button>
+        <?php foreach ($rowMenu['create'] as $type => $action) : ?>
+            <button type="button" class="sx-mail__menu-item" data-sx-mail-context-action="create" data-type="<?= Html::encode($type) ?>"><?= MailUi::icon($action['icon'], 16) ?> <?= Html::encode($action['title']) ?>…</button>
+        <?php endforeach; ?>
+        <span class="sx-mail__menu-sep"></span>
+        <button type="button" class="sx-mail__menu-item" data-sx-mail-context-action="assign-me"><?= MailUi::icon('user', 16) ?> Назначить меня ответственным</button>
     </div>
 
     <div class="sx-mail__dialog" data-sx-mail-hotkeys-dialog hidden role="dialog" aria-label="Горячие клавиши">

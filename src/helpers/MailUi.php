@@ -8,6 +8,8 @@
 namespace skeeks\cms\communication\helpers;
 
 use skeeks\cms\backend\helpers\BackendUrlHelper;
+use skeeks\cms\communication\services\CrmRecords;
+use yii\helpers\Html;
 use yii\helpers\Json;
 
 /**
@@ -24,6 +26,8 @@ class MailUi
         'reply' => 'fas fa-reply', 'forward' => 'fas fa-share', 'mail-open' => 'far fa-envelope-open',
         'paperclip' => 'fas fa-paperclip', 'search' => 'fas fa-search', 'file' => 'far fa-file', 'info' => 'fas fa-info-circle',
         'reply-all' => 'fas fa-reply-all', 'image' => 'far fa-image', 'link' => 'fas fa-link',
+        'plus' => 'fas fa-plus', 'chevron-down' => 'fas fa-chevron-down', 'user' => 'far fa-user', 'tasks' => 'fas fa-tasks',
+        'handshake' => 'far fa-handshake', 'id-card' => 'far fa-id-card', 'building' => 'far fa-building', 'more-vertical' => 'fas fa-ellipsis-v',
     ];
 
     /** One or two capital letters of a name for the round avatar. */
@@ -76,14 +80,12 @@ class MailUi
         return self::openWindow([self::ROUTE_MESSAGE.'/view', 'pk' => $messageId]);
     }
 
-    /** @var array model code => record id => visible to the current employee */
-    private static array $visible = [];
-
     /**
-     * Links of a letter to records the current employee can see in the CRM.
-     * Reading a whole mailbox shows its letters, not its other clients: their
-     * names stay hidden, and their cards are never offered (an entity link of
-     * a card without access would run its only action, "Удалить").
+     * Links of a letter to records the current employee can see in the CRM
+     * (CrmRecords: leads, companies, clients, deals, tasks). Reading a whole
+     * mailbox shows its letters, not its other clients: their names stay
+     * hidden, and their cards are never offered (an entity link of a card
+     * without access would run its only action, "Удалить").
      *
      * @return \skeeks\cms\communication\models\CmsCommLink[]
      */
@@ -93,50 +95,50 @@ class MailUi
         if (!$user) {
             return [];
         }
-        if (\Yii::$app->user->can(\skeeks\cms\rbac\CmsManager::PERMISSION_ROLE_ADMIN_ACCESS)) {
-            return $message->links;
-        }
-        $classes = [
-            (new \skeeks\cms\models\CmsLead())->skeeksModelCode => \skeeks\cms\models\CmsLead::class,
-            (new \skeeks\cms\models\CmsCompany())->skeeksModelCode => \skeeks\cms\models\CmsCompany::class,
-            (new \skeeks\cms\models\CmsUser())->skeeksModelCode => \skeeks\cms\models\CmsUser::class,
-        ];
 
-        return array_values(array_filter($message->links, static function ($link) use ($classes, $user) {
-            $class = $classes[$link->model_code] ?? null;
-            if (!$class) {
-                return false;
-            }
-            $id = (int)$link->model_id;
-            if (!isset(self::$visible[$link->model_code][$id])) {
-                self::$visible[$link->model_code][$id] = $class::find()->forManager($user)
-                    ->andWhere([$class::tableName().'.id' => $id])->exists();
-            }
-
-            return self::$visible[$link->model_code][$id];
+        return array_values(array_filter($message->links, static function ($link) use ($user) {
+            return CrmRecords::isVisible((string)$link->model_code, (int)$link->model_id, $user);
         }));
+    }
+
+    /**
+     * Text of a CRM mark of a letter in the list: the record name, or
+     * "Задача №12" for a record created from this letter.
+     */
+    public static function linkLabel(\skeeks\cms\communication\models\CmsCommLink $link): ?string
+    {
+        $record = $link->getLinkedModel();
+        if (!$record) {
+            return null;
+        }
+        $type = CrmRecords::typeOfCode((string)$link->model_code);
+        if ($link->link_type === \skeeks\cms\communication\models\CmsCommLink::TYPE_CREATED && $type) {
+            return CrmRecords::number($type, $record);
+        }
+
+        return CrmRecords::name($record);
     }
 
     /**
      * CRM records of a letter as standard entity links: logo (or icon) and
      * name, opening the record card in the backend panel; only records the
-     * employee can see (visibleLinks()).
+     * employee can see (visibleLinks()). Each has "Отвязать" when $unlink.
+     * Records created from this letter are shown by createdMarks() instead.
      */
-    public static function linkedRecords(\skeeks\cms\communication\models\CmsCommMessage $message): string
+    public static function linkedRecords(\skeeks\cms\communication\models\CmsCommMessage $message, bool $unlink = false): string
     {
-        $icons = [
-            (new \skeeks\cms\models\CmsCompany())->skeeksModelCode => 'building',
-            (new \skeeks\cms\models\CmsUser())->skeeksModelCode => 'user',
-            (new \skeeks\cms\models\CmsLead())->skeeksModelCode => 'id-card',
-        ];
         $items = [];
         foreach (self::visibleLinks($message) as $link) {
+            if ($link->link_type === \skeeks\cms\communication\models\CmsCommLink::TYPE_CREATED) {
+                continue;
+            }
             $record = $link->getLinkedModel();
             if (!$record) {
                 continue;
             }
+            $type = (string)CrmRecords::typeOfCode((string)$link->model_code);
             $config = \Yii::$app->skeeks->modelsConfig[$link->model_code] ?? [];
-            $name = method_exists($record, 'asText') ? (string)$record->asText() : '#'.$record->primaryKey;
+            $name = CrmRecords::name($record);
             $image = null;
             foreach (['cmsImage', 'image'] as $relation) {
                 if ($record->canGetProperty($relation) && $record->$relation) {
@@ -146,26 +148,111 @@ class MailUi
             }
             $content = \skeeks\cms\backend\widgets\BackendEntityMedia::widget([
                     'image' => $image,
-                    'icon' => $icons[$link->model_code] ?? 'link',
+                    'icon' => CrmRecords::type($type)['icon'] ?? 'link',
                     'size' => 'small',
                 ])
-                .\yii\helpers\Html::tag('span',
-                    \yii\helpers\Html::tag('span', \yii\helpers\Html::encode($config['name_one'] ?? 'Запись'), ['class' => 'sx-letter__record-type'])
-                    .\yii\helpers\Html::tag('span', \yii\helpers\Html::encode($name), ['class' => 'sx-letter__record-name']),
+                .Html::tag('span',
+                    Html::tag('span', Html::encode(CrmRecords::type($type)['title'] ?? ($config['name_one'] ?? 'Запись')), ['class' => 'sx-letter__record-type'])
+                    .Html::tag('span', Html::encode($name), ['class' => 'sx-letter__record-name']),
                     ['class' => 'sx-letter__record-text']);
 
-            $items[] = empty($config['controller'])
-                ? \yii\helpers\Html::tag('span', $content, ['class' => 'sx-letter__record'])
-                : \skeeks\cms\backend\widgets\BackendEntityLink::widget([
-                    'controllerId' => '/'.ltrim((string)$config['controller'], '/'),
-                    'modelId' => $record->primaryKey,
-                    'content' => $content,
-                    'options' => ['class' => 'sx-letter__record', 'title' => 'Открыть карточку'],
+            $item = self::entityLink((string)$link->model_code, $record, $content, 'sx-letter__record');
+            if ($unlink) {
+                $item .= Html::button('×', [
+                    'class' => 'sx-letter__unlink',
+                    'title' => 'Отвязать',
+                    'aria-label' => 'Отвязать от «'.$name.'»',
+                    'data-sx-letter-unlink' => Json::encode(['code' => $link->model_code, 'id' => (int)$link->model_id, 'name' => $name]),
                 ]);
+            }
+            $items[] = Html::tag('span', $item, ['class' => 'sx-letter__record-wrap']);
         }
 
-        return $items ? \yii\helpers\Html::tag('div', implode('', $items), ['class' => 'sx-letter__records']) : '';
+        return $items ? Html::tag('div', implode('', $items), ['class' => 'sx-letter__records']) : '';
     }
+
+    /**
+     * "Задача №12", "Лид №5": records created from the letter, opening their cards.
+     *
+     * @param array[] $created MessageSorting::createdRecords()
+     */
+    public static function createdMarks(array $created): string
+    {
+        $items = [];
+        foreach ($created as $item) {
+            $record = $item['record'];
+            $content = self::icon(CrmRecords::type($item['type'])['icon'] ?? 'link', 15)
+                .Html::tag('span', Html::encode(CrmRecords::number($item['type'], $record)));
+            $items[] = self::entityLink(CrmRecords::codeOf($item['type']), $record, $content, 'sx-letter__mark');
+        }
+
+        return $items ? Html::tag('div', implode('', $items), ['class' => 'sx-letter__marks', 'title' => 'Создано из этого письма']) : '';
+    }
+
+    /**
+     * "Создать задачу / лид / сделку": the standard create window of the CRM
+     * with ?source=message:ID (skeeks/cms RecordSources), only those the
+     * employee may open.
+     *
+     * @return array[] type => title, icon, url
+     */
+    public static function createActions(int|string $messageId): array
+    {
+        $result = [];
+        foreach (CrmRecords::CREATABLE as $type) {
+            $config = CrmRecords::type($type);
+            $controller = \Yii::$app->skeeks->modelsConfig[$config['class']]['controller'] ?? null;
+            if (!$controller || !self::canOpen(ltrim((string)$controller, '/'), 'create')) {
+                continue;
+            }
+            $result[$type] = [
+                'title' => $config['create'],
+                'icon' => $config['icon'],
+                'url' => (string)BackendUrlHelper::createByParams([
+                    '/'.ltrim((string)$controller, '/').'/create',
+                    \skeeks\cms\source\RecordSources::PARAM => \skeeks\cms\communication\source\MessageRecordSource::TYPE.':'.$messageId,
+                ])->enableEmptyLayout()->url,
+            ];
+        }
+
+        return $result;
+    }
+
+    /** The "Привязать" window of a letter. */
+    public static function linkUrl(int|string $messageId): string
+    {
+        return (string)BackendUrlHelper::createByParams([self::ROUTE_MESSAGE.'/link', 'pk' => $messageId])->enableEmptyLayout()->url;
+    }
+
+    /** Access to a backend controller action, the way BackendEntityLink checks a card. */
+    private static function canOpen(string $controllerId, string $action): bool
+    {
+        if (!\Yii::$app->has('authManager') || \Yii::$app->user->isGuest) {
+            return false;
+        }
+        foreach ([$controllerId.'/'.$action, $controllerId] as $permission) {
+            if (\Yii::$app->authManager->getPermission($permission)) {
+                return \Yii::$app->user->can($permission);
+            }
+        }
+
+        return true;
+    }
+
+    private static function entityLink(string $modelCode, $record, string $content, string $class): string
+    {
+        $controller = \Yii::$app->skeeks->modelsConfig[$modelCode]['controller'] ?? null;
+
+        return $controller
+            ? \skeeks\cms\backend\widgets\BackendEntityLink::widget([
+                'controllerId' => '/'.ltrim((string)$controller, '/'),
+                'modelId' => $record->primaryKey,
+                'content' => $content,
+                'options' => ['class' => $class, 'title' => 'Открыть карточку'],
+            ])
+            : Html::tag('span', $content, ['class' => $class]);
+    }
+
 
     private static function openWindow(array $route): string
     {

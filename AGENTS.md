@@ -31,6 +31,11 @@ logs in to IMAP/SMTP synchronously with the driver timeout; it reads and sends
 nothing. Mail transports implement `mail\MailDriverInterface`; the receive
 algorithm (cursor per folder, Message-ID dedup, threading, links, feed) lives
 in `jobs\MailPollJobHandler` and `services\MailIngestService`, not in drivers.
+Manual sorting is `services\MessageSorting` (link/unlink/assign) and
+`services\MessageRecordFactory` (task/lead/deal from a letter, also behind
+the core record source `message`, `source\MessageRecordSource`); the CRM
+record types mail knows and their visibility are `services\CrmRecords`. All
+links go through `MessageLinker` (link type strength, exclusions).
 `CmsCommMessageQuery::forManager()` relies on core forManager() scopes, which
 read `Yii::$app->user` for subordinates: call it in web requests, not in jobs.
 

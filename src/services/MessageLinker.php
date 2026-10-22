@@ -8,6 +8,7 @@
 namespace skeeks\cms\communication\services;
 
 use skeeks\cms\communication\models\CmsCommLink;
+use skeeks\cms\communication\models\CmsCommLinkExclusion;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\models\CmsCompany;
 use skeeks\cms\models\CmsLog;
@@ -22,6 +23,15 @@ use yii\db\ActiveRecord;
  */
 class MessageLinker
 {
+    /** Which link type wins when a letter is linked to the same record again. */
+    private const STRENGTH = [
+        CmsCommLink::TYPE_THREAD => 1,
+        CmsCommLink::TYPE_AUTO => 1,
+        CmsCommLink::TYPE_CONTEXT => 2,
+        CmsCommLink::TYPE_MANUAL => 3,
+        CmsCommLink::TYPE_CREATED => 4,
+    ];
+
     /**
      * @param ActiveRecord[] $records
      */
@@ -52,9 +62,91 @@ class MessageLinker
         }
     }
 
+    /**
+     * Removes the link of a letter to a record together with its feed entry.
+     * The caller owns the transaction.
+     */
+    public function unlink(CmsCommMessage $message, string $code, int $id): bool
+    {
+        $link = CmsCommLink::find()->andWhere(['cms_comm_message_id' => $message->id, 'model_code' => $code, 'model_id' => $id])->one();
+        if (!$link) {
+            return false;
+        }
+        $logId = $link->cms_log_id;
+        if ($link->delete() === false) {
+            throw new \RuntimeException('Не удалось отвязать письмо.');
+        }
+        if ($logId && ($log = CmsLog::findOne((int)$logId)) && $log->delete() === false) {
+            throw new \RuntimeException('Не удалось убрать письмо из ленты.');
+        }
+
+        return true;
+    }
+
+    /** Later letters of the conversation are not linked to the record automatically. */
+    public function exclude(int $conversationId, string $code, int $id, ?int $createdBy): void
+    {
+        if ($this->isExcluded($conversationId, $code, $id)) {
+            return;
+        }
+        $row = new CmsCommLinkExclusion([
+            'cms_comm_conversation_id' => $conversationId,
+            'model_code' => $code,
+            'model_id' => $id,
+            'created_by' => $createdBy,
+        ]);
+        if (!$row->save(false)) {
+            throw new \RuntimeException('Не удалось запомнить отвязку.');
+        }
+    }
+
+    /** A record linked by hand again: automatic linking may bring it back. */
+    public function include(int $conversationId, string $code, int $id): void
+    {
+        CmsCommLinkExclusion::deleteAll(['cms_comm_conversation_id' => $conversationId, 'model_code' => $code, 'model_id' => $id]);
+    }
+
+    public function isExcluded(int $conversationId, string $code, int $id): bool
+    {
+        if (!self::exclusionsReady()) {
+            return false;
+        }
+
+        return CmsCommLinkExclusion::find()
+            ->andWhere(['cms_comm_conversation_id' => $conversationId, 'model_code' => $code, 'model_id' => $id])
+            ->exists();
+    }
+
+    private static bool $exclusionsReady = false;
+
+    /**
+     * Receiving runs in long-lived workers: right after a package update the
+     * migration may not be applied yet, and receiving must go on without it.
+     */
+    private static function exclusionsReady(): bool
+    {
+        if (!self::$exclusionsReady) {
+            self::$exclusionsReady = CmsCommLinkExclusion::getDb()->getTableSchema(CmsCommLinkExclusion::tableName(), true) !== null;
+        }
+
+        return self::$exclusionsReady;
+    }
+
     private function linkModel(CmsCommMessage $message, string $code, int $id, string $type, ?int $createdBy, ?ActiveRecord $record = null): void
     {
-        if (CmsCommLink::find()->andWhere(['cms_comm_message_id' => $message->id, 'model_code' => $code, 'model_id' => $id])->exists()) {
+        $existing = CmsCommLink::find()->andWhere(['cms_comm_message_id' => $message->id, 'model_code' => $code, 'model_id' => $id])->one();
+        if ($existing) {
+            // A link chosen by an employee is stronger than an automatic one; automatic linking never weakens it.
+            if (self::STRENGTH[$type] > (self::STRENGTH[$existing->link_type] ?? 0)) {
+                $existing->link_type = $type;
+                $existing->created_by = $createdBy ?? $existing->created_by;
+                $existing->save(false, ['link_type', 'created_by']);
+            }
+            return;
+        }
+        // An employee unlinked the record from this conversation: automatic linking does not bring it back.
+        if (self::STRENGTH[$type] < self::STRENGTH[CmsCommLink::TYPE_MANUAL]
+            && $this->isExcluded((int)$message->cms_comm_conversation_id, $code, $id)) {
             return;
         }
 
@@ -67,9 +159,9 @@ class MessageLinker
         if ($record) {
             $log->model_as_text = method_exists($record, 'asText') ? (string)$record->asText() : null;
         }
-        if ($code === (new CmsCompany())->skeeksModelCode) {
+        if ($code === CmsCompany::class) {
             $log->cms_company_id = $id;
-        } elseif ($code === (new CmsUser())->skeeksModelCode) {
+        } elseif ($code === CmsUser::class) {
             $log->cms_user_id = $id;
         }
         if (!$log->save(false)) {

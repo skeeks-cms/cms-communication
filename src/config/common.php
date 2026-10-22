@@ -24,6 +24,8 @@ return [
             'logTypes' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => 'Письмо'],
             'logRenderers' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => \skeeks\cms\communication\log\MessageLogRenderer::class],
             'activityLogTypes' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE],
+            // "Создать задачу / лид / сделку" from a letter: ?source=message:ID in the standard create window.
+            'recordSources' => [\skeeks\cms\communication\source\MessageRecordSource::TYPE => \skeeks\cms\communication\source\MessageRecordSource::class],
         ],
 
         'jobQueueFactory' => ['queues' => ['communication' => []]],

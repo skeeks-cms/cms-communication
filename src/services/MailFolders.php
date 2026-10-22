@@ -26,6 +26,15 @@ class MailFolders
     public const ALL = 'all';
     public const CLIENTS = 'clients';
     public const UNLINKED = 'unlinked';
+    /** Conversations the employee is responsible for ("Мне назначено"). */
+    public const ASSIGNED = 'assigned';
+
+    /** List filters (MailFolders::filter()): responsible person and CRM links. */
+    public const ASSIGNEE_ME = 'me';
+    public const ASSIGNEE_NONE = 'none';
+    public const LINKED_YES = 'yes';
+    public const LINKED_NO = 'no';
+
     /** The employee's drafts (MailDrafts): its counter is the number of drafts. */
     public const DRAFTS = 'drafts';
 
@@ -59,6 +68,7 @@ class MailFolders
     {
         $folders = [
             ['key' => self::ALL, 'title' => 'Все письма', 'group' => null, 'icon' => 'mail'],
+            ['key' => self::ASSIGNED, 'title' => 'Мне назначено', 'group' => null, 'icon' => 'user'],
             ['key' => self::CLIENTS, 'title' => 'Мои клиенты', 'group' => null, 'icon' => 'users'],
         ];
         $accounts = $this->accounts();
@@ -89,7 +99,7 @@ class MailFolders
 
     public function isKnown(string $key): bool
     {
-        foreach ([self::ALL, self::CLIENTS, self::UNLINKED, self::DRAFTS] as $fixed) {
+        foreach ([self::ALL, self::ASSIGNED, self::CLIENTS, self::UNLINKED, self::DRAFTS] as $fixed) {
             if ($key === $fixed) {
                 return true;
             }
@@ -114,7 +124,9 @@ class MailFolders
             ->orderBy([$t.'.message_at' => SORT_DESC, $t.'.id' => SORT_DESC]);
         $hasLinks = ['exists', CmsCommLink::find()->andWhere([CmsCommLink::tableName().'.cms_comm_message_id' => $messageId])];
 
-        if ($key === self::CLIENTS) {
+        if ($key === self::ASSIGNED) {
+            $query->assignedTo((int)$this->user->id);
+        } elseif ($key === self::CLIENTS) {
             $query->linkedToVisible($this->user);
         } elseif ($key === self::UNLINKED) {
             $query->andWhere(['not', $hasLinks])->andWhere([$t.'.is_internal' => 0, $t.'.direction' => CmsCommMessage::DIRECTION_IN]);
@@ -135,6 +147,55 @@ class MailFolders
         }
 
         return $query;
+    }
+
+    /**
+     * Narrows a folder: $assignee — "me", "none" or an employee id (the
+     * person responsible for the conversation); $linked — "yes" (linked to
+     * the CRM) or "no" ("не разобрано": no CRM record yet). Unknown values
+     * are ignored.
+     */
+    public function filter(CmsCommMessageQuery $query, string $assignee = '', string $linked = ''): CmsCommMessageQuery
+    {
+        if ($assignee === self::ASSIGNEE_ME) {
+            $query->assignedTo((int)$this->user->id);
+        } elseif ($assignee === self::ASSIGNEE_NONE) {
+            $query->assignedTo(null);
+        } elseif (ctype_digit($assignee) && (int)$assignee > 0) {
+            $query->assignedTo((int)$assignee);
+        }
+        if ($linked === self::LINKED_YES) {
+            $query->linked(true);
+        } elseif ($linked === self::LINKED_NO) {
+            $query->linked(false);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Employees responsible for conversations of letters this employee may
+     * read: the choices of the "Ответственный" filter.
+     *
+     * @return array id => short name
+     */
+    public function assignees(): array
+    {
+        $ids = CmsCommMessage::find()->cmsSite($this->siteId)->forManager($this->user)
+            ->select(CmsCommMessage::tableName().'.cms_comm_conversation_id');
+        $users = \skeeks\cms\models\CmsUser::find()
+            ->andWhere(['id' => \skeeks\cms\communication\models\CmsCommConversation::find()->select('assigned_user_id')->distinct()
+                ->andWhere(['id' => $ids])->andWhere(['not', ['assigned_user_id' => null]])])
+            ->all();
+        $result = [];
+        foreach ($users as $user) {
+            if ((int)$user->id !== (int)$this->user->id) {
+                $result[(int)$user->id] = (string)$user->shortDisplayName;
+            }
+        }
+        asort($result);
+
+        return $result;
     }
 
     /** Incoming letters without the employee's read mark. */

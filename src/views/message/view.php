@@ -11,6 +11,8 @@
  * @var $showImages bool external images are shown in this view
  * @var $alwaysShowImages bool the employee shows them for every letter
  * @var $replyDraft bool the employee has started an answer to this letter (a draft)
+ * @var $created array[] records created from this letter (MessageSorting::createdRecords())
+ * @var $createActions array[] "Создать задачу / лид / сделку" the employee may open (MailUi::createActions())
  */
 
 use skeeks\cms\communication\assets\MailClientAsset;
@@ -46,6 +48,10 @@ $list = static function (array $addresses): string {
     return implode(', ', $items);
 };
 $replyAll = count($model->getTo()) + count($model->getCc()) > 1;
+$created = $created ?? [];
+$createActions = $createActions ?? [];
+$conversation = $model->conversation;
+$assignee = $conversation ? $conversation->assignedUser : null;
 $composeUrl = static fn(array $params) => Url::to(array_merge(['create', 'inline' => 1], $params));
 ?>
 <div class="sx-letter" data-sx-letter data-id="<?= (int)$model->id ?>"
@@ -53,7 +59,9 @@ $composeUrl = static fn(array $params) => Url::to(array_merge(['create', 'inline
      data-settings-url="<?= Html::encode(Url::to(['settings'])) ?>"
      data-frame-url="<?= Html::encode(Url::to(['view', 'pk' => $model->id, 'frame' => 1])) ?>"
      data-fetch-url="<?= Html::encode(Url::to(['fetch', 'pk' => $model->id])) ?>"
-     data-fetch-status-url="<?= Html::encode(Url::to(['fetch-status', 'pk' => $model->id])) ?>">
+     data-fetch-status-url="<?= Html::encode(Url::to(['fetch-status', 'pk' => $model->id])) ?>"
+     data-unlink-url="<?= Html::encode(Url::to(['unlink', 'pk' => $model->id])) ?>"
+     data-assign-url="<?= Html::encode(Url::to(['assign', 'pk' => $model->id])) ?>">
     <div class="sx-letter__toolbar">
         <?php if ($canReply) : ?>
             <button type="button" class="sx-mail__tool" data-sx-letter-compose="<?= Html::encode($composeUrl(['reply_to' => $model->id])) ?>" title="Ответить (r)">
@@ -72,6 +80,30 @@ $composeUrl = static fn(array $params) => Url::to(array_merge(['create', 'inline
         <?php if ($incoming && !$model->is_history) : ?>
             <button type="button" class="sx-mail__tool" data-sx-letter-unread title="Shift + u"><?= MailUi::icon('mail', 17) ?> <span class="sx-mail__tool-text">Не прочитано</span></button>
         <?php endif; ?>
+        <span class="sx-letter__toolbar-gap"></span>
+        <button type="button" class="sx-mail__tool" data-sx-letter-link="<?= Html::encode(MailUi::linkUrl((int)$model->id)) ?>" title="Привязать к лиду, компании, клиенту или сделке (l)">
+            <?= MailUi::icon('link', 17) ?> <span class="sx-mail__tool-text">Привязать</span>
+        </button>
+        <?php if ($createActions) : ?>
+            <span class="sx-mail__menu-wrap">
+                <button type="button" class="sx-mail__tool" data-sx-mail-menu-toggle aria-haspopup="true" title="Создать задачу, лид или сделку из письма">
+                    <?= MailUi::icon('plus', 17) ?> <span class="sx-mail__tool-text">Создать</span> <?= MailUi::icon('chevron-down', 14) ?>
+                </button>
+                <span class="sx-mail__menu" data-sx-mail-menu hidden>
+                    <?php foreach ($createActions as $type => $action) : ?>
+                        <button type="button" class="sx-mail__menu-item" data-sx-letter-create="<?= Html::encode($action['url']) ?>" data-type="<?= Html::encode($type) ?>">
+                            <?= MailUi::icon($action['icon'], 16) ?> <?= Html::encode($action['title']) ?>
+                        </button>
+                    <?php endforeach; ?>
+                </span>
+            </span>
+        <?php endif; ?>
+        <span class="sx-mail__menu-wrap">
+            <button type="button" class="sx-mail__tool" data-sx-letter-assign aria-haspopup="true" title="Ответственный за переписку">
+                <?= MailUi::icon('user', 17) ?> <span class="sx-mail__tool-text">Ответственный</span> <?= MailUi::icon('chevron-down', 14) ?>
+            </button>
+            <span class="sx-mail__menu sx-mail__menu--right" data-sx-letter-assign-menu hidden></span>
+        </span>
     </div>
 
     <div class="sx-letter__head">
@@ -97,8 +129,16 @@ $composeUrl = static fn(array $params) => Url::to(array_merge(['create', 'inline
                     <?php if ($model->error) : ?><div class="sx-letter__error"><?= Html::encode($model->error) ?></div><?php endif; ?>
                 </div>
             <?php endif; ?>
+            <div class="sx-letter__muted sx-letter__assignee" data-sx-letter-assignee>
+                <?php if ($assignee) : ?>
+                    Ответственный: <strong><?= Html::encode($assignee->shortDisplayName) ?></strong>
+                <?php else : ?>
+                    Ответственный не назначен
+                <?php endif; ?>
+            </div>
+            <?= MailUi::createdMarks($created) ?>
         </div>
-        <?= MailUi::linkedRecords($model) ?>
+        <?= MailUi::linkedRecords($model, true) ?>
     </div>
 
     <div class="sx-letter__body">

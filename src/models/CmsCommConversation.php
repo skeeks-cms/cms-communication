@@ -7,6 +7,7 @@
 
 namespace skeeks\cms\communication\models;
 
+use skeeks\cms\models\CmsUser;
 use yii\behaviors\TimestampBehavior;
 use yii\db\ActiveRecord;
 
@@ -22,9 +23,12 @@ use yii\db\ActiveRecord;
  * @property string           $thread_key
  * @property string|null      $subject
  * @property int|null         $last_message_at
- * @property int|null         $assigned_user_id
+ * @property int|null         $assigned_user_id the person responsible for the conversation
+ * @property int|null         $assigned_at
+ * @property int|null         $assigned_by
  *
  * @property CmsCommMessage[] $messages
+ * @property CmsUser|null     $assignedUser
  */
 class CmsCommConversation extends ActiveRecord
 {
@@ -42,5 +46,10 @@ class CmsCommConversation extends ActiveRecord
     {
         return $this->hasMany(CmsCommMessage::class, ['cms_comm_conversation_id' => 'id'])
             ->orderBy(['message_at' => SORT_ASC, 'id' => SORT_ASC]);
+    }
+
+    public function getAssignedUser()
+    {
+        return $this->hasOne(CmsUser::class, ['id' => 'assigned_user_id']);
     }
 }

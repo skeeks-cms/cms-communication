@@ -12,6 +12,7 @@ use skeeks\cms\backend\controllers\BackendModelStandartController;
 use skeeks\cms\communication\components\MailUserSettings;
 use skeeks\cms\communication\forms\ComposeForm;
 use skeeks\cms\communication\helpers\MailHtml;
+use skeeks\cms\communication\helpers\MailUi;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\services\MailComposeService;
 use skeeks\cms\communication\services\MailDrafts;
@@ -20,6 +21,7 @@ use skeeks\cms\communication\services\MailFiles;
 use skeeks\cms\communication\services\MailFolders;
 use skeeks\cms\communication\services\MailNotifier;
 use skeeks\cms\communication\services\MailTemplates;
+use skeeks\cms\communication\services\MessageSorting;
 use skeeks\cms\grid\DateTimeColumnData;
 use skeeks\cms\rbac\CmsManager;
 use yii\base\Event;
@@ -161,6 +163,19 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'draft' => $hidden([$this, 'saveDraft']),
             // POST id: remove a draft with its files.
             'draft-delete' => $hidden([$this, 'deleteDraft']),
+            // GET pk: the window "Привязать письмо" (standard CRM choice with search);
+            // POST pk, type, id, conversation=1|0: link, JSON.
+            'link' => [
+                'class' => \skeeks\cms\backend\ViewBackendAction::class,
+                'name' => 'Привязать письмо',
+                'icon' => 'fas fa-link',
+                'isVisible' => false,
+                'callback' => [$this, 'linkRecord'],
+            ],
+            // POST pk, code, id, conversation=1|0: unlink, JSON.
+            'unlink' => $hidden([$this, 'unlinkRecord']),
+            // GET pk: who may be responsible, JSON; POST pk, user_id (empty: nobody): assign, JSON.
+            'assign' => $hidden([$this, 'assign']),
             // "Мои настройки почты": notifications, signatures, quick reply templates.
             'personal' => [
                 'class' => \skeeks\cms\backend\ViewBackendAction::class,
@@ -259,6 +274,93 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'templates' => $templates->templates(),
             'service' => $templates,
         ]);
+    }
+
+    /**
+     * "Привязать": the window with the standard CRM choice (GET), linking (POST).
+     */
+    public function linkRecord()
+    {
+        $message = $this->requireModel();
+        $request = \Yii::$app->request;
+        if ($request->isPost) {
+            \Yii::$app->response->format = Response::FORMAT_JSON;
+            $type = (string)$request->post('type');
+            $id = (int)$request->post('id');
+            if (!$id) {
+                return ['success' => false, 'message' => 'Выберите запись.'];
+            }
+            try {
+                $count = $this->sorting()->link($message, $type, $id, (bool)$request->post('conversation'));
+            } catch (\DomainException | \InvalidArgumentException $e) {
+                return ['success' => false, 'message' => $e->getMessage()];
+            }
+
+            return ['success' => true, 'count' => $count, 'message' => 'Письмо привязано'];
+        }
+
+        return $this->render('@skeeks/cms/communication/views/message/link', [
+            'model' => $message,
+            'letters' => (int)CmsCommMessage::find()->andWhere(['cms_comm_conversation_id' => (int)$message->cms_comm_conversation_id])->count(),
+            'siteId' => (int)\Yii::$app->skeeks->site->id,
+        ]);
+    }
+
+    public function unlinkRecord()
+    {
+        $this->requirePostJson();
+        $request = \Yii::$app->request;
+        try {
+            $count = $this->sorting()->unlink($this->requireModel(), (string)$request->post('code'), (int)$request->post('id'), (bool)$request->post('conversation'));
+        } catch (\DomainException $e) {
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+
+        return ['success' => true, 'count' => $count, 'message' => 'Письмо отвязано'];
+    }
+
+    public function assign()
+    {
+        \Yii::$app->response->format = Response::FORMAT_JSON;
+        $message = $this->requireModel();
+        $sorting = $this->sorting();
+        $request = \Yii::$app->request;
+        if (!$request->isPost) {
+            $items = [];
+            foreach ($sorting->assignableUsers($message) as $user) {
+                $items[] = ['id' => (int)$user->id, 'name' => (string)$user->shortDisplayName, 'me' => (int)$user->id === (int)\Yii::$app->user->id];
+            }
+
+            return ['success' => true, 'items' => $items, 'current' => (int)($message->conversation->assigned_user_id ?? 0)];
+        }
+        $userId = (int)$request->post('user_id') ?: null;
+        try {
+            $sorting->assign($message, $userId);
+        } catch (\DomainException $e) {
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+        $folders = $this->mailFolders();
+
+        return [
+            'success' => true,
+            'message' => $userId ? 'Ответственный назначен' : 'Ответственный снят',
+            'counters' => [MailFolders::ASSIGNED => (int)$folders->query(MailFolders::ASSIGNED)->andWhere($folders->unreadCondition())->count()],
+        ];
+    }
+
+    private function requireModel(): CmsCommMessage
+    {
+        $message = $this->model;
+        if (!$message) {
+            throw new NotFoundHttpException('Письмо не найдено.');
+        }
+
+        return $message;
+    }
+
+    private function sorting(): MessageSorting
+    {
+        return new MessageSorting(\Yii::$app->user->identity);
     }
 
     private function drafts(): MailDrafts
@@ -506,7 +608,9 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             ]);
         }
 
-        $query = $folders->query($folder, $search)->with(['links']);
+        $assignee = (string)$request->get('assignee', '');
+        $linked = (string)$request->get('linked', '');
+        $query = $folders->filter($folders->query($folder, $search)->with(['links', 'conversation.assignedUser']), $assignee, $linked);
         if ($unreadOnly) {
             $query->andWhere($folders->unreadCondition());
         }
@@ -541,6 +645,9 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'readIds' => $readIds,
             'hasMore' => $hasMore,
             'canSend' => (bool)$this->composeService()->sendableAccounts(),
+            'assignee' => $assignee,
+            'linked' => $linked,
+            'assignees' => $folders->assignees(),
         ]);
     }
 
@@ -572,6 +679,8 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'replyDraft' => $canReply && $this->drafts()->findFor((int)$this->model->id),
             'showImages' => $showImages,
             'alwaysShowImages' => (bool)$settings->showImages,
+            'created' => $this->sorting()->createdRecords($this->model),
+            'createActions' => MailUi::createActions((int)$this->model->id),
         ]);
     }
 

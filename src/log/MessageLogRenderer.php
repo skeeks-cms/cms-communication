@@ -8,6 +8,7 @@
 namespace skeeks\cms\communication\log;
 
 use skeeks\cms\communication\helpers\MailUi;
+use skeeks\cms\communication\models\CmsCommLink;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\log\CmsLogRendererInterface;
 use skeeks\cms\models\CmsLog;
@@ -36,6 +37,13 @@ class MessageLogRenderer implements CmsLogRendererInterface
 
         $incoming = $message->direction === CmsCommMessage::DIRECTION_IN;
         $title = $incoming ? 'Входящее письмо' : 'Исходящее письмо';
+        // The record was created from this letter ("Создать задачу / лид / сделку").
+        $link = $log->id ? CmsCommLink::find()->andWhere(['cms_log_id' => (int)$log->id])->one() : null;
+        if ($link && $link->link_type === CmsCommLink::TYPE_CREATED) {
+            $title = 'Создано из '.($incoming ? 'входящего' : 'исходящего').' письма';
+        } elseif ($link && $link->link_type === CmsCommLink::TYPE_MANUAL && $link->created_by && ($by = \skeeks\cms\models\CmsUser::findOne((int)$link->created_by))) {
+            $title .= ' · привязано вручную ('.$by->shortDisplayName.')';
+        }
         $who = $incoming
             ? '<span class="sx-gray">От:</span> '.Html::encode($message->getFromAsText())
             : '<span class="sx-gray">Кому:</span> '.Html::encode($message->getToAsText());

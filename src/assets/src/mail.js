@@ -263,7 +263,11 @@
         letterPanels().forEach(function (entry) {
             stack.close(entry.widget);
         });
-        var action = new sx.classes.backend.widgets.Action({isOpenNewWindow: true, url: $row.data('url')});
+        // A record created from the letter marks its panel changed: closing it then refreshes
+        // only the list, not the whole page (the standard reaction).
+        var action = new sx.classes.backend.widgets.Action({isOpenNewWindow: true, url: $row.data('url'), updateSuccessCallback: function () {
+            reloadList();
+        }});
         if (action.getWindow()) {
             action.getWindow().set('sxMailLetter', true);
         }
@@ -846,6 +850,9 @@
                 break;
             case 'KeyF':
                 click('[data-sx-letter-forward]');
+                break;
+            case 'KeyL':
+                click('[data-sx-letter-link]');
                 break;
             case 'KeyU':
                 if (e.shiftKey) {
@@ -1616,6 +1623,312 @@
                     focusCompose($form);
                 }, 300);
             });
+        });
+    });
+
+    /* ------------------------------------------------------------------
+     * Sorting letters: CRM links, records created from a letter, the
+     * responsible person, list filters and the row menu
+     * ------------------------------------------------------------------ */
+
+    /** A standard backend window; onDone runs after it closes with a saved record. */
+    function openBackendWindow(url, onDone) {
+        var options = {isOpenNewWindow: true, url: url};
+        if (onDone) {
+            options.updateSuccessCallback = onDone;
+        }
+        return new sx.classes.backend.widgets.Action(options).go();
+    }
+
+    /** Reloads open letter panels (only the letter id, when given): new links and marks show at once. */
+    function refreshLetters(id) {
+        letterPanels().forEach(function (entry) {
+            try {
+                var w = entry.iframe.contentWindow;
+                var $el = w.jQuery ? w.jQuery('[data-sx-letter]') : $();
+                if (w !== window && (!id || String($el.data('id')) === String(id))) {
+                    w.location.reload();
+                }
+            } catch (e) {
+            }
+        });
+    }
+
+    /** After a change made inside the open letter: this letter and the list behind it. */
+    function letterChanged() {
+        reloadList();
+        window.location.reload();
+    }
+
+    function closeMenus() {
+        $(".sx-mail__menu").prop("hidden", true);
+        $(".sx-mail__row-menu.is-active, .sx-letter__unlink.is-active").removeClass("is-active");
+    }
+
+    $(document).on('click', function (e) {
+        if (!$(e.target).closest('.sx-mail__menu, [data-sx-mail-menu-toggle], [data-sx-letter-assign], [data-sx-letter-unlink], [data-sx-mail-row-menu]').length) {
+            closeMenus();
+        }
+    });
+    // Esc closes an open menu first (capture phase: before the panel closes on Esc).
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && $('.sx-mail__menu:not([hidden])').length) {
+            e.stopPropagation();
+            closeMenus();
+        }
+    }, true);
+
+    $(document).on('click', '[data-sx-mail-menu-toggle]', function () {
+        var $menu = $(this).siblings('[data-sx-mail-menu]');
+        var open = $menu.prop('hidden');
+        closeMenus();
+        $menu.prop('hidden', !open);
+    });
+
+    // "Создать задачу / лид / сделку": the standard create window, filled from the letter.
+    $(document).on('click', '[data-sx-letter] [data-sx-letter-create]', function () {
+        closeMenus();
+        openBackendWindow($(this).data('sx-letter-create'), letterChanged);
+    });
+
+    // "Привязать": the window with the CRM choice; it refreshes this letter itself.
+    $(document).on('click', '[data-sx-letter] [data-sx-letter-link]', function () {
+        openBackendWindow($(this).data('sx-letter-link'));
+    });
+
+    // "×" of a linked record: this letter or the whole conversation.
+    $(document).on('click', '[data-sx-letter] [data-sx-letter-unlink]', function (e) {
+        e.preventDefault();
+        var $button = $(this);
+        var $wrap = $button.closest('.sx-letter__record-wrap');
+        var $menu = $wrap.find('[data-sx-letter-unlink-menu]');
+        if (!$menu.length) {
+            var data = $button.data('sx-letter-unlink');
+            $menu = $('<span class="sx-mail__menu sx-mail__menu--right" data-sx-letter-unlink-menu hidden></span>');
+            $('<span class="sx-mail__menu-note"></span>').text('Отвязать от «' + data.name + '»').appendTo($menu);
+            $('<button type="button" class="sx-mail__menu-item" data-conversation="0">Только это письмо</button>').appendTo($menu);
+            $('<button type="button" class="sx-mail__menu-item" data-conversation="1">Всю переписку</button>').appendTo($menu);
+            $menu.data('sxOwner', $button).appendTo($wrap);
+        }
+        var open = $menu.prop('hidden');
+        closeMenus();
+        $menu.prop('hidden', !open);
+        $button.toggleClass('is-active', open);
+    });
+
+    $(document).on('click', '[data-sx-letter-unlink-menu] [data-conversation]', function () {
+        var $item = $(this);
+        var data = $item.closest('.sx-letter__record-wrap').find('[data-sx-letter-unlink]').data('sx-letter-unlink');
+        var $letterEl = $item.closest('[data-sx-letter]');
+        $item.prop('disabled', true);
+        $.post($letterEl.data('unlink-url'), csrf({code: data.code, id: data.id, conversation: $item.data('conversation')})).done(function (response) {
+            if (response.success) {
+                notify('success', response.message);
+                letterChanged();
+            } else {
+                notify('error', response.message);
+                $item.prop('disabled', false);
+            }
+        }).fail(function () {
+            notify('error', 'Не удалось отвязать письмо.');
+            $item.prop('disabled', false);
+        });
+    });
+
+    /** Fills a menu with the employees who may be responsible for the letter. */
+    function assignMenu($menu, url, onPick) {
+        $menu.empty().append('<span class="sx-mail__menu-note">Загрузка…</span>').prop('hidden', false);
+        $.get(url).done(function (response) {
+            $menu.empty();
+            var items = response.items || [];
+            var me = items.filter(function (item) {
+                return item.me;
+            })[0];
+            if (me && response.current !== me.id) {
+                $('<button type="button" class="sx-mail__menu-item"></button>').text('Назначить меня').data('user', me.id).appendTo($menu);
+                $('<span class="sx-mail__menu-sep"></span>').appendTo($menu);
+            }
+            items.forEach(function (item) {
+                $('<button type="button" class="sx-mail__menu-item"></button>').text(item.name)
+                    .toggleClass('is-current', item.id === response.current).data('user', item.id).appendTo($menu);
+            });
+            if (response.current) {
+                $('<span class="sx-mail__menu-sep"></span>').appendTo($menu);
+                $('<button type="button" class="sx-mail__menu-item"></button>').text('Снять ответственного').data('user', 0).appendTo($menu);
+            }
+            if (!items.length) {
+                $('<span class="sx-mail__menu-note">Письмо не видно ни одному сотруднику, кроме вас.</span>').appendTo($menu);
+            }
+            $menu.find('.sx-mail__menu-item').on('click', function () {
+                onPick($(this).data('user'));
+            });
+        }).fail(function () {
+            $menu.empty().append('<span class="sx-mail__menu-note">Не удалось загрузить сотрудников.</span>');
+        });
+    }
+
+    function postAssign(url, userId) {
+        return $.post(url, csrf({user_id: userId || ''})).done(function (response) {
+            if (response.success) {
+                notify('success', response.message);
+                applyMainCounters(response.counters);
+            } else {
+                notify('error', response.message);
+            }
+        }).fail(function () {
+            notify('error', 'Не удалось назначить ответственного.');
+        });
+    }
+
+    $(document).on('click', '[data-sx-letter] [data-sx-letter-assign]', function () {
+        var $letterEl = $(this).closest('[data-sx-letter]');
+        var $menu = $letterEl.find('[data-sx-letter-assign-menu]');
+        if (!$menu.prop('hidden')) {
+            closeMenus();
+            return;
+        }
+        closeMenus();
+        assignMenu($menu, $letterEl.data('assign-url'), function (userId) {
+            closeMenus();
+            postAssign($letterEl.data('assign-url'), userId).done(function (response) {
+                if (response.success) {
+                    letterChanged();
+                }
+            });
+        });
+    });
+
+    // Filters of the list: each option is the URL of the filtered list.
+    $(document).on('change', root + ' [data-sx-mail-filter]', function () {
+        $.pjax({url: this.value, container: '#sx-mail-pjax', timeout: 15000});
+    });
+
+    // The row menu: right click on a row or its "⋯".
+    var contextRow = null;
+
+    function contextConfig() {
+        return $mail().find('[data-sx-mail-context]').data('config') || {};
+    }
+
+    function openContext($row, x, y, $owner) {
+        var $menu = $mail().find('[data-sx-mail-context]');
+        if (!$menu.length) {
+            return;
+        }
+        closeMenus();
+        contextRow = $row;
+        setCursor($row);
+        var unread = $row.hasClass('is-unread');
+        var readable = !$row.find('[data-sx-mail-toggle-read]').prop('disabled');
+        $menu.find('[data-sx-mail-context-action="read"]').prop('hidden', !readable || !unread);
+        $menu.find('[data-sx-mail-context-action="unread"]').prop('hidden', !readable || unread);
+        $menu.prop('hidden', false);
+        var width = $menu.outerWidth(), height = $menu.outerHeight();
+        $menu.css({
+            left: Math.max(8, Math.min(x, window.innerWidth - width - 8)),
+            top: Math.max(8, y + height > window.innerHeight - 8 ? y - height : y)
+        });
+        if ($owner) {
+            $owner.addClass('is-active');
+        }
+    }
+
+    $(document).on('contextmenu', root + ' .sx-mail__row', function (e) {
+        if ($(e.target).closest('a, input').length) {
+            return;
+        }
+        e.preventDefault();
+        openContext($(this), e.clientX, e.clientY);
+    });
+
+    $(document).on('click', root + ' [data-sx-mail-row-menu]', function (e) {
+        e.stopPropagation();
+        var $button = $(this);
+        if ($button.hasClass('is-active')) {
+            closeMenus();
+            return;
+        }
+        var rect = this.getBoundingClientRect();
+        openContext($button.closest('.sx-mail__row'), rect.right - 230, rect.bottom + 4, $button);
+    });
+
+    $(document).on('click', root + ' [data-sx-mail-context-action]', function () {
+        var $row = contextRow;
+        var action = $(this).data('sx-mail-context-action');
+        closeMenus();
+        if (!$row || !$row.length) {
+            return;
+        }
+        var id = String($row.data('id'));
+        var config = contextConfig();
+        var withId = function (url) {
+            return String(url).split('__ID__').join(id);
+        };
+        var changed = function () {
+            reloadList();
+            refreshLetters(id);
+        };
+        if (action === 'open') {
+            openLetter($row);
+        } else if (action === 'read' || action === 'unread') {
+            setRowsRead([id], action === 'read');
+            postMark([id], action === 'read');
+        } else if (action === 'link') {
+            openBackendWindow(withId(config.link));
+        } else if (action === 'create') {
+            var create = (config.create || {})[$(this).data('type')];
+            if (create) {
+                openBackendWindow(withId(create.url), changed);
+            }
+        } else if (action === 'assign-me') {
+            postAssign(withId(config.assign), config.me).done(function (response) {
+                if (response.success) {
+                    changed();
+                }
+            });
+        }
+    });
+
+    // "Привязать письмо" window: the kind of record switches the search field.
+    $(document).on('change', '[data-sx-mail-link-form] [data-sx-mail-link-type]', function () {
+        var $form = $(this).closest('[data-sx-mail-link-form]');
+        var type = $form.find('[data-sx-mail-link-type]:checked').val();
+        $form.find('[data-sx-mail-link-for]').each(function () {
+            $(this).prop('hidden', $(this).data('sx-mail-link-for') !== type);
+        });
+        $form.find('[data-sx-mail-link-error]').prop('hidden', true);
+    });
+
+    $(document).on('submit', '[data-sx-mail-link-form]', function (e) {
+        e.preventDefault();
+        var $form = $(this);
+        var type = $form.find('[data-sx-mail-link-type]:checked').val();
+        var id = $form.find('[data-sx-mail-link-select="' + type + '"]').val();
+        var $error = $form.find('[data-sx-mail-link-error]');
+        if (!id) {
+            $error.text('Выберите запись.').prop('hidden', false);
+            return;
+        }
+        var $submit = $form.find('[type="submit"]').prop('disabled', true);
+        $.post($form.attr('action'), csrf({
+            type: type,
+            id: id,
+            conversation: $form.find('[name="conversation"]:checked').val() || $form.find('[name="conversation"]').val()
+        })).done(function (response) {
+            if (response.success) {
+                notify('success', response.message);
+                reloadList();
+                refreshLetters();
+                if (!closeOwnPanel()) {
+                    $error.text(response.message).prop('hidden', false);
+                }
+            } else {
+                $error.text(response.message).prop('hidden', false);
+                $submit.prop('disabled', false);
+            }
+        }).fail(function () {
+            $error.text('Не удалось привязать письмо.').prop('hidden', false);
+            $submit.prop('disabled', false);
         });
     });
 })(jQuery);
