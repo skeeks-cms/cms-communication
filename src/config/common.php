@@ -92,6 +92,24 @@ return [
                 'overlapPolicy' => 'skip',
                 'dedupKey' => static fn($payload) => 'comm.mail.send:'.(int)($payload['messageId'] ?? 0),
             ],
+            // Moves and labels asked for in the CRM, done on the server (MailApplyJobHandler).
+            // The run reads waiting copies when it starts: "coalesce" keeps one waiting run beside
+            // a running one, so a request made while it runs is not lost.
+            'comm.mail.apply' => [
+                'type' => 'comm.mail.apply',
+                'title' => 'Действия с письмами в почтовом ящике',
+                'handler' => \skeeks\cms\communication\jobs\MailApplyJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'transient',
+                'timeout' => 600,
+                'leaseSeconds' => 120,
+                'maxAttempts' => 1,
+                // Repeating it moves nothing twice: a letter already moved is not in its old folder.
+                'idempotent' => true,
+                'overlapPolicy' => 'coalesce',
+                'resourceKey' => static fn($payload) => 'comm-connection:'.(int)($payload['connectionId'] ?? 0),
+                'dedupKey' => static fn($payload) => 'comm.mail.apply:'.(int)($payload['connectionId'] ?? 0),
+            ],
             // A letter file not kept in the CRM, fetched from the mailbox when someone opens it.
             'comm.mail.fetch-files' => [
                 'type' => 'comm.mail.fetch-files',

@@ -110,7 +110,7 @@ class CmsCommAccountAccess extends ActiveRecord
             'read_level' => 'Чтение',
             'send_level' => 'Отправка',
             'can_manage' => 'Управление ящиком',
-            'can_manage_messages' => 'Удаление и перемещение писем на сервере',
+            'can_manage_messages' => 'Управление письмами',
             'is_default' => 'Ящик по умолчанию',
             'is_responsible' => 'Ответственный за ящик',
             'is_notify' => 'Уведомлять о новых письмах',
@@ -121,7 +121,7 @@ class CmsCommAccountAccess extends ActiveRecord
     {
         return ArrayHelper::merge(parent::attributeHints(), [
             'can_manage' => 'Настройки ящика и права других сотрудников.',
-            'can_manage_messages' => 'Эти действия меняют ящик на почтовом сервере у всех сотрудников.',
+            'can_manage_messages' => 'Удалять письма, переносить в архив, в папки и в спам, ставить метки. Письма переносятся в самом почтовом ящике — у всех сотрудников.',
             'is_default' => 'Подставляется отправителем в окне «Написать». У сотрудника один ящик по умолчанию.',
             'is_responsible' => 'Получает служебные уведомления: подключение не работает, накопились неразобранные письма.',
         ]);

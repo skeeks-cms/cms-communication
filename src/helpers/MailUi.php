@@ -28,7 +28,84 @@ class MailUi
         'reply-all' => 'fas fa-reply-all', 'image' => 'far fa-image', 'link' => 'fas fa-link',
         'plus' => 'fas fa-plus', 'chevron-down' => 'fas fa-chevron-down', 'user' => 'far fa-user', 'tasks' => 'fas fa-tasks',
         'handshake' => 'far fa-handshake', 'id-card' => 'far fa-id-card', 'building' => 'far fa-building', 'more-vertical' => 'fas fa-ellipsis-v',
+        'trash' => 'far fa-trash-alt', 'folder' => 'far fa-folder',
     ];
+
+    /**
+     * Where the letter is in its mailbox as the employee sees it (the place
+     * asked for wins over the server one): the role of its first copy.
+     */
+    public static function mailboxRole(\skeeks\cms\communication\models\CmsCommMessage $message): ?string
+    {
+        foreach ($message->mailboxCopies as $copy) {
+            if ($copy->getRole()) {
+                return $copy->getRole();
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Labels and the place of the letter in its mailbox for the list and the
+     * letter header: colored labels, "Архив" / a folder name, "Переносится…"
+     * while the server has not done it, the last server error.
+     */
+    public static function mailboxTags(\skeeks\cms\communication\models\CmsCommMessage $message): string
+    {
+        $html = '';
+        foreach ($message->labels as $label) {
+            $html .= Html::tag('span', Html::encode($label->name), [
+                'class' => 'sx-mail__tag sx-mail__label',
+                'style' => '--sx-mail-label: '.$label->color,
+                'title' => 'Метка',
+            ]);
+        }
+        $titles = \skeeks\cms\communication\models\CmsCommMessageMailbox::roleTitles();
+        $shown = [];
+        foreach ($message->mailboxCopies as $copy) {
+            if ($copy->target_role) {
+                $where = $copy->target_folder ? self::serverFolderTitle((int)$copy->cms_comm_connection_id, (string)$copy->target_folder) : ($titles[$copy->target_role] ?? '');
+                $text = 'Переносится: '.$where;
+                $class = 'sx-mail__tag sx-mail__tag--pending';
+                $title = 'Письмо переносится в почтовом ящике';
+            } elseif ($copy->sync_error) {
+                $text = 'Не перенесено';
+                $class = 'sx-mail__tag sx-mail__tag--status';
+                $title = $copy->sync_error;
+            } elseif (in_array($copy->folder_role, ['archive', 'other', 'trash', 'junk'], true)) {
+                $text = $copy->folder_role === 'other' ? self::serverFolderTitle((int)$copy->cms_comm_connection_id, (string)$copy->folder) : $titles[$copy->folder_role];
+                $class = 'sx-mail__tag sx-mail__tag--place';
+                $title = 'Папка в почтовом ящике';
+            } else {
+                continue;
+            }
+            if (isset($shown[$text])) {
+                continue;
+            }
+            $shown[$text] = true;
+            $icon = ['archive' => 'archive', 'trash' => 'trash', 'junk' => 'spam'][$copy->folder_role] ?? 'folder';
+            $html .= Html::tag('span', ($copy->target_role || $copy->sync_error ? '' : self::icon($icon, 12).' ').Html::encode($text),
+                ['class' => $class, 'title' => $title, 'data-role' => $copy->target_role || $copy->sync_error ? null : $copy->folder_role]);
+        }
+
+        return $html;
+    }
+
+    private static array $folderTitles = [];
+
+    /** A server folder as people read it ("Клиенты / Иванов"). */
+    public static function serverFolderTitle(int $connectionId, string $folder): string
+    {
+        if (!isset(self::$folderTitles[$connectionId])) {
+            self::$folderTitles[$connectionId] = [];
+            foreach (\skeeks\cms\communication\models\CmsCommSyncState::find()->andWhere(['cms_comm_connection_id' => $connectionId])->all() as $state) {
+                self::$folderTitles[$connectionId][(string)$state->folder] = $state->getTitle();
+            }
+        }
+
+        return self::$folderTitles[$connectionId][$folder] ?? \skeeks\cms\communication\models\CmsCommSyncState::folderTitle($folder);
+    }
 
     /** One or two capital letters of a name for the round avatar. */
     public static function initials(string $name): string
@@ -49,6 +126,10 @@ class MailUi
     private const OWN_ICONS = [
         'reply-all' => '<path d="m7 17-5-5 5-5"></path><path d="m12 17-5-5 5-5"></path><path d="M22 18v-2a4 4 0 0 0-4-4H7"></path>',
         'image' => '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>',
+        'archive' => '<rect width="20" height="5" x="2" y="3" rx="1"></rect><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"></path><path d="M10 12h4"></path>',
+        'spam' => '<path d="M12 16h.01"></path><path d="M12 8v4"></path><path d="M15.312 2a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586l-4.688-4.688A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2z"></path>',
+        'tag' => '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"></path><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"></circle>',
+        'undo' => '<path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"></path>',
     ];
 
     /** A thin backend icon, or its icon-font fallback on an older cms-backend. */

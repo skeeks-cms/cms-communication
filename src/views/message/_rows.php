@@ -37,6 +37,7 @@ $shortDate = static function ($timestamp) use ($formatter) {
     $viewUrl = (string)BackendUrlHelper::createByParams(['view', 'pk' => $m->id])->enableEmptyLayout()->enableNoActions()->url;
     ?>
     <div class="sx-mail__row<?= $unread ? ' is-unread' : '' ?>" data-id="<?= (int)$m->id ?>" data-at="<?= (int)$m->message_at ?>"
+         data-role="<?= Html::encode((string)MailUi::mailboxRole($m)) ?>"
          data-url="<?= Html::encode($viewUrl) ?>" tabindex="-1" role="button">
         <label class="sx-mail__check" title="Выбрать (x)"><input type="checkbox" data-sx-mail-select value="<?= (int)$m->id ?>" tabindex="-1"></label>
         <span class="sx-mail__avatar" style="--sx-mail-hue: <?= (int)MailUi::hue($avatarKey ?: $name) ?>"><?= Html::encode(MailUi::initials($incoming ? $name : ($avatarKey ?: '?'))) ?></span>
@@ -57,6 +58,7 @@ $shortDate = static function ($timestamp) use ($formatter) {
             <?php if ($status) : ?>
                 <span class="sx-mail__tag sx-mail__tag--status"><?= Html::encode($status) ?></span>
             <?php endif; ?>
+            <?= MailUi::mailboxTags($m) ?>
             <?php if ($m->getAttachmentList()) : ?>
                 <span class="sx-mail__clip" title="Есть вложения"><?= MailUi::icon('paperclip', 16) ?></span>
             <?php endif; ?>

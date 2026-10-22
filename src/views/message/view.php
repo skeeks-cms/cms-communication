@@ -13,6 +13,7 @@
  * @var $replyDraft bool the employee has started an answer to this letter (a draft)
  * @var $created array[] records created from this letter (MessageSorting::createdRecords())
  * @var $createActions array[] "Создать задачу / лид / сделку" the employee may open (MailUi::createActions())
+ * @var $canManage bool the employee may move the letter in its mailbox and change its labels
  */
 
 use skeeks\cms\communication\assets\MailClientAsset;
@@ -53,6 +54,20 @@ $createActions = $createActions ?? [];
 $conversation = $model->conversation;
 $assignee = $conversation ? $conversation->assignedUser : null;
 $composeUrl = static fn(array $params) => Url::to(array_merge(['create', 'inline' => 1], $params));
+$canManage = !empty($canManage);
+$role = MailUi::mailboxRole($model);
+$moveActions = [];
+if ($canManage) {
+    $moveActions[] = in_array($role, ['trash', 'gone'], true)
+        ? ['restore', 'undo', 'Восстановить', 'Вернуть во «Входящие» (или «Отправленные»)']
+        : ['trash', 'trash', 'Удалить', 'В корзину почтового ящика (Delete)'];
+    $moveActions[] = in_array($role, ['archive', 'other'], true)
+        ? ['restore', 'inbox', 'Во входящие', 'Вернуть во «Входящие» (или «Отправленные»)']
+        : ['archive', 'archive', 'В архив', 'В архив почтового ящика (e)'];
+    $moveActions[] = $role === 'junk'
+        ? ['restore', 'inbox', 'Не спам', 'Не спам: вернуть во «Входящие» (!)']
+        : ['junk', 'spam', 'Это спам', 'В спам: почтовый сервис учится на этом (!)'];
+}
 ?>
 <div class="sx-letter" data-sx-letter data-id="<?= (int)$model->id ?>"
      data-mark-url="<?= Html::encode(Url::to(['mark'])) ?>"
@@ -61,7 +76,11 @@ $composeUrl = static fn(array $params) => Url::to(array_merge(['create', 'inline
      data-fetch-url="<?= Html::encode(Url::to(['fetch', 'pk' => $model->id])) ?>"
      data-fetch-status-url="<?= Html::encode(Url::to(['fetch-status', 'pk' => $model->id])) ?>"
      data-unlink-url="<?= Html::encode(Url::to(['unlink', 'pk' => $model->id])) ?>"
-     data-assign-url="<?= Html::encode(Url::to(['assign', 'pk' => $model->id])) ?>">
+     data-assign-url="<?= Html::encode(Url::to(['assign', 'pk' => $model->id])) ?>"
+     data-move-url="<?= Html::encode(Url::to(['move'])) ?>"
+     data-server-folders-url="<?= Html::encode(Url::to(['server-folders'])) ?>"
+     data-labels-url="<?= Html::encode(Url::to(['labels'])) ?>"
+     data-label-save-url="<?= Html::encode(Url::to(['label-save'])) ?>">
     <div class="sx-letter__toolbar">
         <?php if ($canReply) : ?>
             <button type="button" class="sx-mail__tool" data-sx-letter-compose="<?= Html::encode($composeUrl(['reply_to' => $model->id])) ?>" title="Ответить (r)">
@@ -79,6 +98,25 @@ $composeUrl = static fn(array $params) => Url::to(array_merge(['create', 'inline
         <?php // A letter collected from the mailbox history counts as read. ?>
         <?php if ($incoming && !$model->is_history) : ?>
             <button type="button" class="sx-mail__tool" data-sx-letter-unread title="Shift + u"><?= MailUi::icon('mail', 17) ?> <span class="sx-mail__tool-text">Не прочитано</span></button>
+        <?php endif; ?>
+        <?php if ($moveActions) : ?>
+            <?php foreach ($moveActions as $a) : ?>
+                <button type="button" class="sx-mail__tool sx-mail__tool--icon" data-sx-letter-move="<?= Html::encode($a[0]) ?>" title="<?= Html::encode($a[3]) ?>">
+                    <?= MailUi::icon($a[1], 17) ?> <span class="sx-mail__tool-text"><?= Html::encode($a[2]) ?></span>
+                </button>
+            <?php endforeach; ?>
+            <span class="sx-mail__menu-wrap">
+                <button type="button" class="sx-mail__tool sx-mail__tool--icon" data-sx-letter-folder-menu aria-haspopup="true" title="В папку почтового ящика (v)">
+                    <?= MailUi::icon('folder', 17) ?> <span class="sx-mail__tool-text">В папку</span>
+                </button>
+                <span class="sx-mail__menu" data-sx-letter-floating hidden></span>
+            </span>
+            <span class="sx-mail__menu-wrap">
+                <button type="button" class="sx-mail__tool sx-mail__tool--icon" data-sx-letter-labels-menu aria-haspopup="true" title="Метки (m)">
+                    <?= MailUi::icon('tag', 17) ?> <span class="sx-mail__tool-text">Метки</span>
+                </button>
+                <span class="sx-mail__menu" data-sx-letter-floating hidden></span>
+            </span>
         <?php endif; ?>
         <span class="sx-letter__toolbar-gap"></span>
         <button type="button" class="sx-mail__tool" data-sx-letter-link="<?= Html::encode(MailUi::linkUrl((int)$model->id)) ?>" title="Привязать к лиду, компании, клиенту или сделке (l)">
@@ -137,6 +175,18 @@ $composeUrl = static fn(array $params) => Url::to(array_merge(['create', 'inline
                 <?php endif; ?>
             </div>
             <?= MailUi::createdMarks($created) ?>
+            <?php if ($tags = MailUi::mailboxTags($model)) : ?>
+                <div class="sx-letter__tags"><?= $tags ?></div>
+            <?php endif; ?>
+            <?php foreach ($model->mailboxCopies as $copy) : ?>
+                <?php if ($copy->sync_error) : ?>
+                    <div class="sx-letter__error"><?= MailUi::icon('info', 14) ?> <?= Html::encode($copy->sync_error) ?></div>
+                    <?php break; ?>
+                <?php elseif ($copy->folder_role === 'gone') : ?>
+                    <div class="sx-letter__muted">Письмо удалено в почтовом ящике: в CRM осталась только его копия.</div>
+                    <?php break; ?>
+                <?php endif; ?>
+            <?php endforeach; ?>
         </div>
         <?= MailUi::linkedRecords($model, true) ?>
     </div>

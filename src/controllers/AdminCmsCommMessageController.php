@@ -20,6 +20,7 @@ use skeeks\cms\communication\services\MailFileFetcher;
 use skeeks\cms\communication\services\MailFiles;
 use skeeks\cms\communication\services\MailFolders;
 use skeeks\cms\communication\services\MailNotifier;
+use skeeks\cms\communication\services\MailboxActions;
 use skeeks\cms\communication\services\MailTemplates;
 use skeeks\cms\communication\services\MessageSorting;
 use skeeks\cms\grid\DateTimeColumnData;
@@ -145,8 +146,16 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             ],
 
             'refresh' => $hidden([$this, 'receiveNow']),
-            // POST ids[], read=1|0: personal read marks of the selected letters.
+            // POST ids[] (or all=1, list[…]), read=1|0: personal read marks of the selected letters.
             'mark' => $hidden([$this, 'mark']),
+            // POST action, folder, ids[] (or all=1, list[…]): move letters in their mailboxes (MailboxActions).
+            'move' => $hidden([$this, 'move']),
+            // GET ids[] (or all=1, list[…]): server folders for "В папку".
+            'server-folders' => $hidden([$this, 'serverFolders']),
+            // GET ids[]: labels and their state; POST label_id, on, ids[] (or all=1, list[…]): put on / take off.
+            'labels' => $hidden([$this, 'labels']),
+            // POST id, name, color (or id, delete=1): a label of the site.
+            'label-save' => $hidden([$this, 'labelSave']),
             // GET q: recipients for the "Кому" field.
             'contacts' => $hidden([$this, 'contacts']),
             // POST showImages=1|0: the employee's choice for external images.
@@ -395,8 +404,7 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     {
         $this->requirePostJson();
         $request = \Yii::$app->request;
-        $ids = array_slice(array_map('intval', (array)$request->post('ids', [])), 0, 500);
-        $messages = CmsCommMessage::find()->cmsSite()->forManager()->andWhere([CmsCommMessage::tableName().'.id' => $ids ?: [0]])->all();
+        $messages = $this->chosenMessages();
         $folders = $this->mailFolders();
         foreach ($messages as $message) {
             $request->post('read') ? $folders->markRead($message) : $folders->markUnread($message);
@@ -610,10 +618,8 @@ class AdminCmsCommMessageController extends BackendModelStandartController
 
         $assignee = (string)$request->get('assignee', '');
         $linked = (string)$request->get('linked', '');
-        $query = $folders->filter($folders->query($folder, $search)->with(['links', 'conversation.assignedUser']), $assignee, $linked);
-        if ($unreadOnly) {
-            $query->andWhere($folders->unreadCondition());
-        }
+        $label = (int)$request->get('label');
+        $query = $this->listQuery($folders, $request->get())->with(['links', 'conversation.assignedUser', 'labels', 'mailboxCopies']);
         // Letters older than the last shown one: new letters arriving meanwhile do not shift the list.
         $before = (int)$request->get('before');
         if ($before) {
@@ -636,6 +642,9 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             ];
         }
 
+        $actions = $this->mailboxActions();
+        $labels = $actions->labels();
+
         return $this->render('@skeeks/cms/communication/views/message/mail', [
             'folders' => $folders->folders(),
             'folder' => $folder,
@@ -644,11 +653,218 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'messages' => $messages,
             'readIds' => $readIds,
             'hasMore' => $hasMore,
+            // "Выбрать все письма папки": how many letters the folder has with these filters.
+            'total' => $hasMore ? (int)$this->listQuery($folders, $request->get())->count() : count($messages),
             'canSend' => (bool)$this->composeService()->sendableAccounts(),
+            'canManage' => $actions->canManageAny(),
+            'labels' => $labels,
+            'label' => $label,
             'assignee' => $assignee,
             'linked' => $linked,
             'assignees' => $folders->assignees(),
         ]);
+    }
+
+    /**
+     * Letters of a folder with the list filters: folder, q (search over the
+     * conversation), unread, assignee, linked, label.
+     */
+    private function listQuery(MailFolders $folders, array $params): \skeeks\cms\communication\models\queries\CmsCommMessageQuery
+    {
+        $folder = (string)($params['folder'] ?? MailFolders::ALL);
+        if (!$folders->isKnown($folder) || $folder === MailFolders::DRAFTS) {
+            $folder = MailFolders::ALL;
+        }
+        $query = $folders->filter($folders->query($folder, mb_substr(trim((string)($params['q'] ?? '')), 0, 100)),
+            (string)($params['assignee'] ?? ''), (string)($params['linked'] ?? ''));
+        if (!empty($params['unread'])) {
+            $query->andWhere($folders->unreadCondition());
+        }
+        if ($label = (int)($params['label'] ?? 0)) {
+            $folders->withLabel($query, $label);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Letters an action applies to: ids[] of chosen letters, or all=1 with
+     * the list filters ("Выбрать все письма папки"). Only letters the
+     * employee may read; at most MailboxActions::MAX_LETTERS.
+     *
+     * @return CmsCommMessage[]
+     */
+    private function chosenMessages(): array
+    {
+        $request = \Yii::$app->request;
+        if ($request->post('all')) {
+            $query = $this->listQuery($this->mailFolders(), (array)$request->post('list', []));
+        } else {
+            $ids = array_slice(array_map('intval', (array)$request->post('ids', [])), 0, MailboxActions::MAX_LETTERS);
+            $query = CmsCommMessage::find()->cmsSite()->forManager()->andWhere([CmsCommMessage::tableName().'.id' => $ids ?: [0]]);
+        }
+
+        return $query->limit(MailboxActions::MAX_LETTERS)->all();
+    }
+
+    private function mailboxActions(): MailboxActions
+    {
+        return new MailboxActions(\Yii::$app->user->identity, (int)\Yii::$app->skeeks->site->id);
+    }
+
+    /**
+     * POST action (trash, archive, junk, restore, folder), folder, ids[] or
+     * all=1 with list[…]: moves letters in their mailboxes. The screen shows
+     * them in the new place at once; a job does it on the server.
+     */
+    public function move()
+    {
+        $this->requirePostJson();
+        $request = \Yii::$app->request;
+        $actions = $this->mailboxActions();
+        if (!$actions->canManageAny()) {
+            throw new \yii\web\ForbiddenHttpException('У вас нет права «Управление письмами».');
+        }
+        $action = (string)$request->post('action');
+        $messages = $this->chosenMessages();
+        try {
+            $result = $actions->move($messages, $action, $request->post('folder') !== null ? (string)$request->post('folder') : null);
+        } catch (\InvalidArgumentException $e) {
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+        $done = [
+            MailboxActions::TRASH => 'Удалено',
+            MailboxActions::ARCHIVE => 'Перенесено в архив',
+            MailboxActions::JUNK => 'Перенесено в спам',
+            MailboxActions::RESTORE => 'Возвращено',
+            MailboxActions::FOLDER => 'Перенесено',
+        ][$action] ?? 'Готово';
+        $text = $result['moved'] ? $done.': '.self::letters($result['moved']) : 'Ничего не перенесено';
+        foreach ($result['skipped'] as $reason => $count) {
+            $text .= '. '.self::letters($count).' не перенесено: '.$reason;
+        }
+
+        return [
+            'success' => (bool)$result['moved'],
+            'message' => $text,
+            'moved' => $result['moved'],
+            'ids' => array_map(static fn($m) => (int)$m->id, $messages),
+            'counters' => $this->counters($this->mailFolders()),
+        ];
+    }
+
+    /** GET ids[] or all=1 with list[…]: server folders for "В папку" (letters of one connection). */
+    public function serverFolders()
+    {
+        \Yii::$app->response->format = Response::FORMAT_JSON;
+        $request = \Yii::$app->request;
+        $actions = $this->mailboxActions();
+        if ($request->get('all')) {
+            $ids = $this->listQuery($this->mailFolders(), (array)$request->get('list', []))
+                ->select(CmsCommMessage::tableName().'.id')->limit(MailboxActions::MAX_LETTERS)->column();
+        } else {
+            $ids = CmsCommMessage::find()->cmsSite()->forManager()->select(CmsCommMessage::tableName().'.id')
+                ->andWhere([CmsCommMessage::tableName().'.id' => array_slice(array_map('intval', (array)$request->get('ids', [])), 0, MailboxActions::MAX_LETTERS) ?: [0]])->column();
+        }
+        $connections = $actions->connectionsOf(array_map('intval', $ids));
+        if (count($connections) !== 1) {
+            return ['success' => false, 'message' => $connections
+                ? 'Письма из разных почтовых ящиков: выберите письма одного ящика.'
+                : 'У писем нет места в почтовом ящике, которым вы управляете.'];
+        }
+        $items = [];
+        foreach ($actions->serverFolders($connections[0]) as $folder => $title) {
+            $items[] = ['folder' => $folder, 'title' => $title];
+        }
+
+        return ['success' => true, 'items' => $items];
+    }
+
+    /**
+     * GET ids[]: labels of the site and which of them the letters carry
+     * (all, some, none). POST label_id, on=1|0, ids[] or all=1 with list[…]:
+     * puts the label on or takes it off.
+     */
+    public function labels()
+    {
+        \Yii::$app->response->format = Response::FORMAT_JSON;
+        $request = \Yii::$app->request;
+        $actions = $this->mailboxActions();
+        if ($request->isPost) {
+            $label = \skeeks\cms\communication\models\CmsCommLabel::findOne(['id' => (int)$request->post('label_id'), 'cms_site_id' => (int)\Yii::$app->skeeks->site->id]);
+            if (!$label) {
+                throw new NotFoundHttpException('Метка не найдена.');
+            }
+            $result = $actions->label($this->chosenMessages(), $label, (bool)$request->post('on'));
+            $text = $result['changed'] ? ($request->post('on') ? 'Метка поставлена' : 'Метка снята') : 'Метки не изменились';
+            foreach ($result['skipped'] as $reason => $count) {
+                $text .= '. '.self::letters($count).': '.$reason;
+            }
+
+            return ['success' => true, 'message' => $text, 'changed' => $result['changed']];
+        }
+
+        $ids = $request->get('all')
+            ? $this->listQuery($this->mailFolders(), (array)$request->get('list', []))->select(CmsCommMessage::tableName().'.id')->limit(MailboxActions::MAX_LETTERS)->column()
+            : CmsCommMessage::find()->cmsSite()->forManager()->select(CmsCommMessage::tableName().'.id')
+                ->andWhere([CmsCommMessage::tableName().'.id' => array_slice(array_map('intval', (array)$request->get('ids', [])), 0, MailboxActions::MAX_LETTERS) ?: [0]])->column();
+        $counts = $ids ? (new \yii\db\Query())->select(['cms_comm_label_id', 'n' => 'COUNT(*)'])->from('{{%cms_comm_message_label}}')
+            ->andWhere(['cms_comm_message_id' => $ids])->groupBy('cms_comm_label_id')->indexBy('cms_comm_label_id')->column() : [];
+        $items = [];
+        foreach ($actions->labels() as $label) {
+            $n = (int)($counts[$label->id] ?? 0);
+            $items[] = ['id' => (int)$label->id, 'name' => $label->name, 'color' => $label->color,
+                'state' => $n === 0 ? 'none' : ($n >= count($ids) ? 'all' : 'some')];
+        }
+
+        return ['success' => true, 'items' => $items, 'canEdit' => $actions->canEditLabels(),
+            'colors' => \skeeks\cms\communication\models\CmsCommLabel::COLORS];
+    }
+
+    /** POST id (empty: a new label), name, color; or id, delete=1. */
+    public function labelSave()
+    {
+        $this->requirePostJson();
+        $request = \Yii::$app->request;
+        if (!$this->mailboxActions()->canEditLabels()) {
+            throw new \yii\web\ForbiddenHttpException('Метки меняют сотрудники с правом «Управление письмами».');
+        }
+        $siteId = (int)\Yii::$app->skeeks->site->id;
+        $label = $request->post('id')
+            ? \skeeks\cms\communication\models\CmsCommLabel::findOne(['id' => (int)$request->post('id'), 'cms_site_id' => $siteId])
+            : new \skeeks\cms\communication\models\CmsCommLabel(['cms_site_id' => $siteId]);
+        if (!$label) {
+            throw new NotFoundHttpException('Метка не найдена.');
+        }
+        if ($request->post('delete')) {
+            // Keywords on the server go with the next writing of labels of these letters.
+            $ids = (new \yii\db\Query())->select('cms_comm_message_id')->from('{{%cms_comm_message_label}}')->andWhere(['cms_comm_label_id' => (int)$label->id])->column();
+            $label->delete();
+            if ($ids) {
+                \skeeks\cms\communication\models\CmsCommMessageMailbox::updateAll(['labels_dirty' => 1], ['and', ['cms_comm_message_id' => $ids], ['not', ['uid' => null]]]);
+                foreach ($this->mailboxActions()->connectionsOf(array_map('intval', $ids)) as $connectionId) {
+                    MailboxActions::pushApply($connectionId, $siteId);
+                }
+            }
+
+            return ['success' => true, 'message' => 'Метка удалена'];
+        }
+        $label->name = (string)$request->post('name');
+        $label->color = (string)$request->post('color', $label->color);
+        if (!$label->save()) {
+            return ['success' => false, 'message' => implode(' ', $label->getFirstErrors())];
+        }
+
+        return ['success' => true, 'label' => ['id' => (int)$label->id, 'name' => $label->name, 'color' => $label->color]];
+    }
+
+    private static function letters(int $n): string
+    {
+        $mod10 = $n % 10;
+        $mod100 = $n % 100;
+        $word = $mod10 === 1 && $mod100 !== 11 ? 'письмо' : ($mod10 >= 2 && $mod10 <= 4 && ($mod100 < 10 || $mod100 >= 20) ? 'письма' : 'писем');
+
+        return $n.' '.$word;
     }
 
     /**
@@ -671,6 +887,7 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $this->mailFolders()->markRead($this->model);
         MailNotifier::markRead((int)\Yii::$app->user->id, (int)$this->model->id);
         $canReply = (bool)$this->composeService()->sendableAccounts();
+        $actions = $this->mailboxActions();
 
         return $this->render('@skeeks/cms/communication/views/message/view', [
             'model' => $this->model,
@@ -681,6 +898,7 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'alwaysShowImages' => (bool)$settings->showImages,
             'created' => $this->sorting()->createdRecords($this->model),
             'createActions' => MailUi::createActions((int)$this->model->id),
+            'canManage' => $actions->canManage($this->model),
         ]);
     }
 

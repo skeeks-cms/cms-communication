@@ -11,6 +11,7 @@ use skeeks\cms\communication\models\CmsCommAccount;
 use skeeks\cms\communication\models\CmsCommAccountAccess;
 use skeeks\cms\communication\models\CmsCommLink;
 use skeeks\cms\communication\models\CmsCommMessage;
+use skeeks\cms\communication\models\CmsCommMessageMailbox;
 use skeeks\cms\communication\models\queries\CmsCommMessageQuery;
 use skeeks\cms\models\User;
 use skeeks\cms\rbac\CmsManager;
@@ -78,9 +79,14 @@ class MailFolders
         foreach ($accounts as $account) {
             $folders[] = ['key' => 'in:'.$account->id, 'title' => 'Входящие', 'group' => $account->address, 'icon' => 'inbox'];
             $folders[] = ['key' => 'out:'.$account->id, 'title' => 'Отправленные', 'group' => $account->address, 'icon' => 'send'];
+            $folders[] = ['key' => 'archive:'.$account->id, 'title' => 'Архив', 'group' => $account->address, 'icon' => 'archive'];
+            $folders[] = ['key' => 'junk:'.$account->id, 'title' => 'Спам', 'group' => $account->address, 'icon' => 'spam'];
+            $folders[] = ['key' => 'trash:'.$account->id, 'title' => 'Корзина', 'group' => $account->address, 'icon' => 'trash'];
         }
         foreach ($folders as &$folder) {
-            $folder['unread'] = (int)$this->query($folder['key'])->andWhere($this->unreadCondition())->count();
+            // Like web mail: unread letters of the trash are not counted.
+            $folder['unread'] = strpos($folder['key'], 'trash:') === 0 ? 0
+                : (int)$this->query($folder['key'])->andWhere($this->unreadCondition())->count();
         }
         unset($folder);
         // Right after "Мои клиенты" / "Без привязки", above the mailboxes.
@@ -104,7 +110,7 @@ class MailFolders
                 return true;
             }
         }
-        if (preg_match('/^(in|out):(\d+)$/', $key, $m)) {
+        if (preg_match('/^(in|out|archive|junk|trash):(\d+)$/', $key, $m)) {
             foreach ($this->accounts() as $account) {
                 if ((int)$account->id === (int)$m[2]) {
                     return true;
@@ -124,29 +130,60 @@ class MailFolders
             ->orderBy([$t.'.message_at' => SORT_DESC, $t.'.id' => SORT_DESC]);
         $hasLinks = ['exists', CmsCommLink::find()->andWhere([CmsCommLink::tableName().'.cms_comm_message_id' => $messageId])];
 
+        $box = preg_match('/^(in|out|archive|junk|trash):(\d+)$/', $key, $m) ? $m : null;
+        // Letters in the trash or spam of all their mailboxes live only in those folders.
+        if (!$box || $box[1] === 'in' || $box[1] === 'out') {
+            $query->andWhere([$t.'.box_state' => null]);
+        }
         if ($key === self::ASSIGNED) {
             $query->assignedTo((int)$this->user->id);
         } elseif ($key === self::CLIENTS) {
             $query->linkedToVisible($this->user);
         } elseif ($key === self::UNLINKED) {
             $query->andWhere(['not', $hasLinks])->andWhere([$t.'.is_internal' => 0, $t.'.direction' => CmsCommMessage::DIRECTION_IN]);
-        } elseif (preg_match('/^(in|out):(\d+)$/', $key, $m)) {
-            $query->inAccount((int)$m[2])->andWhere([$t.'.direction' => $m[1] === 'in' ? CmsCommMessage::DIRECTION_IN : CmsCommMessage::DIRECTION_OUT]);
+        } elseif ($box && ($box[1] === 'in' || $box[1] === 'out')) {
+            // Archived or moved to a folder of this mailbox: out of its "Входящие" and "Отправленные".
+            $query->inAccount((int)$box[2])->inAccountRoles((int)$box[2], CmsCommMessageMailbox::AWAY_ROLES, false)
+                ->andWhere([$t.'.direction' => $box[1] === 'in' ? CmsCommMessage::DIRECTION_IN : CmsCommMessage::DIRECTION_OUT]);
+        } elseif ($box) {
+            $roles = ['archive' => [CmsCommMessageMailbox::ROLE_ARCHIVE], 'junk' => [CmsCommMessageMailbox::ROLE_JUNK],
+                'trash' => [CmsCommMessageMailbox::ROLE_TRASH, CmsCommMessageMailbox::ROLE_GONE]][$box[1]];
+            $query->inAccountRoles((int)$box[2], $roles);
         }
 
-        $search = trim($search);
-        if ($search !== '') {
-            $like = ['or',
-                ['like', $t.'.subject', $search],
-                ['like', $t.'.from_address', $search],
-                ['like', $t.'.from_name', $search],
-                ['like', $t.'.to_list', $search],
-                ['like', $t.'.body_text', $search],
-            ];
-            $query->andWhere($like);
+        $this->search($query, $search);
+
+        return $query;
+    }
+
+    /**
+     * Search over whole conversations: letters of conversations where every
+     * word of the query is found in some letter — sender, recipients,
+     * subject or text (MailSearch). Matches count only in letters the
+     * employee may read: an unseen letter must not reveal its words.
+     */
+    public function search(CmsCommMessageQuery $query, string $search): CmsCommMessageQuery
+    {
+        $t = CmsCommMessage::tableName();
+        foreach (MailSearch::terms($search) as $term) {
+            if ($this->isAdmin) {
+                $conversations = MailSearch::conversations($term, $this->siteId);
+            } else {
+                $conversations = CmsCommMessage::find()->select($t.'.cms_comm_conversation_id')
+                    ->cmsSite($this->siteId)->forManager($this->user)
+                    ->andWhere([$t.'.id' => MailSearch::messages($term, $this->siteId)]);
+            }
+            $query->andWhere([$t.'.cms_comm_conversation_id' => $conversations]);
         }
 
         return $query;
+    }
+
+    /** Letters with this label. */
+    public function withLabel(CmsCommMessageQuery $query, int $labelId): CmsCommMessageQuery
+    {
+        return $query->andWhere([CmsCommMessage::tableName().'.id' => (new \yii\db\Query())->select('cms_comm_message_id')
+            ->from('{{%cms_comm_message_label}}')->andWhere(['cms_comm_label_id' => $labelId])]);
     }
 
     /**

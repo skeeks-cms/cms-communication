@@ -73,7 +73,7 @@ class MailIngestService
         }
 
         foreach ($accounts as $account) {
-            $this->addCopy($message, $account, $connection, $folder, $uidvalidity, $uid);
+            $this->addCopy($message, $account, $connection, $folderRole, $folder, $uidvalidity, $uid);
         }
 
         return $message;
@@ -221,20 +221,33 @@ class MailIngestService
         return $matched ?: $accounts;
     }
 
-    private function addCopy(CmsCommMessage $message, CmsCommAccount $account, CmsCommConnection $connection, string $folder, ?int $uidvalidity, int $uid): void
+    /**
+     * One copy per mailbox. A known copy takes the new place when the letter
+     * has no place yet (sent from the CRM, now found in "Sent"), was moved
+     * away (trash, spam, archive, a folder, deleted) and came back, or got a
+     * new UID in the same folder. A copy in the other receive folder stays
+     * (a letter to ourselves lies in both "Входящие" and "Отправленные").
+     */
+    private function addCopy(CmsCommMessage $message, CmsCommAccount $account, CmsCommConnection $connection, string $folderRole, string $folder, ?int $uidvalidity, int $uid): void
     {
+        $folder = mb_substr($folder, 0, 190);
         $copy = CmsCommMessageMailbox::find()
             ->andWhere(['cms_comm_message_id' => $message->id, 'cms_comm_account_id' => $account->id])
             ->one();
         if ($copy) {
-            // A letter sent from the CRM has its copy without a place on the server until
-            // it is found in "Sent": then the CRM knows where to fetch its files from.
-            if (!$copy->uid) {
+            $away = !in_array($copy->folder_role, CmsCommSyncState::RECEIVE_ROLES, true);
+            $sameFolder = $copy->folder === $folder && (int)$copy->cms_comm_connection_id === (int)$connection->id;
+            if (!$copy->uid || $away || ($sameFolder && ((int)$copy->uid !== $uid || (int)$copy->uidvalidity !== (int)$uidvalidity))) {
                 $copy->cms_comm_connection_id = $connection->id;
-                $copy->folder = mb_substr($folder, 0, 190);
+                $copy->folder = $folder;
                 $copy->uidvalidity = $uidvalidity;
                 $copy->uid = $uid;
+                $copy->folder_role = $folderRole;
                 $copy->save(false);
+                if ($away) {
+                    // Back in the mailbox: back in the usual folders.
+                    MailboxActions::refreshState([(int)$message->id]);
+                }
             }
             return;
         }
@@ -242,9 +255,13 @@ class MailIngestService
             'cms_comm_message_id' => $message->id,
             'cms_comm_account_id' => $account->id,
             'cms_comm_connection_id' => $connection->id,
-            'folder' => mb_substr($folder, 0, 190),
+            'folder' => $folder,
             'uidvalidity' => $uidvalidity,
             'uid' => $uid,
+            'folder_role' => $folderRole,
         ]))->save(false);
+        if ($message->box_state) {
+            MailboxActions::refreshState([(int)$message->id]);
+        }
     }
 }

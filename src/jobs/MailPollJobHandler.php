@@ -8,11 +8,13 @@
 namespace skeeks\cms\communication\jobs;
 
 use skeeks\cms\communication\mail\MailDriverInterface;
+use skeeks\cms\communication\mail\MailManageSessionInterface;
 use skeeks\cms\communication\mail\MailSessionInterface;
 use skeeks\cms\communication\models\CmsCommConnection;
 use skeeks\cms\communication\models\CmsCommSyncState;
 use skeeks\cms\communication\services\MailIngestService;
 use skeeks\cms\communication\services\MailNotifier;
+use skeeks\cms\communication\services\MailServerSync;
 use skeeks\cms\job\contracts\JobReporterInterface;
 use skeeks\cms\job\exceptions\JobPermanentException;
 use skeeks\cms\job\handlers\AbstractJobHandler;
@@ -63,15 +65,19 @@ class MailPollJobHandler extends AbstractJobHandler
         $initialDays = (int)CmsCommConnection::component()->initialDays;
         $received = 0;
         $fresh = [];
+        $synced = null;
         try {
             foreach ($session->folders() as $folder) {
-                if ($folder['role'] === null) {
+                if (!in_array($folder['role'], CmsCommSyncState::RECEIVE_ROLES, true)) {
                     continue;
                 }
                 if ($reporter->isCancelled()) {
                     break;
                 }
                 $received += $this->pollFolder($connection, $session, $ingest, $folder['name'], $folder['role'], $initialDays, $reporter, $fresh);
+            }
+            if ($session instanceof MailManageSessionInterface && !$reporter->isCancelled()) {
+                $synced = $this->syncServer($connection, $session, $reporter);
             }
         } catch (\Throwable $e) {
             $this->saveError($connection, null, $e->getMessage());
@@ -90,7 +96,7 @@ class MailPollJobHandler extends AbstractJobHandler
             }
         }
 
-        $reporter->setResult(['connectionId' => (int)$connection->id, 'received' => $received, 'notified' => $notified]);
+        $reporter->setResult(['connectionId' => (int)$connection->id, 'received' => $received, 'notified' => $notified, 'server' => $synced]);
         $reporter->setStage('complete', $received ? "Получено писем: {$received}" : 'Новых писем нет');
     }
 
@@ -164,9 +170,30 @@ class MailPollJobHandler extends AbstractJobHandler
         return $count;
     }
 
+    /**
+     * Actions asked for in the CRM that the action job has not done yet, then
+     * letters moved or deleted in the mail service itself. A failure here
+     * never undoes received letters: it is reported and the next run retries.
+     */
+    private function syncServer(CmsCommConnection $connection, MailManageSessionInterface $session, JobReporterInterface $reporter): ?array
+    {
+        $reporter->setStage('server', 'Сверка с почтовым ящиком');
+        try {
+            $sync = new MailServerSync();
+            $applied = $sync->apply($connection, $session);
+
+            return $applied + $sync->reconcile($connection, $session);
+        } catch (\Throwable $e) {
+            $reporter->itemError('server', 'connection:'.(int)$connection->id, mb_substr($e->getMessage(), 0, 300));
+            \Yii::warning('Сверка с почтовым ящиком не выполнена: '.$e->getMessage(), self::class);
+
+            return null;
+        }
+    }
+
     private function saveError(CmsCommConnection $connection, ?string $folder, string $message): void
     {
-        $states = CmsCommSyncState::find()->andWhere(['cms_comm_connection_id' => $connection->id])
+        $states = CmsCommSyncState::find()->andWhere(['cms_comm_connection_id' => $connection->id, 'folder_role' => CmsCommSyncState::RECEIVE_ROLES])
             ->andFilterWhere(['folder' => $folder])->all();
         if (!$states) {
             $states = [new CmsCommSyncState(['cms_comm_connection_id' => $connection->id, 'folder' => 'INBOX', 'folder_role' => CmsCommSyncState::ROLE_INBOX, 'last_uid' => 0])];

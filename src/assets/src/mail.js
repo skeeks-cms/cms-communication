@@ -370,24 +370,54 @@
         }).get();
     }
 
+    /** "Выбрать все письма папки": the action goes to every letter of the folder, not only the shown ones. */
+    var folderChosen = false;
+
     function refreshSelection() {
         var ids = selectedIds();
         var $rows = rows();
         $rows.each(function () {
             $(this).toggleClass('is-selected', $(this).find('[data-sx-mail-select]').is(':checked'));
         });
-        $mail().find('.sx-mail__toolbar [data-sx-mail-mark]').prop('disabled', ids.length === 0);
+        $mail().find('.sx-mail__toolbar').find('[data-sx-mail-mark], [data-sx-mail-move], [data-sx-mail-folder-menu], [data-sx-mail-labels-menu]')
+            .prop('disabled', ids.length === 0);
         var $all = $mail().find('[data-sx-mail-all]');
-        $all.prop('checked', ids.length > 0 && ids.length === $rows.length);
+        var everyRow = ids.length > 0 && ids.length === $rows.length;
+        $all.prop('checked', everyRow);
         $all.prop('indeterminate', ids.length > 0 && ids.length < $rows.length);
+        if (!everyRow) {
+            folderChosen = false;
+        }
 
+        var total = parseInt($mail().data('total'), 10) || 0;
         var $bar = $mail().find('[data-sx-mail-selection]');
+        var $folderLink = $bar.find('[data-sx-mail-select-folder]');
         if (ids.length) {
-            $bar.find('[data-sx-mail-selected]').text(plural(ids.length));
+            $bar.find('[data-sx-mail-selected]').text(folderChosen ? 'Выбраны все письма папки: ' + total : plural(ids.length));
+            // More letters in the folder than on the screen: offer all of them.
+            $folderLink.prop('hidden', !everyRow || total <= ids.length)
+                .text(folderChosen ? 'Только показанные' : 'Выбрать все письма папки: ' + total);
             $bar.prop('hidden', false);
         } else {
             $bar.prop('hidden', true);
         }
+    }
+
+    $(document).on('click', root + ' [data-sx-mail-select-folder]', function () {
+        folderChosen = !folderChosen;
+        refreshSelection();
+    });
+
+    /** The letters an action applies to: the chosen rows or the whole folder with its filters. */
+    function chosen() {
+        if (folderChosen) {
+            return {all: 1, list: $mail().data('list-filter') || {}};
+        }
+        var ids = selectedIds();
+        if (!ids.length && cursorRow().length) {
+            ids = [String(cursorRow().data('id'))];
+        }
+        return ids.length ? {ids: ids} : null;
     }
 
     function plural(n) {
@@ -398,13 +428,20 @@
     }
 
     function markSelected(read) {
-        var ids = selectedIds();
-        if (!ids.length && cursorRow().length) {
-            ids = [String(cursorRow().data('id'))];
-        }
-        if (!ids.length) {
+        var target = chosen();
+        if (!target) {
             return;
         }
+        if (target.all) {
+            $.post($mail().data('mark-url'), csrf($.extend({read: read ? 1 : 0}, target))).done(function (response) {
+                applyCounters(response.counters);
+                $.pjax.reload({container: '#sx-mail-pjax', timeout: 15000});
+            }).fail(function () {
+                notify('error', 'Не удалось изменить отметки писем.');
+            });
+            return;
+        }
+        var ids = target.ids;
         setRowsRead(ids, read);
         postMark(ids, read).fail(function () {
             setRowsRead(ids, !read);
@@ -521,6 +558,7 @@
 
     $(document).on('pjax:end', function () {
         lastChecked = null;
+        folderChosen = false;
         updateTitle();
     });
     $(updateTitle);
@@ -561,6 +599,16 @@
             case 'KeyU':
                 if (e.shiftKey) {
                     markSelected(e.code === 'KeyI');
+                }
+                break;
+            case 'Delete':
+            case 'Digit3':
+            case 'KeyE':
+            case 'Digit1':
+            case 'KeyV':
+            case 'KeyM':
+                if (listHotkey(e)) {
+                    e.preventDefault();
                 }
                 break;
             case 'KeyC':
@@ -858,6 +906,28 @@
                 if (e.shiftKey) {
                     click('[data-sx-letter-unread]');
                 }
+                break;
+            case 'Delete':
+                click('[data-sx-letter-move="trash"]');
+                break;
+            case 'Digit3':
+                if (e.shiftKey) {
+                    click('[data-sx-letter-move="trash"]');
+                }
+                break;
+            case 'KeyE':
+                click('[data-sx-letter-move="archive"]');
+                break;
+            case 'Digit1':
+                if (e.shiftKey) {
+                    click('[data-sx-letter-move="junk"], [data-sx-letter-move="restore"]:last');
+                }
+                break;
+            case 'KeyV':
+                click('[data-sx-letter-folder-menu]');
+                break;
+            case 'KeyM':
+                click('[data-sx-letter-labels-menu]');
                 break;
             case 'KeyJ':
             case 'KeyK':
@@ -1661,12 +1731,25 @@
     }
 
     function closeMenus() {
+        // Labels changed from the list menu: the rows show them once the menu is closed.
+        var $floating = $(root + ' [data-sx-mail-floating]');
+        if ($floating.data('changed') && !$floating.prop('hidden')) {
+            $floating.data('changed', false);
+            setTimeout(function () {
+                $.pjax.reload({container: '#sx-mail-pjax', timeout: 15000});
+            }, 0);
+        }
         $(".sx-mail__menu").prop("hidden", true);
         $(".sx-mail__row-menu.is-active, .sx-letter__unlink.is-active").removeClass("is-active");
     }
 
     $(document).on('click', function (e) {
-        if (!$(e.target).closest('.sx-mail__menu, [data-sx-mail-menu-toggle], [data-sx-letter-assign], [data-sx-letter-unlink], [data-sx-mail-row-menu]').length) {
+        // A menu item that rebuilt its menu is no longer in the page: the click was inside.
+        if (!document.documentElement.contains(e.target)) {
+            return;
+        }
+        if (!$(e.target).closest('.sx-mail__menu, [data-sx-mail-menu-toggle], [data-sx-letter-assign], [data-sx-letter-unlink], [data-sx-mail-row-menu], '
+            + '[data-sx-mail-folder-menu], [data-sx-mail-labels-menu], [data-sx-letter-folder-menu], [data-sx-letter-labels-menu], [data-sx-mail-context-action]').length) {
             closeMenus();
         }
     });
@@ -1886,6 +1969,355 @@
                     changed();
                 }
             });
+        } else if (action === 'move') {
+            moveLetters({ids: [id]}, $(this).data('move'));
+        } else if (action === 'folder' || action === 'labels') {
+            var rect = $row.get(0).getBoundingClientRect();
+            openListMenu(action, {ids: [id]}, {left: Math.min(rect.right - 280, window.innerWidth - 300), top: rect.bottom + 2});
+        }
+    });
+
+    /* ------------------------------------------------------------------
+     * Actions in the mailbox: trash, archive, spam, a folder, labels
+     * (MailboxActions on the server; a job then moves letters there)
+     * ------------------------------------------------------------------ */
+
+    /** Whether letters leave the open folder after the action: they go from the screen at once. */
+    function leavesFolder(action) {
+        var kind = String($mail().data('folder-kind') || '');
+        if (kind === 'in' || kind === 'out' || kind === 'archive' || kind === 'junk' || kind === 'trash') {
+            return true;
+        }
+        return action === 'trash' || action === 'junk';
+    }
+
+    function closeLetterPanels(ids) {
+        var stack = windowStack();
+        letterPanels().forEach(function (entry) {
+            try {
+                var $el = entry.iframe.contentWindow.jQuery('[data-sx-letter]');
+                if (!ids || ids.indexOf(String($el.data('id'))) !== -1) {
+                    stack.close(entry.widget);
+                }
+            } catch (e) {
+            }
+        });
+    }
+
+    /** Moves the chosen letters of the list; the rows go at once, the server follows. */
+    function moveLetters(target, action, folder) {
+        if (!target || !$mail().data('can-manage')) {
+            return;
+        }
+        var data = $.extend({action: action}, target);
+        if (folder !== undefined) {
+            data.folder = folder;
+        }
+        var $rows = target.all ? rows() : rows().filter(function () {
+            return target.ids.indexOf(String($(this).data('id'))) !== -1;
+        });
+        var leaves = leavesFolder(action);
+        if (leaves) {
+            $rows.addClass('is-leaving');
+        }
+        $.post($mail().data('move-url'), csrf(data)).done(function (response) {
+            notify(response.moved ? 'success' : 'warning', response.message);
+            applyCounters(response.counters);
+            if (leaves && response.moved && !target.all) {
+                var ids = (response.ids || []).map(String);
+                closeLetterPanels(ids);
+                $rows.remove();
+                $mail().find('[data-sx-mail-select], [data-sx-mail-all]').prop('checked', false);
+                refreshSelection();
+                if (!rows().length) {
+                    $.pjax.reload({container: '#sx-mail-pjax', timeout: 15000});
+                }
+            } else {
+                $.pjax.reload({container: '#sx-mail-pjax', timeout: 15000});
+            }
+        }).fail(function (xhr) {
+            $rows.removeClass('is-leaving');
+            notify('error', (xhr.responseJSON && xhr.responseJSON.message) || 'Не удалось перенести письма.');
+        });
+    }
+
+    $(document).on('click', root + ' [data-sx-mail-move]', function () {
+        moveLetters(chosen(), $(this).data('sx-mail-move'));
+    });
+
+    /** Places a menu of the list next to its button or at a point. */
+    function placeMenu($menu, at) {
+        $menu.prop('hidden', false);
+        var width = $menu.outerWidth(), height = $menu.outerHeight();
+        $menu.css({
+            left: Math.max(8, Math.min(at.left, window.innerWidth - width - 8)),
+            top: Math.max(8, at.top + height > window.innerHeight - 8 ? at.top - height - 40 : at.top)
+        });
+    }
+
+    /** "В папку" / "Метки" of the list for these letters. */
+    function openListMenu(kind, target, at) {
+        var $menu = $mail().find('[data-sx-mail-floating]');
+        if (!target) {
+            return;
+        }
+        closeMenus();
+        var config = {
+            foldersUrl: $mail().data('server-folders-url'),
+            labelsUrl: $mail().data('labels-url'),
+            labelSaveUrl: $mail().data('label-save-url'),
+            target: target,
+            onFolder: function (folder) {
+                closeMenus();
+                moveLetters(target, 'folder', folder);
+            },
+            onLabels: function () {
+                $menu.data('changed', true);
+            }
+        };
+        placeMenu($menu.empty().append('<span class="sx-mail__menu-note">Загрузка…</span>'), at);
+        (kind === 'folder' ? folderMenu : labelsMenu)($menu, config, function () {
+            placeMenu($menu, at);
+        });
+    }
+
+    $(document).on('click', root + ' [data-sx-mail-folder-menu], ' + root + ' [data-sx-mail-labels-menu]', function () {
+        var rect = this.getBoundingClientRect();
+        var $menu = $mail().find('[data-sx-mail-floating]');
+        var kind = $(this).is('[data-sx-mail-folder-menu]') ? 'folder' : 'labels';
+        if (!$menu.prop('hidden') && $menu.data('kind') === kind) {
+            closeMenus();
+            return;
+        }
+        openListMenu(kind, chosen(), {left: rect.left, top: rect.bottom + 4});
+        $menu.data('kind', kind);
+    });
+
+    /** List hotkeys of mailbox actions; true when handled. */
+    function listHotkey(e) {
+        if (!$mail().data('can-manage')) {
+            return false;
+        }
+        var target = chosen();
+        if (!target) {
+            return false;
+        }
+        var kind = String($mail().data('folder-kind') || '');
+        if (e.code === 'Delete' || (e.code === 'Digit3' && e.shiftKey)) {
+            if (kind !== 'trash') {
+                moveLetters(target, 'trash');
+                return true;
+            }
+        } else if (e.code === 'KeyE' && !e.shiftKey) {
+            moveLetters(target, kind === 'archive' ? 'restore' : 'archive');
+            return true;
+        } else if (e.code === 'Digit1' && e.shiftKey) {
+            moveLetters(target, kind === 'junk' ? 'restore' : 'junk');
+            return true;
+        } else if ((e.code === 'KeyV' || e.code === 'KeyM') && !e.shiftKey) {
+            var $button = $mail().find('.sx-mail__toolbar ' + (e.code === 'KeyV' ? '[data-sx-mail-folder-menu]' : '[data-sx-mail-labels-menu]'));
+            var rect = ($button.get(0) || document.body).getBoundingClientRect();
+            openListMenu(e.code === 'KeyV' ? 'folder' : 'labels', target, {left: rect.left, top: rect.bottom + 4});
+            return true;
+        }
+        return false;
+    }
+
+    /** Fills a menu with server folders of the letters; onPick(folder). */
+    function folderMenu($menu, config, placed) {
+        $.get(config.foldersUrl, config.target).done(function (response) {
+            $menu.empty();
+            if (!response.success) {
+                $('<span class="sx-mail__menu-note"></span>').text(response.message).appendTo($menu);
+            } else {
+                $('<span class="sx-mail__menu-note">Перенести в папку ящика</span>').appendTo($menu);
+                (response.items || []).forEach(function (item) {
+                    $('<button type="button" class="sx-mail__menu-item"></button>').text(item.title).on('click', function () {
+                        config.onFolder(item.folder);
+                    }).appendTo($menu);
+                });
+                if (!(response.items || []).length) {
+                    $('<span class="sx-mail__menu-note">Других папок в ящике нет. Папки создаются в самой почте и появляются здесь после проверки писем.</span>').appendTo($menu);
+                }
+            }
+            placed();
+        }).fail(function () {
+            $menu.empty().append('<span class="sx-mail__menu-note">Не удалось загрузить папки.</span>');
+        });
+    }
+
+    /**
+     * Fills a menu with labels: a click puts the label on the letters or
+     * takes it off; a new label is made right there and put on.
+     */
+    function labelsMenu($menu, config, placed) {
+        var target = config.target;
+        var render = function (response) {
+            $menu.empty().addClass('sx-mail__labels');
+            (response.items || []).forEach(function (item) {
+                var $item = $('<button type="button" class="sx-mail__menu-item sx-mail__label-item" role="menuitemcheckbox"></button>')
+                    .attr('aria-checked', item.state === 'all' ? 'true' : (item.state === 'some' ? 'mixed' : 'false'))
+                    .toggleClass('is-on', item.state === 'all').toggleClass('is-some', item.state === 'some');
+                $('<span class="sx-mail__label-check" aria-hidden="true"></span>').appendTo($item);
+                $('<span class="sx-mail__label-dot"></span>').css('--sx-mail-label', item.color).appendTo($item);
+                $('<span class="sx-mail__label-name"></span>').text(item.name).appendTo($item);
+                $item.on('click', function () {
+                    var on = item.state !== 'all';
+                    $item.prop('disabled', true);
+                    $.post(config.labelsUrl, csrf($.extend({label_id: item.id, on: on ? 1 : 0}, target))).done(function (r) {
+                        notify(r.changed ? 'success' : 'warning', r.message);
+                        item.state = on ? 'all' : 'none';
+                        $item.attr('aria-checked', on ? 'true' : 'false').toggleClass('is-on', on).removeClass('is-some');
+                        config.onLabels();
+                    }).fail(function () {
+                        notify('error', 'Не удалось изменить метку.');
+                    }).always(function () {
+                        $item.prop('disabled', false);
+                    });
+                });
+                if (response.canEdit) {
+                    $('<span class="sx-mail__label-edit" role="button" tabindex="0" title="Изменить метку">✎</span>').on('click', function (e) {
+                        e.stopPropagation();
+                        editLabel($menu, config, item, response.colors, function () {
+                            load();
+                        });
+                    }).appendTo($item);
+                }
+                $item.appendTo($menu);
+            });
+            if (!(response.items || []).length) {
+                $('<span class="sx-mail__menu-note">Меток пока нет.</span>').appendTo($menu);
+            }
+            if (response.canEdit) {
+                $('<span class="sx-mail__menu-sep"></span>').appendTo($menu);
+                $('<button type="button" class="sx-mail__menu-item"></button>').text('+ Новая метка').on('click', function () {
+                    editLabel($menu, config, null, response.colors, function (label) {
+                        // A new label goes on the chosen letters right away.
+                        $.post(config.labelsUrl, csrf($.extend({label_id: label.id, on: 1}, target))).always(function () {
+                            config.onLabels();
+                            load();
+                        });
+                    });
+                }).appendTo($menu);
+            }
+            placed();
+        };
+        var load = function () {
+            $.get(config.labelsUrl, target).done(render).fail(function () {
+                $menu.empty().append('<span class="sx-mail__menu-note">Не удалось загрузить метки.</span>');
+            });
+        };
+        load();
+    }
+
+    /** A small form inside the menu: name and color of a label; delete for an existing one. */
+    function editLabel($menu, config, label, colors, onSaved) {
+        $menu.empty();
+        var color = label ? label.color : colors[0];
+        var $form = $('<form class="sx-mail__label-form"></form>').appendTo($menu);
+        var $name = $('<input type="text" class="form-control" maxlength="64" placeholder="Название метки">').val(label ? label.name : '').appendTo($form);
+        var $colors = $('<span class="sx-mail__label-colors"></span>').appendTo($form);
+        (colors || []).forEach(function (c) {
+            $('<button type="button" class="sx-mail__label-color"></button>').css('--sx-mail-label', c).attr('title', c)
+                .toggleClass('is-active', c === color).on('click', function () {
+                    color = c;
+                    $colors.children().removeClass('is-active');
+                    $(this).addClass('is-active');
+                }).appendTo($colors);
+        });
+        var $error = $('<span class="sx-mail__menu-note sx-letter__error" hidden></span>').appendTo($form);
+        var $buttons = $('<span class="sx-mail__label-buttons"></span>').appendTo($form);
+        $('<button type="submit" class="btn btn-primary btn-sm"></button>').text(label ? 'Сохранить' : 'Создать').appendTo($buttons);
+        if (label) {
+            $('<button type="button" class="btn btn-default btn-sm"></button>').text('Удалить метку').on('click', function () {
+                if (!window.confirm('Удалить метку «' + label.name + '»? Она пропадёт у всех писем.')) {
+                    return;
+                }
+                $.post(config.labelSaveUrl, csrf({id: label.id, delete: 1})).done(function () {
+                    config.onLabels();
+                    onSaved(null);
+                });
+            }).appendTo($buttons);
+        }
+        $form.on('submit', function (e) {
+            e.preventDefault();
+            $.post(config.labelSaveUrl, csrf({id: label ? label.id : '', name: $name.val(), color: color})).done(function (r) {
+                if (r.success) {
+                    if (label) {
+                        config.onLabels();
+                    }
+                    onSaved(r.label);
+                } else {
+                    $error.text(r.message).prop('hidden', false);
+                }
+            }).fail(function () {
+                $error.text('Не удалось сохранить метку.').prop('hidden', false);
+            });
+        });
+        $name.trigger('focus');
+    }
+
+    // The open letter: the same actions for this letter.
+    $(document).on('click', '[data-sx-letter] [data-sx-letter-move]', function () {
+        var $letterEl = $(this).closest('[data-sx-letter]');
+        var action = $(this).data('sx-letter-move');
+        $(this).prop('disabled', true);
+        moveOpenLetter($letterEl, action);
+    });
+
+    function moveOpenLetter($letterEl, action, folder) {
+        var data = {ids: [$letterEl.data('id')], action: action};
+        if (folder !== undefined) {
+            data.folder = folder;
+        }
+        $.post($letterEl.data('move-url'), csrf(data)).done(function (response) {
+            notify(response.moved ? 'success' : 'warning', response.message);
+            applyMainCounters(response.counters);
+            reloadList();
+            // Gone from the folder: like web mail, back to the list.
+            if (!response.moved || !closeOwnPanel()) {
+                window.location.reload();
+            }
+        }).fail(function (xhr) {
+            notify('error', (xhr.responseJSON && xhr.responseJSON.message) || 'Не удалось перенести письмо.');
+            $letterEl.find('[data-sx-letter-move]').prop('disabled', false);
+        });
+    }
+
+    $(document).on('click', '[data-sx-letter] [data-sx-letter-folder-menu], [data-sx-letter] [data-sx-letter-labels-menu]', function () {
+        var $letterEl = $(this).closest('[data-sx-letter]');
+        var $menu = $(this).siblings('[data-sx-letter-floating]');
+        if (!$menu.prop('hidden')) {
+            closeMenus();
+            return;
+        }
+        closeMenus();
+        var id = String($letterEl.data('id'));
+        var config = {
+            foldersUrl: $letterEl.data('server-folders-url'),
+            labelsUrl: $letterEl.data('labels-url'),
+            labelSaveUrl: $letterEl.data('label-save-url'),
+            target: {ids: [id]},
+            onFolder: function (folder) {
+                closeMenus();
+                moveOpenLetter($letterEl, 'folder', folder);
+            },
+            onLabels: function () {
+                reloadList();
+                $letterEl.data('labelsChanged', true);
+            }
+        };
+        $menu.empty().append('<span class="sx-mail__menu-note">Загрузка…</span>').prop('hidden', false);
+        ($(this).is('[data-sx-letter-folder-menu]') ? folderMenu : labelsMenu)($menu, config, function () {
+        });
+    });
+
+    // Labels changed in the letter: show them when its menu closes.
+    $(document).on('click keydown', function () {
+        var $letterEl = $letter();
+        if ($letterEl.data('labelsChanged') && !$letterEl.find('[data-sx-letter-floating]:not([hidden])').length) {
+            $letterEl.data('labelsChanged', false);
+            window.location.reload();
         }
     });
 

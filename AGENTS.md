@@ -36,6 +36,13 @@ Manual sorting is `services\MessageSorting` (link/unlink/assign) and
 the core record source `message`, `source\MessageRecordSource`); the CRM
 record types mail knows and their visibility are `services\CrmRecords`. All
 links go through `MessageLinker` (link type strength, exclusions).
+Actions with letters in the mailbox are `services\MailboxActions` (records
+the asked-for place `target_role` at once; right "Управление письмами") and
+`services\MailServerSync` (the job `comm.mail.apply` and the receive job do
+it on the server and find letters moved or deleted in the mail service);
+drivers that can change a mailbox implement `mail\MailManageSessionInterface`.
+Conversation search is `services\MailSearch` (`cms_comm_message_search`,
+written by `CmsCommMessage::afterSave()`).
 `CmsCommMessageQuery::forManager()` relies on core forManager() scopes, which
 read `Yii::$app->user` for subordinates: call it in web requests, not in jobs.
 

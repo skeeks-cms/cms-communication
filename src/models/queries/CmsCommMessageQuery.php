@@ -35,6 +35,25 @@ class CmsCommMessageQuery extends ActiveQuery
     }
 
     /**
+     * Messages whose copy in the mailbox is (or is being moved) in a folder
+     * of these roles (CmsCommMessageMailbox::ROLE_*); $in = false: whose copy
+     * there is not in such a folder (letters without a copy in the mailbox
+     * pass too).
+     *
+     * @param string[] $roles
+     */
+    public function inAccountRoles(int $accountId, array $roles, bool $in = true)
+    {
+        $c = CmsCommMessageMailbox::tableName();
+        $exists = ['exists', CmsCommMessageMailbox::find()
+            ->andWhere([$c.'.cms_comm_account_id' => $accountId])
+            ->andWhere([$c.'.cms_comm_message_id' => new Expression(CmsCommMessage::tableName().'.id')])
+            ->andWhere(['in', CmsCommMessageMailbox::roleExpression($c), $roles])];
+
+        return $this->andWhere($in ? $exists : ['not', $exists]);
+    }
+
+    /**
      * Messages of one mailbox: received into it or sent from it.
      */
     public function inAccount(int $accountId)

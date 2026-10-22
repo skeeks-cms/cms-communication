@@ -43,7 +43,7 @@ class ConnectionDiagnostics
                 .'<div>'.Html::encode($result['message']).'</div>',
                 ['class' => 'alert '.($result['ok'] ? 'alert-success' : 'alert-danger')]);
         }
-        foreach (CmsCommSyncState::find()->andWhere(['cms_comm_connection_id' => $connection->id])->all() as $state) {
+        foreach (CmsCommSyncState::find()->andWhere(['cms_comm_connection_id' => $connection->id, 'folder_role' => CmsCommSyncState::RECEIVE_ROLES])->all() as $state) {
             $html .= Html::tag('div', Html::encode(sprintf('%s: последний приём %s%s',
                 CmsCommSyncState::roles()[$state->folder_role] ?? $state->folder,
                 $state->last_success_at ? \Yii::$app->formatter->asRelativeTime($state->last_success_at) : 'ещё не было',

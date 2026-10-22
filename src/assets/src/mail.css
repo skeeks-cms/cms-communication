@@ -221,6 +221,7 @@
 
 .sx-mail__toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 4px;
     padding: 6px 12px;
@@ -2089,5 +2090,233 @@ a.sx-letter__mark:focus {
     .sx-letter__toolbar .sx-mail__menu {
         left: auto;
         right: 0;
+    }
+}
+
+/* CRM records in the letter header: the logo is round like its pill. */
+.sx-letter__record .sx-collection-cell__media {
+    border-radius: 50%;
+}
+
+/* Actions in the mailbox: trash, archive, spam, a folder, labels */
+.sx-mail__toolbar .sx-mail__tool--icon .sx-mail__tool-text {
+    display: none;
+}
+
+.sx-mail__toolbar .sx-mail__tool--icon {
+    padding: 6px 8px;
+}
+
+.sx-mail__tool-sep {
+    width: 1px;
+    height: 20px;
+    margin: 0 4px;
+    background: var(--sx-color-border, #dedede);
+}
+
+.sx-mail__row.is-leaving {
+    opacity: .35;
+    pointer-events: none;
+    transition: opacity .15s;
+}
+
+/* "В папку" and "Метки" of the list follow their button. */
+.sx-mail__floating {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1050;
+    max-width: min(320px, calc(100vw - 16px));
+}
+
+.sx-mail__menu .sx-mail__menu-item {
+    white-space: normal;
+}
+
+.sx-mail__label {
+    border-color: color-mix(in srgb, var(--sx-mail-label, #64748b) 45%, transparent);
+    background: color-mix(in srgb, var(--sx-mail-label, #64748b) 14%, transparent);
+    color: var(--sx-color-text, #262626);
+}
+
+.sx-mail__label::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 5px;
+    border-radius: 50%;
+    background: var(--sx-mail-label, #64748b);
+    vertical-align: 1px;
+}
+
+.sx-mail__tag--place {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* In the folder itself its own place says nothing new. */
+.sx-mail[data-folder-kind="trash"] .sx-mail__tag--place[data-role="trash"],
+.sx-mail[data-folder-kind="junk"] .sx-mail__tag--place[data-role="junk"],
+.sx-mail[data-folder-kind="archive"] .sx-mail__tag--place[data-role="archive"] {
+    display: none;
+}
+
+.sx-mail__tag--pending {
+    border-style: dashed;
+}
+
+.sx-letter__tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.sx-mail__label-item {
+    padding-right: 4px;
+}
+
+.sx-mail__label-check {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--sx-color-border-strong, #b8bcc6);
+    border-radius: 4px;
+    text-align: center;
+    font-size: 12px;
+    line-height: 13px;
+}
+
+.sx-mail__label-item.is-on .sx-mail__label-check {
+    border-color: var(--sx-color-accent, #ee4d7d);
+    background: var(--sx-color-accent, #ee4d7d);
+    color: #fff;
+}
+
+.sx-mail__label-item.is-on .sx-mail__label-check::after {
+    content: "✓";
+}
+
+.sx-mail__label-item.is-some .sx-mail__label-check::after {
+    content: "–";
+}
+
+.sx-mail__label-dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--sx-mail-label, #64748b);
+}
+
+.sx-mail__label-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sx-mail__label-edit {
+    flex: none;
+    padding: 0 6px;
+    border-radius: 4px;
+    color: var(--sx-color-text-muted, #6f7484);
+    opacity: .6;
+}
+
+.sx-mail__label-edit:hover,
+.sx-mail__label-edit:focus-visible {
+    opacity: 1;
+    background: var(--sx-color-surface-muted, #f4f6f8);
+}
+
+.sx-mail__label-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 6px;
+    min-width: 240px;
+}
+
+.sx-mail__label-colors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.sx-mail__label-color {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    background: var(--sx-mail-label);
+    cursor: pointer;
+}
+
+.sx-mail__label-color.is-active {
+    border-color: var(--sx-color-surface, #fff);
+    box-shadow: 0 0 0 2px var(--sx-mail-label);
+}
+
+.sx-mail__label-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+}
+
+/* The selection bar: what is chosen, then the actions. */
+.sx-mail__selection-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sx-mail__selection-all {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #9cc4ff;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.sx-mail__selection-all[hidden] {
+    display: none;
+}
+
+.sx-mail__selection-all:hover {
+    text-decoration: underline;
+}
+
+.sx-mail__selection-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+}
+
+.sx-mail__selection-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+@media (max-width: 1100px) {
+    .sx-mail__selection-action .sx-mail__tool-text {
+        display: none;
+    }
+}
+
+@media (max-width: 900px) {
+    .sx-mail__tool-sep {
+        display: none;
+    }
+
+    .sx-mail__selection-actions {
+        justify-content: center;
     }
 }

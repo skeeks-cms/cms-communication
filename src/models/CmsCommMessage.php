@@ -41,6 +41,7 @@ use yii\helpers\Json;
  * @property int                     $is_internal
  * @property int                     $is_auto
  * @property int                     $is_history  collected from the mailbox history: counts as read
+ * @property string|null             $box_state   trash or junk: in the trash or spam of all its mailboxes (services\MailboxActions::refreshState())
  * @property int|null                $message_at
  * @property int|null                $sent_by_user_id
  * @property string|null             $error
@@ -51,6 +52,7 @@ use yii\helpers\Json;
  * @property CmsCommLink[]           $links
  * @property CmsUser|null            $sentBy
  * @property CmsCommMessageFile[]    $files attachments and images inside the text
+ * @property CmsCommLabel[]          $labels
  */
 class CmsCommMessage extends ActiveRecord
 {
@@ -76,6 +78,19 @@ class CmsCommMessage extends ActiveRecord
     public function behaviors()
     {
         return [TimestampBehavior::class];
+    }
+
+    /** Attributes that the search line of the letter is made of. */
+    private const SEARCH_ATTRIBUTES = ['cms_comm_conversation_id', 'from_address', 'from_name', 'to_list', 'cc_list', 'bcc_list', 'subject', 'body_text', 'body_html'];
+
+    public function afterSave($insert, $changedAttributes)
+    {
+        parent::afterSave($insert, $changedAttributes);
+
+        // Every writer (receive, send, history) keeps the conversation search up to date.
+        if ($insert || array_intersect(array_keys($changedAttributes), self::SEARCH_ATTRIBUTES)) {
+            \skeeks\cms\communication\services\MailSearch::index($this);
+        }
     }
 
     public static function statuses(): array
@@ -204,6 +219,13 @@ class CmsCommMessage extends ActiveRecord
     public function getAttachmentFiles(): array
     {
         return array_values(array_filter($this->files, static fn(CmsCommMessageFile $f) => !$f->is_inline));
+    }
+
+    public function getLabels()
+    {
+        return $this->hasMany(CmsCommLabel::class, ['id' => 'cms_comm_label_id'])
+            ->viaTable('{{%cms_comm_message_label}}', ['cms_comm_message_id' => 'id'])
+            ->orderBy(['priority' => SORT_ASC, 'name' => SORT_ASC]);
     }
 
     public function getSentBy()
