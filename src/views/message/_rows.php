@@ -32,7 +32,7 @@ $shortDate = static function ($timestamp) use ($formatter) {
     foreach (MailUi::visibleLinks($m) as $link) {
         $tags[] = MailUi::linkLabel($link) ?? '#'.$link->model_id;
     }
-    $assignee = $m->conversation ? $m->conversation->assignedUser : null;
+    $assignee = \Yii::$app->communication->showAssignee && $m->conversation ? $m->conversation->assignedUser : null;
     $status = !$incoming && $m->status !== CmsCommMessage::STATUS_SENT ? $m->getStatusName() : '';
     $viewUrl = (string)BackendUrlHelper::createByParams(['view', 'pk' => $m->id])->enableEmptyLayout()->enableNoActions()->url;
     ?>

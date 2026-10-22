@@ -38,9 +38,9 @@
     overflow-y: auto;
 }
 
+/* The list keeps its height: with many mailboxes the whole column scrolls, the links stay below the folders. */
 .sx-mail__folder-list {
-    flex: 1;
-    min-height: 0;
+    flex: none;
 }
 
 .sx-mail__hotkeys-link {

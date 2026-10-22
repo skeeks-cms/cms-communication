@@ -20,7 +20,6 @@ use skeeks\cms\models\CmsStorageFile;
 use skeeks\cms\models\CmsUser;
 use skeeks\cms\models\CmsUserEmail;
 use skeeks\cms\models\User;
-use skeeks\cms\rbac\CmsManager;
 use yii\helpers\Json;
 
 /**
@@ -31,14 +30,12 @@ use yii\helpers\Json;
 class MailComposeService
 {
     private User $user;
-    private bool $isAdmin;
     private int $siteId;
     private AddressBook $addresses;
 
     public function __construct(User $user, ?int $siteId = null)
     {
         $this->user = $user;
-        $this->isAdmin = \Yii::$app->authManager->checkAccess($user->id, CmsManager::PERMISSION_ROLE_ADMIN_ACCESS);
         $this->siteId = $siteId ?? (int)\Yii::$app->skeeks->site->id;
         $this->addresses = new AddressBook();
     }
@@ -50,11 +47,10 @@ class MailComposeService
             ->andWhere(['cms_site_id' => $this->siteId, 'is_active' => 1])
             ->andWhere(['not', ['cms_comm_connection_id' => null]])
             ->orderBy(['address' => SORT_ASC]);
-        if (!$this->isAdmin) {
-            $query->andWhere(['id' => CmsCommAccountAccess::find()->select('cms_comm_account_id')
-                ->andWhere(['cms_user_id' => $this->user->id])
-                ->andWhere(['!=', 'send_level', CmsCommAccountAccess::SEND_NONE])]);
-        }
+        // Administrators too: sending follows the employee's own access rows.
+        $query->andWhere(['id' => CmsCommAccountAccess::find()->select('cms_comm_account_id')
+            ->andWhere(['cms_user_id' => $this->user->id])
+            ->andWhere(['!=', 'send_level', CmsCommAccountAccess::SEND_NONE])]);
 
         return $query->all();
     }
@@ -109,10 +105,6 @@ class MailComposeService
 
     public function sendLevel(int $accountId): string
     {
-        if ($this->isAdmin) {
-            return CmsCommAccountAccess::SEND_ANY;
-        }
-
         return (string)(CmsCommAccountAccess::find()->select('send_level')
             ->andWhere(['cms_user_id' => $this->user->id, 'cms_comm_account_id' => $accountId])
             ->scalar() ?: CmsCommAccountAccess::SEND_NONE);

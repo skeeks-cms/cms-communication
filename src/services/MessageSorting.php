@@ -13,7 +13,6 @@ use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\models\CmsUser;
 use skeeks\cms\models\CmsWebNotify;
 use skeeks\cms\models\User;
-use skeeks\cms\rbac\CmsManager;
 use yii\db\ActiveRecord;
 
 /**
@@ -190,10 +189,6 @@ class MessageSorting
 
     private function canRead(User $user, CmsCommMessage $message): bool
     {
-        if (\Yii::$app->authManager->checkAccess($user->id, CmsManager::PERMISSION_ROLE_ADMIN_ACCESS)) {
-            return true;
-        }
-
         return CmsCommMessage::find()->forManager($user)
             ->andWhere([CmsCommMessage::tableName().'.id' => (int)$message->id])
             ->exists();

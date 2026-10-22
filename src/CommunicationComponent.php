@@ -45,6 +45,21 @@ class CommunicationComponent extends Component
      */
     public $allowedRecipients = [];
 
+    /**
+     * "Ответственный" of a conversation in "Почта": the menu in the letter,
+     * "Назначить меня" in the row menu, the folder "Мне назначено" and the
+     * list filter. Hidden by default (decision of the owner, 23.10.2026): a
+     * letter that needs work becomes a task. The data and the service
+     * (MessageSorting::assign()) stay; a project may switch it on.
+     */
+    public $showAssignee = false;
+
+    /**
+     * The list filter "Привязка" (linked to the CRM / not sorted). Hidden by
+     * default: the folders "Мои клиенты" and "Без привязки" do the same.
+     */
+    public $showLinkedFilter = false;
+
     public function isRecipientAllowed(string $address): bool
     {
         if (!$this->allowedRecipients) {

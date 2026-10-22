@@ -53,6 +53,8 @@ $created = $created ?? [];
 $createActions = $createActions ?? [];
 $conversation = $model->conversation;
 $assignee = $conversation ? $conversation->assignedUser : null;
+// "Ответственный" is hidden unless the site switches it on (CommunicationComponent::$showAssignee).
+$showAssignee = (bool)\Yii::$app->communication->showAssignee;
 $composeUrl = static fn(array $params) => Url::to(array_merge(['create', 'inline' => 1], $params));
 $canManage = !empty($canManage);
 $role = MailUi::mailboxRole($model);
@@ -136,12 +138,14 @@ if ($canManage) {
                 </span>
             </span>
         <?php endif; ?>
+        <?php if ($showAssignee) : ?>
         <span class="sx-mail__menu-wrap">
             <button type="button" class="sx-mail__tool" data-sx-letter-assign aria-haspopup="true" title="Ответственный за переписку">
                 <?= MailUi::icon('user', 17) ?> <span class="sx-mail__tool-text">Ответственный</span> <?= MailUi::icon('chevron-down', 14) ?>
             </button>
             <span class="sx-mail__menu sx-mail__menu--right" data-sx-letter-assign-menu hidden></span>
         </span>
+        <?php endif; ?>
     </div>
 
     <div class="sx-letter__head">
@@ -167,6 +171,7 @@ if ($canManage) {
                     <?php if ($model->error) : ?><div class="sx-letter__error"><?= Html::encode($model->error) ?></div><?php endif; ?>
                 </div>
             <?php endif; ?>
+            <?php if ($showAssignee) : ?>
             <div class="sx-letter__muted sx-letter__assignee" data-sx-letter-assignee>
                 <?php if ($assignee) : ?>
                     Ответственный: <strong><?= Html::encode($assignee->shortDisplayName) ?></strong>
@@ -174,6 +179,7 @@ if ($canManage) {
                     Ответственный не назначен
                 <?php endif; ?>
             </div>
+            <?php endif; ?>
             <?= MailUi::createdMarks($created) ?>
             <?php if ($tags = MailUi::mailboxTags($model)) : ?>
                 <div class="sx-letter__tags"><?= $tags ?></div>

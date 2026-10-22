@@ -14,7 +14,6 @@ use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\models\CmsCommMessageMailbox;
 use skeeks\cms\communication\models\CmsCommSyncState;
 use skeeks\cms\models\User;
-use skeeks\cms\rbac\CmsManager;
 
 /**
  * Actions with letters in the mailbox on the server, asked for by an
@@ -23,7 +22,7 @@ use skeeks\cms\rbac\CmsManager;
  * API tools.
  *
  * The right is "Управление письмами" (`CmsCommAccountAccess::can_manage_messages`)
- * on the mailbox of the copy; administrators may everything. A move only
+ * on the mailbox of the copy, administrators too. A move only
  * records where the copy should go (`target_role`): the screen shows the
  * letter there at once, and the job `comm.mail.apply` of the connection
  * moves it on the server (services\MailServerSync), or puts it back with an
@@ -51,14 +50,12 @@ class MailboxActions
 
     private User $user;
     private int $siteId;
-    private bool $isAdmin;
     private ?array $manageable = null;
 
     public function __construct(User $user, int $siteId)
     {
         $this->user = $user;
         $this->siteId = $siteId;
-        $this->isAdmin = \Yii::$app->authManager->checkAccess($user->id, CmsManager::PERMISSION_ROLE_ADMIN_ACCESS);
     }
 
     public static function actions(): array
@@ -76,11 +73,9 @@ class MailboxActions
     public function manageableAccountIds(): array
     {
         if ($this->manageable === null) {
-            $query = CmsCommAccount::find()->select('id')->andWhere(['cms_site_id' => $this->siteId]);
-            if (!$this->isAdmin) {
-                $query->andWhere(['id' => CmsCommAccountAccess::find()->select('cms_comm_account_id')
+            $query = CmsCommAccount::find()->select('id')->andWhere(['cms_site_id' => $this->siteId])
+                ->andWhere(['id' => CmsCommAccountAccess::find()->select('cms_comm_account_id')
                     ->andWhere(['cms_user_id' => (int)$this->user->id, 'can_manage_messages' => 1])]);
-            }
             $this->manageable = array_map('intval', $query->column());
         }
 

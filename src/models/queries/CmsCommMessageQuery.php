@@ -15,7 +15,6 @@ use skeeks\cms\communication\models\CmsCommConversation;
 use skeeks\cms\communication\models\CmsCommMessageMailbox;
 use skeeks\cms\communication\services\CrmRecords;
 use skeeks\cms\models\User;
-use skeeks\cms\rbac\CmsManager;
 use yii\db\ActiveQuery;
 use yii\db\Expression;
 
@@ -70,12 +69,14 @@ class CmsCommMessageQuery extends ActiveQuery
 
     /**
      * Messages an employee may read:
-     * - administrators: all messages of the site;
      * - mailboxes where the employee reads everything;
      * - letters the employee sent;
      * - letters linked to a lead, company, client, deal or task the employee can see,
      *   unless every mailbox of the letter hides linked access
      *   (CmsCommAccount::$is_expose_linked).
+     *
+     * Administrators follow the same rules (decision of the owner, 23.10.2026):
+     * what they read is set by their own access rows, not by the role.
      *
      * Visibility follows the same forManager() scopes as the CRM lists and is
      * built from IN/EXISTS subqueries, never from joins.
@@ -84,15 +85,9 @@ class CmsCommMessageQuery extends ActiveQuery
     {
         if ($user === null) {
             $user = \Yii::$app->user->identity;
-            $isAdmin = \Yii::$app->user->can(CmsManager::PERMISSION_ROLE_ADMIN_ACCESS);
-        } else {
-            $isAdmin = \Yii::$app->authManager->checkAccess($user->id, CmsManager::PERMISSION_ROLE_ADMIN_ACCESS);
         }
         if (!$user) {
             return $this->andWhere('1=0');
-        }
-        if ($isAdmin) {
-            return $this;
         }
 
         $t = CmsCommMessage::tableName();

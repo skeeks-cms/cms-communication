@@ -14,7 +14,6 @@ use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\models\CmsCommMessageMailbox;
 use skeeks\cms\communication\models\queries\CmsCommMessageQuery;
 use skeeks\cms\models\User;
-use skeeks\cms\rbac\CmsManager;
 use yii\db\Expression;
 
 /**
@@ -41,25 +40,23 @@ class MailFolders
 
     private User $user;
     private int $siteId;
-    private bool $isAdmin;
 
     public function __construct(User $user, int $siteId)
     {
         $this->user = $user;
         $this->siteId = $siteId;
-        $this->isAdmin = \Yii::$app->authManager->checkAccess($user->id, CmsManager::PERMISSION_ROLE_ADMIN_ACCESS);
     }
 
-    /** Mailboxes whose folders the employee sees as a whole. */
+    /**
+     * Mailboxes whose folders the employee sees as a whole: read "всё" in
+     * their own access rows (administrators too).
+     */
     public function accounts(): array
     {
-        $query = CmsCommAccount::find()->andWhere(['cms_site_id' => $this->siteId])->orderBy(['address' => SORT_ASC]);
-        if (!$this->isAdmin) {
-            $query->andWhere(['id' => CmsCommAccountAccess::find()->select('cms_comm_account_id')
-                ->andWhere(['cms_user_id' => $this->user->id, 'read_level' => CmsCommAccountAccess::READ_ALL])]);
-        }
-
-        return $query->all();
+        return CmsCommAccount::find()->andWhere(['cms_site_id' => $this->siteId])->orderBy(['address' => SORT_ASC])
+            ->andWhere(['id' => CmsCommAccountAccess::find()->select('cms_comm_account_id')
+                ->andWhere(['cms_user_id' => $this->user->id, 'read_level' => CmsCommAccountAccess::READ_ALL])])
+            ->all();
     }
 
     /**
@@ -67,13 +64,14 @@ class MailFolders
      */
     public function folders(): array
     {
-        $folders = [
-            ['key' => self::ALL, 'title' => 'Все письма', 'group' => null, 'icon' => 'mail'],
-            ['key' => self::ASSIGNED, 'title' => 'Мне назначено', 'group' => null, 'icon' => 'user'],
-            ['key' => self::CLIENTS, 'title' => 'Мои клиенты', 'group' => null, 'icon' => 'users'],
-        ];
+        $folders = [['key' => self::ALL, 'title' => 'Все письма', 'group' => null, 'icon' => 'mail']];
+        // "Ответственный" is hidden unless the site switches it on (CommunicationComponent::$showAssignee).
+        if (\Yii::$app->communication->showAssignee) {
+            $folders[] = ['key' => self::ASSIGNED, 'title' => 'Мне назначено', 'group' => null, 'icon' => 'user'];
+        }
+        $folders[] = ['key' => self::CLIENTS, 'title' => 'Мои клиенты', 'group' => null, 'icon' => 'users'];
         $accounts = $this->accounts();
-        if ($this->isAdmin || $accounts) {
+        if ($accounts) {
             $folders[] = ['key' => self::UNLINKED, 'title' => 'Без привязки', 'group' => null, 'icon' => 'help'];
         }
         foreach ($accounts as $account) {
@@ -166,13 +164,9 @@ class MailFolders
     {
         $t = CmsCommMessage::tableName();
         foreach (MailSearch::terms($search) as $term) {
-            if ($this->isAdmin) {
-                $conversations = MailSearch::conversations($term, $this->siteId);
-            } else {
-                $conversations = CmsCommMessage::find()->select($t.'.cms_comm_conversation_id')
-                    ->cmsSite($this->siteId)->forManager($this->user)
-                    ->andWhere([$t.'.id' => MailSearch::messages($term, $this->siteId)]);
-            }
+            $conversations = CmsCommMessage::find()->select($t.'.cms_comm_conversation_id')
+                ->cmsSite($this->siteId)->forManager($this->user)
+                ->andWhere([$t.'.id' => MailSearch::messages($term, $this->siteId)]);
             $query->andWhere([$t.'.cms_comm_conversation_id' => $conversations]);
         }
 

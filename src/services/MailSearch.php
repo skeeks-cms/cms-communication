@@ -90,14 +90,6 @@ class MailSearch
         return array_slice($terms, 0, self::MAX_TERMS);
     }
 
-    /** Conversations of the site where some letter contains the word. */
-    public static function conversations(string $term, int $siteId): Query
-    {
-        return (new Query())->select('cms_comm_conversation_id')->from(self::TABLE)
-            ->andWhere(['cms_site_id' => $siteId])
-            ->andWhere(['like', 'search_text', $term]);
-    }
-
     /** Letters whose line contains the word (to restrict matches to visible letters). */
     public static function messages(string $term, int $siteId): Query
     {

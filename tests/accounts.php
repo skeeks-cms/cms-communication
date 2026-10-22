@@ -442,6 +442,12 @@ commExpect((new \yii\db\Query())->from('cms_comm_message_search')->where(['cms_c
     && (new \yii\db\Query())->select('search_text')->from('cms_comm_message_search')->where(['cms_comm_message_id' => $m1->id])->scalar() === 'ivan@client.ru счет № one@client.ru',
     'Every saved letter gets its normalized search line.');
 
+// Administrators follow their own access rows in mail, like everyone (user 1 is an administrator here).
+commExpect(!(new \skeeks\cms\communication\services\MailboxActions(\skeeks\cms\models\CmsUser::findOne(1), 1))->canManageAny(),
+    'An administrator without "Управление письмами" manages no letters.');
+commExpect(array_map(static fn($a) => $a->address, (new \skeeks\cms\communication\services\MailComposeService(\skeeks\cms\models\CmsUser::findOne(1), 1))->sendableAccounts()) === [],
+    'An administrator without a send right sends from no mailbox.');
+
 $svetlana = \skeeks\cms\models\CmsUser::findOne(2);
 $actions = new \skeeks\cms\communication\services\MailboxActions($svetlana, 1);
 commExpect(!$actions->canManageAny() && !$actions->canManage($m1), 'Without "Управление письмами" an employee manages nothing.');

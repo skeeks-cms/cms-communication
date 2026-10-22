@@ -33,6 +33,7 @@ use yii\helpers\Url;
 
 MailClientAsset::register($this);
 
+$showAssignee = (bool)\Yii::$app->communication->showAssignee;
 $assignee = $assignee ?? '';
 $linked = $linked ?? '';
 $assignees = $assignees ?? [];
@@ -194,7 +195,17 @@ $hotkeys = [
                     Url::to(array_merge($listParams, ['unread' => $unreadOnly ? null : 1])),
                     ['class' => 'sx-mail__tool sx-mail__filter'.($unreadOnly ? ' is-active' : ''), 'title' => $unreadOnly ? 'Показать все письма' : 'Показать только непрочитанные']) ?>
                 <?php // Filters keep the folder, search and each other: the option value is the URL to open. ?>
-                <?php $filters = ['assignee' => [$assigneeItems, $assignee, 'Ответственный за переписку'], 'linked' => [$linkedItems, $linked, 'Привязка к лидам, компаниям, клиентам и сделкам']]; ?>
+                <?php
+                // "Ответственный" and "Привязка" are hidden unless the site switches them on
+                // (CommunicationComponent); a filter already in the address stays visible to be cleared.
+                $filters = [];
+                if ($showAssignee || $assignee !== '') {
+                    $filters['assignee'] = [$assigneeItems, $assignee, 'Ответственный за переписку'];
+                }
+                if (\Yii::$app->communication->showLinkedFilter || $linked !== '') {
+                    $filters['linked'] = [$linkedItems, $linked, 'Привязка к лидам, компаниям, клиентам и сделкам'];
+                }
+                ?>
                 <?php if ($labels) { $filters['label'] = [$labelItems, $label ? (string)$label : '', 'Письма с меткой']; } ?>
                 <?php foreach ($filters as $param => [$items, $current, $hint]) : ?>
                     <?php if (!isset($items[$current])) { $items[$current] = $current; } ?>
@@ -273,8 +284,10 @@ $hotkeys = [
         <?php foreach ($rowMenu['create'] as $type => $action) : ?>
             <button type="button" class="sx-mail__menu-item" data-sx-mail-context-action="create" data-type="<?= Html::encode($type) ?>"><?= MailUi::icon($action['icon'], 16) ?> <?= Html::encode($action['title']) ?>…</button>
         <?php endforeach; ?>
-        <span class="sx-mail__menu-sep"></span>
-        <button type="button" class="sx-mail__menu-item" data-sx-mail-context-action="assign-me"><?= MailUi::icon('user', 16) ?> Назначить меня ответственным</button>
+        <?php if ($showAssignee) : ?>
+            <span class="sx-mail__menu-sep"></span>
+            <button type="button" class="sx-mail__menu-item" data-sx-mail-context-action="assign-me"><?= MailUi::icon('user', 16) ?> Назначить меня ответственным</button>
+        <?php endif; ?>
     </div>
 
     <div class="sx-mail__dialog" data-sx-mail-hotkeys-dialog hidden role="dialog" aria-label="Горячие клавиши">
