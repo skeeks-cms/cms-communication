@@ -21,6 +21,7 @@ use skeeks\cms\communication\services\MailFolders;
 use skeeks\cms\communication\services\MailNotifier;
 use skeeks\cms\communication\services\MailTemplates;
 use skeeks\cms\grid\DateTimeColumnData;
+use skeeks\cms\rbac\CmsManager;
 use yii\base\Event;
 use yii\helpers\ArrayHelper;
 use yii\helpers\Html;
@@ -43,10 +44,11 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $this->modelShowAttribute = 'subject';
         $this->modelClassName = CmsCommMessage::class;
         $this->generateAccessActions = false;
-        // Every employee may open the section: the list shows only letters they may read.
-        // An empty list, not a null name: BackendController::init() turns null into the route,
-        // and THasPermissions creates that permission for administrators only.
-        $this->permissionNames = [];
+        // Every employee with access to the administration may open the section: the list shows
+        // only letters they may read. Not a null name: BackendController::init() turns null into the
+        // route, and THasPermissions creates that permission for administrators only. Not an empty
+        // list either: then nothing is checked and a guest gets an error instead of the login page.
+        $this->permissionNames = [CmsManager::PERMISSION_ADMIN_ACCESS => 'Доступ к системе администрирования'];
         $this->defaultAction = 'mail';
         // Letter panel header: the subject only; no id/date meta, no delete.
         $this->modelHeader = function () {

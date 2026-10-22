@@ -11,6 +11,7 @@ use skeeks\cms\backend\controllers\BackendModelStandartController;
 use skeeks\cms\backend\grid\BackendEntityLinkColumn;
 use skeeks\cms\communication\models\CmsCommTemplate;
 use skeeks\cms\communication\services\MailTemplates;
+use skeeks\cms\rbac\CmsManager;
 use skeeks\cms\widgets\formInputs\richText\RichTextInputWidget;
 use skeeks\yii2\form\fields\FieldSet;
 use skeeks\yii2\form\fields\HtmlBlock;
@@ -35,8 +36,9 @@ class AdminCmsCommTemplateController extends BackendModelStandartController
         $this->modelShowAttribute = 'name';
         $this->modelClassName = CmsCommTemplate::class;
         $this->generateAccessActions = false;
-        // Every employee who writes letters: the list and each record are checked below.
-        $this->permissionNames = [];
+        // Every employee with access to the administration: the list and each record are checked
+        // below (see AdminCmsCommMessageController: an empty list would let a guest in).
+        $this->permissionNames = [CmsManager::PERMISSION_ADMIN_ACCESS => 'Доступ к системе администрирования'];
 
         parent::init();
     }
