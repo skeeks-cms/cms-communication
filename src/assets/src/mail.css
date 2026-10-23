@@ -2592,3 +2592,27 @@ a.sx-letter__mark:focus {
         display: none;
     }
 }
+
+/* ------------------------------------------------------------------
+ * Mailings: the warning about opted-out recipients in the letter form
+ * and "Отправить клиенту" (the rest of mailings is mailing.css)
+ * ------------------------------------------------------------------ */
+
+.sx-compose__optout,
+.sx-send-form__optout {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 6px 0;
+    padding: 8px 12px;
+    border-radius: var(--sx-radius-sm, 6px);
+    background: var(--sx-color-warning-soft, #fff7e6);
+    color: var(--sx-color-warning-on-soft, #8a5300);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.sx-compose__optout[hidden],
+.sx-send-form__optout[hidden] {
+    display: none;
+}

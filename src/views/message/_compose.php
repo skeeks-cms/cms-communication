@@ -69,6 +69,7 @@ $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByPar
       data-signatures="<?= Html::encode(\yii\helpers\Json::encode((object)$signatures)) ?>"
       data-templates="<?= Html::encode(\yii\helpers\Json::encode($templates)) ?>"
       data-sendables-url="<?= Html::encode(Url::to(['sendables'])) ?>"
+      data-optout-url="<?= Html::encode(Url::to(['optout'])) ?>"
       data-sendable-sources="<?= Html::encode(\yii\helpers\Json::encode($sendableSources)) ?>"
       <?= $noDrafts ? 'data-no-drafts="1"' : '' ?>>
     <?= Html::hiddenInput(\Yii::$app->request->csrfParam, \Yii::$app->request->csrfToken) ?>
@@ -100,6 +101,8 @@ $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByPar
         </div>
         <div class="sx-compose__error" data-sx-compose-error="to"></div>
     </div>
+    <?php // Recipients on the stop list of mailings: the letter still goes, the employee is warned (mail.js). ?>
+    <div class="sx-compose__optout" data-sx-compose-optout hidden></div>
     <?= $field('Копия', 'cc', $recipients($name('cc'), $form->cc), !$form->cc) ?>
     <?= $field('Скрытая копия', 'bcc', $recipients($name('bcc'), $form->bcc), !$form->bcc) ?>
     <?= $field('От кого', 'cms_comm_account_id',

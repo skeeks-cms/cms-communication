@@ -19,7 +19,8 @@ use yii\helpers\Url;
 
 $id = 'sx-send-sms-'.substr(md5(uniqid('', true)), 0, 6);
 ?>
-<form class="sx-compose sx-send-form" data-sx-send-form action="<?= Html::encode(Url::to(['send'])) ?>" method="post" novalidate>
+<form class="sx-compose sx-send-form" data-sx-send-form action="<?= Html::encode(Url::to(['send'])) ?>" method="post" novalidate
+      data-optout-url="<?= Html::encode(Url::to(['optout'])) ?>">
     <?= Html::hiddenInput(\Yii::$app->request->csrfParam, \Yii::$app->request->csrfToken) ?>
     <?= Html::hiddenInput('sendable', $request->ref()) ?>
     <?= Html::hiddenInput('channel', 'sms') ?>
@@ -33,6 +34,8 @@ $id = 'sx-send-sms-'.substr(md5(uniqid('', true)), 0, 6);
         </div>
         <div class="sx-compose__error" data-sx-send-error="recipient"></div>
     </div>
+    <?php // A number on the stop list of mailings: the SMS still goes, the employee is warned (mail.js). ?>
+    <div class="sx-send-form__optout" data-sx-send-optout hidden></div>
 
     <div class="sx-send-form__text">
         <label class="sx-compose__label" for="<?= $id ?>-text">Текст</label>

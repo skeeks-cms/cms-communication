@@ -10,6 +10,7 @@ namespace skeeks\cms\communication\services;
 use skeeks\cms\communication\forms\ComposeForm;
 use skeeks\cms\communication\models\CmsCommAccount;
 use skeeks\cms\communication\models\CmsCommAccountAccess;
+use skeeks\cms\communication\models\CmsCommContact;
 use skeeks\cms\communication\models\CmsCommConversation;
 use skeeks\cms\communication\models\CmsCommLink;
 use skeeks\cms\communication\models\CmsCommMessage;
@@ -85,6 +86,17 @@ class MailComposeService
         foreach ($addresses as $address) {
             if (!$component->isRecipientAllowed($address)) {
                 return "Отправка на «{$address}» запрещена настройкой allowedRecipients (на стенде разрешены: ".implode(', ', $component->allowedRecipients).').';
+            }
+        }
+
+        // An advertising letter: one recipient, and only one the policy allows (stop list, opt-out of the topic).
+        if ($form->cms_comm_topic_id) {
+            if (count($form->getToAddresses()) !== 1 || $form->getCcAddresses() || $form->getBccAddresses()) {
+                return 'Письмо рассылки уходит одному получателю, без копий.';
+            }
+            $check = MailingPolicy::check($this->siteId, 'email', (string)$form->getToAddresses()[0], (int)$form->cms_comm_topic_id);
+            if (!$check['allowed']) {
+                return 'Рассылка на «'.$form->getToAddresses()[0].'» не отправляется: '.mb_strtolower($check['message']).'.';
             }
         }
 
@@ -551,6 +563,18 @@ class MailComposeService
                 $message->bcc_list = Json::encode($bcc);
             }
             $message->save(false);
+
+            // An advertising letter: the personal opt-out link of its recipient, knowing this letter.
+            if ($form->cms_comm_topic_id) {
+                $contact = MailingContacts::get($this->siteId, CmsCommContact::KIND_EMAIL, (string)array_key_first($to));
+                $url = Unsubscribe::url($contact, (int)$form->cms_comm_topic_id, (int)$message->id);
+                [$html, $text] = Unsubscribe::apply($html, $text, $url);
+                $message->body_text = $text;
+                $message->body_html = '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">'.$html.'</div>';
+                $message->cms_comm_topic_id = (int)$form->cms_comm_topic_id;
+                $message->unsubscribe_url = $url;
+                $message->save(false);
+            }
 
             (new CmsCommMessageMailbox([
                 'cms_comm_message_id' => $message->id,

@@ -10,6 +10,7 @@ namespace skeeks\cms\communication\jobs;
 use skeeks\cms\communication\mail\MailDriverInterface;
 use skeeks\cms\communication\mail\MailSendException;
 use skeeks\cms\communication\models\CmsCommMessage;
+use skeeks\cms\communication\services\Unsubscribe;
 use skeeks\cms\job\contracts\JobReporterInterface;
 use skeeks\cms\job\exceptions\JobPermanentException;
 use skeeks\cms\job\handlers\AbstractJobHandler;
@@ -131,7 +132,8 @@ class MailSendJobHandler extends AbstractJobHandler
         return $bcc ? 'Bcc: '.implode(', ', $bcc)."\r\n".$raw : $raw;
     }
 
-    private function buildEmail(CmsCommMessage $message): Email
+    /** The letter as it leaves (also read by tests: headers of advertising letters). */
+    public function buildEmail(CmsCommMessage $message): Email
     {
         $account = $message->account;
         $email = (new Email())
@@ -167,6 +169,12 @@ class MailSendJobHandler extends AbstractJobHandler
         }
         if ($message->references_list) {
             $headers->addIdHeader('References', array_values(array_filter(explode(' ', $message->references_list))));
+        }
+        // An advertising letter: the opt-out of mail programs, in one click (RFC 2369, RFC 8058).
+        if ($message->hasAttribute('unsubscribe_url') && $message->unsubscribe_url) {
+            foreach (Unsubscribe::headers((string)$message->unsubscribe_url) as $name => $value) {
+                $headers->addTextHeader($name, $value);
+            }
         }
 
         return $email;

@@ -985,6 +985,60 @@
         // The recipients changed: the old complaint about them no longer applies.
         $chips.closest('.sx-compose__row').removeClass('has-error').find('[data-sx-compose-error]').text('');
         markDirty($chips.closest('[data-sx-compose]'));
+        checkOptOut($chips.closest('[data-sx-compose]'));
+    }
+
+    /* Recipients on the stop list of mailings: the letter or SMS still goes,
+     * the employee sees a warning (a personal letter is not advertising). */
+
+    function showOptOut($notice, items) {
+        if (!items || !items.length) {
+            $notice.prop('hidden', true).empty();
+            return;
+        }
+        var text = items.map(function (item) {
+            return item.value + ' — ' + String(item.reason).toLowerCase();
+        }).join('; ');
+        $notice.empty()
+            .append($('<span></span>').text((items.length > 1 ? 'Получатели отписались от рассылок: ' : 'Получатель отписался от рассылок: ')
+                + text + '. Личное письмо уйдёт, но не отправляйте рекламу.'))
+            .prop('hidden', false);
+    }
+
+    function requestOptOut($owner, $notice, params) {
+        var url = $owner.data('optout-url');
+        if (!url || !$notice.length) {
+            return;
+        }
+        clearTimeout($owner.data('optoutTimer'));
+        $owner.data('optoutTimer', setTimeout(function () {
+            var key = $.param(params);
+            if ($owner.data('optoutKey') === key) {
+                return;
+            }
+            $owner.data('optoutKey', key);
+            if (!params.emails && !params.phones) {
+                showOptOut($notice, []);
+                return;
+            }
+            $.getJSON(url, params).done(function (data) {
+                // Only the answer about the current recipients counts.
+                if ($owner.data('optoutKey') === key) {
+                    showOptOut($notice, data && data.items);
+                }
+            });
+        }, 250));
+    }
+
+    function checkOptOut($form) {
+        if (!$form.length) {
+            return;
+        }
+        var emails = [];
+        $form.find('[data-sx-compose-chips]').each(function () {
+            emails = emails.concat(chipsValue($(this)));
+        });
+        requestOptOut($form, $form.find('[data-sx-compose-optout]'), emails.length ? {emails: emails} : {});
     }
 
     function addChip($chips, email, name) {
@@ -2530,6 +2584,15 @@
         sendPreview($(this).closest('[data-sx-send-form]'));
     });
 
+    function checkSendOptOut($form) {
+        var phone = $.trim(String($form.find('[data-sx-send-recipient]').val() || ''));
+        requestOptOut($form, $form.find('[data-sx-send-optout]'), phone ? {phones: [phone]} : {});
+    }
+
+    $(document).on('input', '[data-sx-send-form] [data-sx-send-recipient]', function () {
+        checkSendOptOut($(this).closest('[data-sx-send-form]'));
+    });
+
     $(document).on('input', '[data-sx-send-form] [data-sx-send-recipient]', function () {
         $(this).closest('[data-sx-send-form]').find('[data-sx-send-error="recipient"]').text('')
             .closest('.sx-compose__row').removeClass('has-error');
@@ -2570,6 +2633,7 @@
     $(function () {
         $('[data-sx-send-form]').each(function () {
             sendPreview($(this));
+            checkSendOptOut($(this));
         });
         // The first contact of each channel is its recipient already: show it chosen.
         $('[data-sx-send]').each(function () {

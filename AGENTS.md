@@ -51,6 +51,21 @@ other packages come through `communication.sendables`
 ships a production sendable: the sample lives in `tests/support`.
 `CmsCommMessageQuery::forManager()` relies on core forManager() scopes, which
 read `Yii::$app->user` for subordinates: call it in web requests, not in jobs.
+Mailings (stage 4): consent and opt-out belong to a contact
+(`CmsCommContact`: site, kind, normalized value), not to a lead; only
+`services\MailingConsents` writes topic states and the stop list (an import
+never undoes an opt-out or weakens a consent). Every advertising send asks
+`services\MailingPolicy` (manager mailbox: cold allowed; mailing service:
+consent only); service messages and personal letters never ask it, a
+personal letter to an opted-out contact only warns. An advertising letter is
+`ComposeForm::$cms_comm_topic_id` (one recipient, personal opt-out link,
+List-Unsubscribe headers); the opt-out page and RFC 8058 one click are
+`controllers\UnsubscribeController` (`/~unsub/<code>`). Mailings reach CRM
+cards only through core places (`CrmCardBlocksWidget`, `CrmContactBlockWidget`).
+Imports into leads are `services\LeadImport` + `services\CrmDuplicates`, the
+job `comm.import.leads` for large files; leads get no notification each. Its
+entry is the tab "Импорт" of the core leads section, added by the bootstrap
+through the container definition (`actionsMap`), not a menu item.
 
 Run isolated tests and PHP syntax checks. No external sends, release,
 commit, push or production deployment are implied by a local code change.

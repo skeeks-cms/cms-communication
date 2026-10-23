@@ -7,8 +7,12 @@
 
 namespace skeeks\cms\communication;
 
+use skeeks\cms\communication\helpers\MailingUi;
 use skeeks\cms\communication\helpers\MailUi;
 use skeeks\cms\communication\services\MailComposeService;
+use skeeks\cms\rbac\CmsManager;
+use skeeks\cms\widgets\admin\CrmCardBlocksEvent;
+use skeeks\cms\widgets\admin\CrmCardBlocksWidget;
 use skeeks\cms\widgets\admin\CrmContactActionsEvent;
 use skeeks\cms\widgets\admin\CrmContactBlockWidget;
 use yii\base\BootstrapInterface;
@@ -32,11 +36,53 @@ class CommunicationBootstrap implements BootstrapInterface
                 'name_one' => 'Письмо',
                 'controller' => 'cmsCommunication/admin-cms-comm-message',
             ];
+            // "Готов импорт №…", "Вам назначены лиды из импорта №…" open the import card.
+            $app->skeeks->modelsConfig[\skeeks\cms\communication\models\CmsCommImport::class] = [
+                'name' => 'Импорт в лиды',
+                'name_one' => 'Импорт',
+                'controller' => 'cmsCommunication/admin-cms-comm-import',
+            ];
         }
 
         if (!$app instanceof \yii\web\Application || !defined(CrmContactBlockWidget::class.'::EVENT_CONTACT_ACTIONS')) {
             return;
         }
+
+        // "Импорт" — a tab of the core section "Лиды" beside "Отчёт": BackendController::$actionsMap through
+        // the container definition of the controller, so core knows nothing of imports.
+        $leads = \skeeks\cms\controllers\AdminCmsLeadController::class;
+        if (class_exists($leads)) {
+            $definition = \Yii::$container->getDefinitions()[$leads] ?? [];
+            $definition['actionsMap']['comm-import'] = [
+                'class' => \skeeks\cms\backend\ViewBackendAction::class,
+                'name' => 'Импорт',
+                'icon' => 'fas fa-file-import',
+                'priority' => 28,
+                'callback' => [\skeeks\cms\communication\controllers\AdminCmsCommImportController::class, 'renderLeadsTab'],
+            ];
+            \Yii::$container->set($leads, $definition);
+        }
+
+        // Mailings: the block "Рассылки" in lead, company and client cards, a mark at opted-out contacts.
+        if (defined(CrmCardBlocksWidget::class.'::EVENT_BLOCKS')) {
+            Event::on(CrmCardBlocksWidget::class, CrmCardBlocksWidget::EVENT_BLOCKS, static function (CrmCardBlocksEvent $event) {
+                if ($event->position !== CrmCardBlocksWidget::POSITION_ASIDE || \Yii::$app->user->isGuest
+                    || !\Yii::$app->user->can(CmsManager::PERMISSION_ADMIN_ACCESS)) {
+                    return;
+                }
+                $event->blocks['comm-mailing'] = MailingUi::cardBlock($event->owner);
+                $event->priority['comm-mailing'] = 150;
+            });
+        }
+        Event::on(CrmContactBlockWidget::class, CrmContactBlockWidget::EVENT_CONTACT_ACTIONS, static function (CrmContactActionsEvent $event) {
+            if (\Yii::$app->user->isGuest || !\Yii::$app->skeeks->site || !\Yii::$app->user->can(CmsManager::PERMISSION_ADMIN_ACCESS)) {
+                return;
+            }
+            $mark = MailingUi::contactMarker($event->contactType, $event->value, $event->owner);
+            if ($mark !== '') {
+                $event->actions = ['comm-optout' => $mark] + $event->actions;
+            }
+        });
 
         $canSend = null;
         Event::on(CrmContactBlockWidget::class, CrmContactBlockWidget::EVENT_CONTACT_ACTIONS, static function (CrmContactActionsEvent $event) use (&$canSend) {

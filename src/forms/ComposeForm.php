@@ -72,6 +72,15 @@ class ComposeForm extends Model
      */
     public $sendables = [];
 
+    /**
+     * The topic of an advertising letter (CmsCommTopic id): set by campaigns
+     * in code, never loaded from a request. Such a letter goes to one
+     * recipient that services\MailingPolicy allows, with the personal opt-out
+     * link (services\Unsubscribe::PLACEHOLDER in the text or a line at the
+     * end) and the List-Unsubscribe headers. Personal letters have none.
+     */
+    public $cms_comm_topic_id;
+
     /** @var MailComposeService|null set by the controller for validation */
     public $service;
 

@@ -162,6 +162,24 @@ return [
                 'overlapPolicy' => 'skip',
                 'dedupKey' => static fn($payload) => 'comm.mail.save-files:'.(int)($payload['siteId'] ?? 0),
             ],
+            // A large import of mailing recipients into leads (LeadImportJobHandler); small ones run at once.
+            'comm.import.leads' => [
+                'type' => 'comm.import.leads',
+                'title' => 'Импорт получателей рассылок в лиды',
+                'handler' => \skeeks\cms\communication\jobs\LeadImportJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'visible',
+                'retentionDays' => 90,
+                'timeout' => 3600,
+                'leaseSeconds' => 300,
+                'maxAttempts' => 1,
+                // Rows already done are skipped and every lead has a stable source_ref: nothing doubles.
+                'idempotent' => true,
+                'cancellable' => true,
+                'overlapPolicy' => 'skip',
+                'resourceKey' => static fn($payload) => 'comm-import:'.(int)($payload['importId'] ?? 0),
+                'dedupKey' => static fn($payload) => 'comm.import.leads:'.(int)($payload['importId'] ?? 0),
+            ],
             // Removes CRM copies of letter files that the mailbox still has.
             'comm.mail.cleanup-files' => [
                 'type' => 'comm.mail.cleanup-files',

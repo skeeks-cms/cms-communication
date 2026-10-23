@@ -1,0 +1,139 @@
+<?php
+/**
+ * @link https://cms.skeeks.com/
+ * @copyright Copyright (c) 2010 SkeekS
+ * @license https://cms.skeeks.com/license/
+ */
+
+namespace skeeks\cms\communication\models;
+
+use skeeks\cms\base\ActiveRecord;
+use skeeks\cms\models\CmsUser;
+use yii\helpers\ArrayHelper;
+use yii\helpers\Json;
+
+/**
+ * An import of mailing recipients into leads: the uploaded table (its rows
+ * are CmsCommImportRow), the columns chosen for the fields, the responsible
+ * employee, the topic and the consent basis for the whole file, the report.
+ * The steps and the run are services\LeadImport; large files go to the job
+ * comm.import.leads.
+ *
+ * @property int         $id
+ * @property int|null    $created_by
+ * @property int|null    $updated_by
+ * @property int|null    $created_at
+ * @property int|null    $updated_at
+ * @property int         $cms_site_id
+ * @property string|null $file_name
+ * @property string      $status
+ * @property string|null $columns JSON: header titles of the table
+ * @property string|null $mapping JSON: column number => field
+ * @property int|null    $executor_id
+ * @property int|null    $cms_comm_topic_id
+ * @property string|null $consent_basis
+ * @property int         $row_count
+ * @property int         $created_count
+ * @property int         $duplicate_count
+ * @property int         $skipped_count
+ * @property int|null    $cms_job_run_id
+ * @property string|null $error
+ * @property int|null    $finished_at
+ *
+ * @property CmsCommImportRow[] $rows
+ * @property CmsCommTopic|null  $topic
+ * @property CmsUser|null       $executor
+ * @property CmsUser|null       $createdBy
+ */
+class CmsCommImport extends ActiveRecord
+{
+    public const STATUS_DRAFT = 'draft';
+    public const STATUS_QUEUED = 'queued';
+    public const STATUS_RUNNING = 'running';
+    public const STATUS_DONE = 'done';
+    public const STATUS_FAILED = 'failed';
+
+    public static function tableName()
+    {
+        return '{{%cms_comm_import}}';
+    }
+
+    public static function statuses(): array
+    {
+        return [
+            self::STATUS_DRAFT => 'Не запущен',
+            self::STATUS_QUEUED => 'В очереди',
+            self::STATUS_RUNNING => 'Идёт',
+            self::STATUS_DONE => 'Готово',
+            self::STATUS_FAILED => 'Ошибка',
+        ];
+    }
+
+    public function attributeLabels()
+    {
+        return ArrayHelper::merge(parent::attributeLabels(), [
+            'id' => '№',
+            'file_name' => 'Файл',
+            'status' => 'Состояние',
+            'executor_id' => 'Ответственный',
+            'cms_comm_topic_id' => 'Тема рассылки',
+            'consent_basis' => 'Основание согласия',
+            'row_count' => 'Строк',
+            'created_count' => 'Создано лидов',
+            'duplicate_count' => 'Повторов',
+            'skipped_count' => 'Пропущено',
+            'created_at' => 'Загружен',
+            'created_by' => 'Загрузил',
+        ]);
+    }
+
+    /** @return string[] header titles of the table */
+    public function getColumnTitles(): array
+    {
+        return $this->columns ? (array)Json::decode($this->columns) : [];
+    }
+
+    /** @return array column number => field (services\LeadImport::fields()) */
+    public function getMappingArray(): array
+    {
+        $mapping = $this->mapping ? (array)Json::decode($this->mapping) : [];
+        $result = [];
+        foreach ($mapping as $column => $field) {
+            if (is_string($field) && $field !== '') {
+                $result[(int)$column] = $field;
+            }
+        }
+
+        return $result;
+    }
+
+    public function isFinished(): bool
+    {
+        return in_array($this->status, [self::STATUS_DONE, self::STATUS_FAILED], true);
+    }
+
+    public function getStatusName(): string
+    {
+        return self::statuses()[$this->status] ?? (string)$this->status;
+    }
+
+    public function getRows()
+    {
+        return $this->hasMany(CmsCommImportRow::class, ['cms_comm_import_id' => 'id'])->orderBy(['row_num' => SORT_ASC]);
+    }
+
+    public function getTopic()
+    {
+        return $this->hasOne(CmsCommTopic::class, ['id' => 'cms_comm_topic_id']);
+    }
+
+    public function getExecutor()
+    {
+        return $this->hasOne(CmsUser::class, ['id' => 'executor_id']);
+    }
+
+    public function asText()
+    {
+        return 'Импорт №'.$this->id.($this->file_name ? ' — '.$this->file_name : '');
+    }
+}

@@ -13,12 +13,14 @@ use skeeks\cms\communication\components\MailUserSettings;
 use skeeks\cms\communication\forms\ComposeForm;
 use skeeks\cms\communication\helpers\MailHtml;
 use skeeks\cms\communication\helpers\MailUi;
+use skeeks\cms\communication\models\CmsCommContact;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\services\MailComposeService;
 use skeeks\cms\communication\services\MailDrafts;
 use skeeks\cms\communication\services\MailFileFetcher;
 use skeeks\cms\communication\services\MailFiles;
 use skeeks\cms\communication\services\MailFolders;
+use skeeks\cms\communication\services\MailingPolicy;
 use skeeks\cms\communication\services\MailNotifier;
 use skeeks\cms\communication\services\MailboxActions;
 use skeeks\cms\communication\services\MailTemplates;
@@ -161,6 +163,8 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'label-save' => $hidden([$this, 'labelSave']),
             // GET q: recipients for the "Кому" field.
             'contacts' => $hidden([$this, 'contacts']),
+            // Recipients on the stop list of mailings: a warning in "Написать" and "Отправить клиенту".
+            'optout' => $hidden([$this, 'optout']),
             // POST showImages=1|0: the employee's choice for external images.
             'settings' => $hidden([$this, 'saveSettings']),
             // POST file: a file attached or pasted into the letter editor.
@@ -433,6 +437,28 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         \Yii::$app->response->format = Response::FORMAT_JSON;
 
         return ['items' => $this->composeService()->suggestRecipients(mb_substr((string)\Yii::$app->request->get('q', ''), 0, 100))];
+    }
+
+    /**
+     * Which of these emails or phones are on the stop list of advertising
+     * mailings (?emails[]=…&phones[]=…). A personal letter still goes; the
+     * employee only sees the warning.
+     */
+    public function optout()
+    {
+        \Yii::$app->response->format = Response::FORMAT_JSON;
+        $request = \Yii::$app->request;
+        $siteId = (int)\Yii::$app->skeeks->site->id;
+        $take = static fn($values) => array_slice(array_filter(array_map(static fn($v) => mb_substr(trim((string)$v), 0, 255), (array)$values)), 0, 50);
+        $items = [];
+        foreach (MailingPolicy::warnings($siteId, CmsCommContact::KIND_EMAIL, $take($request->get('emails', []))) as $value => $reason) {
+            $items[] = ['value' => (string)$value, 'reason' => $reason];
+        }
+        foreach (MailingPolicy::warnings($siteId, CmsCommContact::KIND_PHONE, $take($request->get('phones', []))) as $value => $reason) {
+            $items[] = ['value' => (string)$value, 'reason' => $reason];
+        }
+
+        return ['items' => $items];
     }
 
     public function saveSettings()
