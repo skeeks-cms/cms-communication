@@ -215,4 +215,14 @@ return [
             ],
         ],
     ],
+
+    // Read tools of mail and mailings for skeeks/cms-mcp (inert without it): mcp\CommunicationReadToolProvider.
+    'params' => ['cmsMcp' => [
+        'toolProviders' => ['communication' => \skeeks\cms\communication\mcp\CommunicationReadToolProvider::class],
+        'historyLogDescribers' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => \skeeks\cms\communication\mcp\MessageHistoryDescriber::class],
+        'historySources' => ['mailing' => \skeeks\cms\communication\mcp\MailingHistorySource::class],
+        'overviewContributors' => ['mailing' => \skeeks\cms\communication\mcp\MailingOverviewContributor::class],
+        // The personal opt-out link of a letter is never shown to API clients: opening it unsubscribes.
+        'personalLinkPatterns' => ['unsubscribe' => '~/\~unsub/~'],
+    ]],
 ];

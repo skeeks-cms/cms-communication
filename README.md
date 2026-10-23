@@ -295,3 +295,32 @@ Outlook, Proofpoint, антиспам Яндекса и Mail.ru):
 
 Пока не сделано: правила разбора входящих (автолиды, автоответ, стоп-список),
 кампании рассылок (этап 4B).
+
+## Чтение для ИИ-клиентов (MCP/REST)
+
+Если установлен `skeeks/cms-mcp`, пакет добавляет инструменты чтения почты и
+рассылок (`src/mcp`, scope `cms.communication.read`; регистрация через
+`params['cmsMcp']` в `src/config/common.php`, без `cms-mcp` она ни на что не
+влияет):
+
+- `cms_comm_message_list` — письма, СМС и сообщения с сайта по клиенту, ящику,
+  переписке, периоду, направлению, поиску; `cms_comm_message_get` — одно письмо;
+  `cms_comm_conversation_get` — переписка целиком. Текст — собственный текст
+  письма без цитат, подписи и HTML, длина ограничена, вложения только
+  названиями.
+- `cms_comm_account_list` — ящики сотрудника без подключений и паролей;
+  `cms_comm_topic_list` — темы рассылок.
+- `cms_comm_mailing_check` — «можно ли писать»: `MailingPolicy::checkMany()`
+  для контактов клиента или списка адресов по теме, с причинами отказа;
+  `cms_comm_contact_state_get` — стоп-лист, подписки и отписки контактов.
+
+В общей истории клиента (`cms_crm_history_get`) письма описывает
+`mcp\MessageHistoryDescriber` (тот же доступ, что у ленты), отписки и согласия
+даёт `mcp\MailingHistorySource`, раздел `mailing` обзора клиента —
+`mcp\MailingOverviewContributor`. Видимость — `CmsCommMessageQuery::forManager()`,
+как в разделе «Почта». Адреса и телефоны замаскированы, пока не передан
+`include_contacts=true`; ссылка отписки `/~unsub/` не выдаётся никогда.
+Действий (черновики, кампании) здесь нет — это шаг ИИ-2.
+
+Тест: `COMM_MCP_TEST=local php tests/mcp-read.php` на локальном сайте с
+`cms-mcp` (только чтение).
