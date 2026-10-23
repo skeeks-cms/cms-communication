@@ -72,6 +72,30 @@ class MailDrafts
         return $id ? $this->query()->andWhere(['id' => $id])->one() : null;
     }
 
+    /**
+     * A letter sent from an own draft that AI prepared (services\AiActions)
+     * carries its mark — whether the employee changed the subject or the
+     * text — and goes as a letter of the draft's mailing topic: one
+     * recipient MailingPolicy allows, the personal opt-out link. Called
+     * before the form is validated. The mark comes only from the stored
+     * draft: no request field sets or removes it.
+     */
+    public function applyAiDraft(ComposeForm $form): ?CmsCommDraft
+    {
+        $draft = $this->find($form->draft_id ? (int)$form->draft_id : null);
+        $mark = AiMark::of($draft);
+        if (!$mark) {
+            return $draft;
+        }
+        $mark['edited'] = AiMark::hash((string)$form->subject, $form->getHtml()) !== (string)$draft->prepared_hash;
+        $form->aiMark = $mark;
+        if ($draft->cms_comm_topic_id) {
+            $form->cms_comm_topic_id = (int)$draft->cms_comm_topic_id;
+        }
+
+        return $draft;
+    }
+
     /** The latest own draft answering (or forwarding) a letter: "Ответить" continues it. */
     public function findFor(int $messageId, bool $forward = false): ?CmsCommDraft
     {

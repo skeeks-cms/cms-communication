@@ -43,6 +43,12 @@ final class SendContext
     /** Free for the sendable: e.g. its pending send row, from createSendLink() to afterSend(). */
     public $ref;
 
+    /** The mailing campaign the send belongs to (CmsCommCampaign id), null for a send by an employee. */
+    public ?int $campaignId = null;
+
+    /** "Подготовлено ИИ" of the letter that carries the send (services\AiMark), null when an employee wrote it. */
+    public ?array $aiMark = null;
+
     public function __construct(string $type, int $id, string $channel, string $recipient, User $user)
     {
         $this->type = $type;

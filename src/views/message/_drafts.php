@@ -9,6 +9,7 @@
 
 use skeeks\cms\backend\helpers\BackendUrlHelper;
 use skeeks\cms\communication\helpers\MailUi;
+use skeeks\cms\communication\services\AiMark;
 use yii\helpers\Html;
 
 $formatter = \Yii::$app->formatter;
@@ -31,7 +32,7 @@ $shortDate = static function ($timestamp) use ($formatter) {
          data-url="<?= Html::encode($url) ?>" tabindex="-1" role="button">
         <span class="sx-mail__check"></span>
         <span class="sx-mail__avatar" style="--sx-mail-hue: <?= (int)MailUi::hue((string)($to[0] ?? '?')) ?>"><?= Html::encode(MailUi::initials((string)($to[0] ?? '?'))) ?></span>
-        <span class="sx-mail__who" title="<?= Html::encode($name) ?>"><span class="sx-mail__draft-mark">Черновик</span> <?= Html::encode($name) ?></span>
+        <span class="sx-mail__who" title="<?= Html::encode($name) ?>"><span class="sx-mail__draft-mark">Черновик</span> <?= AiMark::badge(AiMark::of($d)) ?> <?= Html::encode($name) ?></span>
         <span class="sx-mail__dot" aria-hidden="true"></span>
         <span class="sx-mail__line">
             <span class="sx-mail__subject"><?= Html::encode($d->subject ?: '(без темы)') ?></span>

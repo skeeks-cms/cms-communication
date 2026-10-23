@@ -41,15 +41,16 @@ class Unsubscribe
     /**
      * The personal opt-out link of the contact.
      *
-     * @param string|null $baseUrl "https://site.ru"; by default the address of the current web request
-     *                             (a stand links to itself), in jobs the main domain of the contact's site
+     * @param string|null $baseUrl "https://site.ru"; by default CommunicationComponent::siteUrl(): the address
+     *                             of the current web request (a stand links to itself), in jobs
+     *                             communication.baseUrl or the main domain of the contact's site
      */
     public static function url(CmsCommContact $contact, ?int $topicId = null, ?int $messageId = null, ?string $baseUrl = null): string
     {
-        if ($baseUrl === null && \Yii::$app instanceof \yii\web\Application && \Yii::$app->request->hostInfo) {
-            $baseUrl = (string)\Yii::$app->request->hostInfo;
-        }
         if ($baseUrl === null) {
+            $baseUrl = \Yii::$app->has('communication') ? \Yii::$app->communication->siteUrl((int)$contact->cms_site_id) : '';
+        }
+        if ($baseUrl === '') {
             $site = CmsSite::findOne((int)$contact->cms_site_id);
             $baseUrl = $site ? (string)$site->url : '';
         }

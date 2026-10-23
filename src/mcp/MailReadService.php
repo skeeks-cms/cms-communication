@@ -342,6 +342,9 @@ class MailReadService extends AbstractCmsService
         if ($m->hasAttribute('cms_comm_campaign_id') && $m->cms_comm_campaign_id) {
             $data['cms_comm_campaign_id'] = (int)$m->cms_comm_campaign_id;
         }
+        if ($prepared = \skeeks\cms\communication\services\AiMark::forApi(\skeeks\cms\communication\services\AiMark::of($m))) {
+            $data['prepared'] = $prepared;
+        }
         if ($full) {
             $cc = $m->getCc();
             if ($cc) {

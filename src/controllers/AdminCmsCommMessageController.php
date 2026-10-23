@@ -15,6 +15,7 @@ use skeeks\cms\communication\helpers\MailHtml;
 use skeeks\cms\communication\helpers\MailUi;
 use skeeks\cms\communication\models\CmsCommContact;
 use skeeks\cms\communication\models\CmsCommMessage;
+use skeeks\cms\communication\services\AiMark;
 use skeeks\cms\communication\services\MailComposeService;
 use skeeks\cms\communication\services\MailDrafts;
 use skeeks\cms\communication\services\MailFileFetcher;
@@ -968,6 +969,8 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         if ($request->isPost) {
             \Yii::$app->response->format = Response::FORMAT_JSON;
             $form->load($request->post());
+            // A draft prepared by AI: its mark and mailing topic go with the letter.
+            $this->drafts()->applyAiDraft($form);
             if (!$form->validate()) {
                 return ['success' => false, 'errors' => $form->getFirstErrors()];
             }
@@ -1022,6 +1025,10 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'inline' => (bool)$request->get('inline'),
             'files' => $service->formFiles($form),
             'sendables' => $service->formSendables($form),
+            // A draft prepared by AI: the form says so and names the mailing topic of the letter.
+            'aiMark' => $draft ? AiMark::of($draft) : null,
+            'aiTopic' => $draft && AiMark::of($draft) && $draft->cms_comm_topic_id
+                ? \skeeks\cms\communication\models\CmsCommTopic::findOne((int)$draft->cms_comm_topic_id) : null,
         ];
 
         return $params['inline']

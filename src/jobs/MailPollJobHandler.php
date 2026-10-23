@@ -94,6 +94,12 @@ class MailPollJobHandler extends AbstractJobHandler
                 // Notifications never undo received letters.
                 \Yii::warning('Уведомления о новых письмах не созданы: '.$e->getMessage(), self::class);
             }
+            try {
+                // A reply to a campaign letter: "ответил" in the report, a task by the campaign setting.
+                (new \skeeks\cms\communication\services\Campaigns())->onIncoming($fresh);
+            } catch (\Throwable $e) {
+                \Yii::warning('Ответы на рассылки не отмечены: '.$e->getMessage(), self::class);
+            }
         }
 
         $reporter->setResult(['connectionId' => (int)$connection->id, 'received' => $received, 'notified' => $notified, 'server' => $synced]);

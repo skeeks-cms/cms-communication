@@ -72,6 +72,8 @@ class MessageHistoryDescriber implements HistoryLogDescriberInterface
             'link_type' => $link ? (string)$link->link_type : null,
             'cms_comm_campaign_id' => $m->hasAttribute('cms_comm_campaign_id') && $m->cms_comm_campaign_id ? (int)$m->cms_comm_campaign_id : null,
             'is_auto' => $m->is_auto ? true : null,
+            // "Подготовлено ИИ": the AI client and user; actor stays the employee who sent it.
+            'prepared' => \skeeks\cms\communication\services\AiMark::forApi(\skeeks\cms\communication\services\AiMark::of($m)),
         ], static function ($v) { return $v !== null && $v !== ''; });
         return [
             'subtype' => $kind,

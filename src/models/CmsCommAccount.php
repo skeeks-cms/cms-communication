@@ -32,6 +32,7 @@ use yii\helpers\ArrayHelper;
  * @property int                    $is_expose_linked
  * @property int                    $is_active
  * @property string|null            $file_settings JSON, see getFileSettings()
+ * @property string|null            $mailing_settings JSON, the pace of campaign letters (services\MailboxPace)
  *
  * @property CmsCommConnection|null $connection
  * @property CmsCommAccountAccess[] $accesses

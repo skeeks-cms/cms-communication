@@ -35,6 +35,12 @@ use yii\helpers\Json;
  * @property int                 $include_quote
  * @property string|null         $context_model_code
  * @property int|null            $context_model_id
+ * @property string|null         $prepared_by "ai" for a draft AI made (services\AiActions), null — the employee's own
+ * @property string|null         $prepared_client mcp:<OAuth client>
+ * @property int|null            $prepared_user_id the CRM user AI worked for
+ * @property int|null            $prepared_at
+ * @property string|null         $prepared_hash AiMark::hash() of the subject and text AI wrote
+ * @property int|null            $cms_comm_topic_id mailing topic of an AI draft: the letter goes with the opt-out link
  * @property string|null         $file_ids JSON: storage file ids kept from the forwarded letter
  * @property string|null         $sendables JSON: "type:id" put in with "Прикрепить из…"
  *

@@ -2616,3 +2616,22 @@ a.sx-letter__mark:focus {
 .sx-send-form__optout[hidden] {
     display: none;
 }
+
+/* A draft prepared by AI (services\AiMark): who prepared it and how the letter goes. */
+.sx-compose__ai {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0 0 8px;
+    padding: 8px 12px;
+    border-radius: var(--sx-radius-sm, 6px);
+    background: var(--sx-color-info-soft, #eaf2fe);
+    color: var(--sx-color-info-on-soft, var(--sx-color-text, #1f2a44));
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.sx-ai-mark {
+    flex: none;
+    cursor: help;
+}

@@ -10,6 +10,7 @@ namespace skeeks\cms\communication\log;
 use skeeks\cms\communication\helpers\MailUi;
 use skeeks\cms\communication\models\CmsCommLink;
 use skeeks\cms\communication\models\CmsCommMessage;
+use skeeks\cms\communication\services\AiMark;
 use skeeks\cms\log\CmsLogRendererInterface;
 use skeeks\cms\models\CmsLog;
 use yii\helpers\ArrayHelper;
@@ -61,9 +62,13 @@ class MessageLogRenderer implements CmsLogRendererInterface
             ]);
         }
         $attachments = count($message->getAttachmentList());
+        // "Подготовлено ИИ": which AI client wrote it, for whom, and who sent it.
+        $aiMark = AiMark::of($message);
+        $sender = $message->sent_by_user_id ? (int)$message->sent_by_user_id : null;
 
         return Html::tag('div',
-            Html::tag('div', Html::encode($title).$status, ['class' => 'h5'])
+            Html::tag('div', Html::encode($title).$status.($aiMark ? ' '.AiMark::badge($aiMark, $sender, 'Подготовлено ИИ') : ''), ['class' => 'h5'])
+            .($aiMark ? Html::tag('div', Html::encode(AiMark::text($aiMark, $sender)), ['class' => 'sx-gray sx-ai-mark-text']) : '')
             .Html::tag('div', $who)
             .Html::tag('div', Html::a(Html::encode($message->subject ?: '(без темы)'), '#', [
                 'data-pjax' => '0',

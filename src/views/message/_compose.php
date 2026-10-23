@@ -17,15 +17,20 @@
  * @var $templates array[] quick reply templates: id, name, html, account (null — any mailbox)
  * @var $sendables array[] things put in with "Прикрепить из…" (MailComposeService::formSendables())
  * @var $noDrafts bool the form keeps no draft (the window "Отправить клиенту")
+ * @var $aiMark array|null the opened draft was prepared by AI (services\AiMark)
+ * @var $aiTopic skeeks\cms\communication\models\CmsCommTopic|null its mailing topic
  */
 
 use skeeks\cms\communication\helpers\MailUi;
+use skeeks\cms\communication\services\AiMark;
 use yii\helpers\Html;
 use yii\helpers\Url;
 
 $name = static fn(string $attribute) => Html::getInputName($form, $attribute);
 $sendables = $sendables ?? [];
 $noDrafts = $noDrafts ?? false;
+$aiMark = $aiMark ?? null;
+$aiTopic = $aiTopic ?? null;
 // "Прикрепить из…": kinds of things installed packages send (communication.sendables).
 $sendableSources = MailUi::sendableSources();
 $forward = (bool)$form->forward_message_id;
@@ -79,6 +84,15 @@ $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByPar
     <?= Html::hiddenInput($name('forward_message_id'), $form->forward_message_id) ?>
     <?= Html::hiddenInput($name('reply_all'), (int)$form->reply_all) ?>
     <?= Html::hiddenInput($name('draft_id'), $form->draft_id, ['data-sx-compose-draft-id' => true]) ?>
+
+    <?php if ($aiMark) : ?>
+        <div class="sx-compose__ai" data-sx-compose-ai>
+            <?= AiMark::badge($aiMark) ?>
+            <span><?= Html::encode(AiMark::text($aiMark)
+                .'. Проверьте текст и отправьте сами'
+                .($aiTopic ? ': письмо уйдёт как рассылка темы «'.$aiTopic->name.'» одному получателю, со ссылкой «Отписаться»' : '').'.') ?></span>
+        </div>
+    <?php endif; ?>
 
     <?php if ($inline) : ?>
         <div class="sx-compose__mode">

@@ -231,7 +231,8 @@ class MailComposeService
         $result = [];
         foreach ((array)$form->sendables as $ref) {
             $parsed = SendService::parseRef((string)$ref);
-            $sendable = $parsed ? $sends->find($parsed[0], $parsed[1]) : null;
+            $prepared = $parsed ? ($form->sendableInstances[$parsed[0].':'.$parsed[1]] ?? null) : null;
+            $sendable = $prepared instanceof SendableInterface ? $prepared : ($parsed ? $sends->find($parsed[0], $parsed[1]) : null);
             if ($sendable) {
                 $result[] = ['ref' => $parsed[0].':'.$parsed[1], 'type' => $parsed[0], 'id' => $parsed[1], 'sendable' => $sendable];
             }
@@ -562,6 +563,11 @@ class MailComposeService
             if ($bcc && $message->hasAttribute('bcc_list')) {
                 $message->bcc_list = Json::encode($bcc);
             }
+            if ($form->cms_comm_campaign_id && $message->hasAttribute('cms_comm_campaign_id')) {
+                $message->cms_comm_campaign_id = (int)$form->cms_comm_campaign_id;
+            }
+            // "Подготовлено ИИ": set in code from the employee's AI draft or the campaign recipient.
+            AiMark::apply($message, is_array($form->aiMark) ? $form->aiMark : null);
             $message->save(false);
 
             // An advertising letter: the personal opt-out link of its recipient, knowing this letter.
@@ -611,7 +617,9 @@ class MailComposeService
             }
 
             $linker = new MessageLinker();
-            if ($form->context_model_code && $form->context_model_id
+            if ($form->record instanceof \yii\db\ActiveRecord) {
+                $linker->link($message, [$form->record], CmsCommLink::TYPE_CONTEXT, (int)$this->user->id);
+            } elseif ($form->context_model_code && $form->context_model_id
                 && ($record = $this->contextRecord($form->context_model_code, (int)$form->context_model_id))) {
                 $linker->link($message, [$record], CmsCommLink::TYPE_CONTEXT, (int)$this->user->id);
             }
@@ -645,6 +653,14 @@ class MailComposeService
     {
         $recipient = (string)($form->getToAddresses()[0] ?? '');
         $context = new SendContext($type, $id, 'email', $recipient, $this->user);
+        $context->campaignId = $form->cms_comm_campaign_id ? (int)$form->cms_comm_campaign_id : null;
+        $context->aiMark = is_array($form->aiMark) ? $form->aiMark : null;
+        if ($form->record instanceof \yii\db\ActiveRecord) {
+            $context->record = $form->record;
+            $context->recipientName = CrmRecords::name($form->record);
+
+            return $context;
+        }
         $records = $recipient !== '' ? $this->addresses->findRecords([$recipient], $this->siteId, $this->user) : [];
         $context->record = $records[0] ?? ($form->context_model_code && $form->context_model_id
             ? $this->contextRecord((string)$form->context_model_code, (int)$form->context_model_id) : null);

@@ -170,6 +170,10 @@ if ($canManage) {
                     <?= Html::encode($model->getStatusName()) ?><?= $model->sentBy ? ' · отправил '.Html::encode($model->sentBy->shortDisplayName) : '' ?>
                     <?php if ($model->error) : ?><div class="sx-letter__error"><?= Html::encode($model->error) ?></div><?php endif; ?>
                 </div>
+                <?php if ($aiMark = \skeeks\cms\communication\services\AiMark::of($model)) : ?>
+                    <div class="sx-letter__muted"><?= \skeeks\cms\communication\services\AiMark::badge($aiMark, null) ?>
+                        <?= Html::encode(\skeeks\cms\communication\services\AiMark::text($aiMark)) ?></div>
+                <?php endif; ?>
             <?php endif; ?>
             <?php if ($showAssignee) : ?>
             <div class="sx-letter__muted sx-letter__assignee" data-sx-letter-assignee>

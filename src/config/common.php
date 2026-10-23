@@ -22,6 +22,10 @@ return [
                 'email' => \skeeks\cms\communication\send\EmailSendChannel::class,
                 'sms' => \skeeks\cms\communication\send\SmsSendChannel::class,
             ],
+            // Mailing campaigns: mailing service drivers add their channels here.
+            'campaignChannels' => [
+                'mailbox' => \skeeks\cms\communication\campaign\MailboxCampaignChannel::class,
+            ],
         ],
 
         // Letters in the activity feeds of leads, companies and clients.
@@ -180,6 +184,36 @@ return [
                 'resourceKey' => static fn($payload) => 'comm-import:'.(int)($payload['importId'] ?? 0),
                 'dedupKey' => static fn($payload) => 'comm.import.leads:'.(int)($payload['importId'] ?? 0),
             ],
+            // Campaign letters of one mailbox at its pace (CampaignMailboxJobHandler): one letter per step,
+            // then the same run waits in the queue a random pause or until the next working period.
+            'comm.campaign.mailbox' => [
+                'type' => 'comm.campaign.mailbox',
+                'title' => 'Рассылка из почтового ящика',
+                'handler' => \skeeks\cms\communication\jobs\CampaignMailboxJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'transient',
+                'timeout' => 300,
+                'leaseSeconds' => 180,
+                'maxAttempts' => 1,
+                // A step claims its recipient in the transaction of the letter: a repeated step sends nothing twice.
+                'idempotent' => true,
+                'overlapPolicy' => 'skip',
+                'resourceKey' => static fn($payload) => 'comm-campaign-mailbox:'.(int)($payload['accountId'] ?? 0),
+                'dedupKey' => static fn($payload) => 'comm.campaign.mailbox:'.(int)($payload['accountId'] ?? 0),
+            ],
+            'comm.campaign.tick' => [
+                'type' => 'comm.campaign.tick',
+                'title' => 'Рассылки: продолжить идущие кампании',
+                'handler' => \skeeks\cms\communication\jobs\CampaignTickJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'transient',
+                'timeout' => 120,
+                'leaseSeconds' => 120,
+                'maxAttempts' => 1,
+                'idempotent' => true,
+                'overlapPolicy' => 'skip',
+                'dedupKey' => static fn() => 'comm.campaign.tick',
+            ],
             // Removes CRM copies of letter files that the mailbox still has.
             'comm.mail.cleanup-files' => [
                 'type' => 'comm.mail.cleanup-files',
@@ -198,12 +232,35 @@ return [
             ],
         ]],
 
+        // "Рассылки": creating and launching campaigns is a right of its own.
+        'authManager' => [
+            'config' => [
+                'roles' => [
+                    [
+                        'name' => \skeeks\cms\rbac\CmsManager::ROLE_ADMIN,
+                        'child' => ['permissions' => ['cmsCommunication/admin-cms-comm-campaign']],
+                    ],
+                ],
+                'permissions' => [
+                    [
+                        'name' => 'cmsCommunication/admin-cms-comm-campaign',
+                        'description' => 'Рассылки: создавать и запускать кампании',
+                    ],
+                ],
+            ],
+        ],
+
         'cmsAgent' => [
             'jobs' => [
                 'comm.mail.poll-all' => [
                     'jobType' => 'comm.mail.poll-all',
                     'name' => 'Приём почты из подключённых ящиков',
                     'interval' => 120,
+                ],
+                'comm.campaign.tick' => [
+                    'jobType' => 'comm.campaign.tick',
+                    'name' => 'Рассылки: продолжить идущие кампании',
+                    'interval' => 300,
                 ],
                 // By the storage settings of each mailbox ("Хранить копии файлов, дней").
                 'comm.mail.cleanup-files' => [
@@ -218,7 +275,11 @@ return [
 
     // Read tools of mail and mailings for skeeks/cms-mcp (inert without it): mcp\CommunicationReadToolProvider.
     'params' => ['cmsMcp' => [
-        'toolProviders' => ['communication' => \skeeks\cms\communication\mcp\CommunicationReadToolProvider::class],
+        'toolProviders' => [
+            'communication' => \skeeks\cms\communication\mcp\CommunicationReadToolProvider::class,
+            // AI actions: drafts and campaign letters prepared for people to send (never sent or launched here).
+            'communication-actions' => \skeeks\cms\communication\mcp\CommunicationActionToolProvider::class,
+        ],
         'historyLogDescribers' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => \skeeks\cms\communication\mcp\MessageHistoryDescriber::class],
         'historySources' => ['mailing' => \skeeks\cms\communication\mcp\MailingHistorySource::class],
         'overviewContributors' => ['mailing' => \skeeks\cms\communication\mcp\MailingOverviewContributor::class],

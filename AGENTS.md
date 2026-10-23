@@ -66,6 +66,32 @@ Imports into leads are `services\LeadImport` + `services\CrmDuplicates`, the
 job `comm.import.leads` for large files; leads get no notification each. Its
 entry is the tab "Импорт" of the core leads section, added by the bootstrap
 through the container definition (`actionsMap`), not a menu item.
+Campaigns (4B) are `services\Campaigns` (audience by `forManager()` of the
+launching employee in the web request, recipients fixed at launch, one per
+CRM record; every letter is `MailComposeService::queue()` with the topic,
+the campaign mark, the trusted `ComposeForm::$record` and prepared
+`$sendableInstances`, made inside the transaction that marks the recipient).
+How letters leave is a channel of `communication.campaignChannels`
+(`campaign\CampaignChannelInterface`); managers' mailboxes are
+`campaign\MailboxCampaignChannel` with the job `comm.campaign.mailbox` per
+mailbox and the pace of `services\MailboxPace` (CRM time zone, own letters of
+the day count). Offers come from sendable sources with
+`send\CampaignSourceInterface`; the "opened" task stays the document
+package's rule and asks `Campaigns::taskOnOpen()`. Links made in jobs use
+`CommunicationComponent::siteUrl()` (`communication.baseUrl` on a stand).
+Recipients added one by one (an employee, AI through MCP) are
+`Campaigns::addRecipient()` rows in status `draft` with an optional personal
+letter and who prepared it (`text_by`, `text_client`, `text_user_id`); they
+join any audience at launch and pass the same exclusions.
+AI actions through MCP/REST (AI-2) are `services\AiActions` behind
+`mcp\CommunicationActionToolProvider`: drafts saved by `MailDrafts` for the
+responsible employee and checked by their letter form, draft campaigns and
+their recipients. Nothing sends a letter or launches a campaign; saving
+needs `confirm=true`. "Подготовлено ИИ" is `services\AiMark` (prepared_*
+columns, recipient text_*), set only by the server from the OAuth client of
+the running tool, never from arguments or forms; a letter takes it only from
+the sender's own draft (`MailDrafts::applyAiDraft()`), an employee's change
+marks it edited instead of removing it. Limits are `communication.aiLimits`.
 
 Run isolated tests and PHP syntax checks. No external sends, release,
 commit, push or production deployment are implied by a local code change.

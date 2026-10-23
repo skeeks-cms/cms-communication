@@ -19,6 +19,13 @@ return [
                         'img' => ['\skeeks\cms\assets\CmsAsset', 'images/icons/admin-menu/mail.svg'],
                         'url' => ['cmsCommunication/admin-cms-comm-message/mail'],
                     ],
+                    // Beside "Почта": campaigns are letters from the same mailboxes.
+                    'mailing' => [
+                        'label' => 'Рассылки',
+                        'priority' => 186,
+                        'img' => ['\skeeks\cms\assets\CmsAsset', 'images/icons/admin-menu/marketing.svg'],
+                        'url' => ['cmsCommunication/admin-cms-comm-campaign'],
+                    ],
                     'settings' => [
                         'items' => [
                             [

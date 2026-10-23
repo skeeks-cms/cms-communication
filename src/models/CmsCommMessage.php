@@ -46,6 +46,12 @@ use yii\helpers\Json;
  * @property int|null                $message_at
  * @property int|null                $sent_by_user_id
  * @property string|null             $error
+ * @property int|null                $cms_comm_campaign_id the mailing campaign that sent the letter
+ * @property string|null             $prepared_by "ai" when AI prepared the letter (services\AiMark), null — an employee
+ * @property string|null             $prepared_client mcp:<OAuth client>
+ * @property int|null                $prepared_user_id the CRM user AI worked for
+ * @property int|null                $prepared_at
+ * @property int|null                $prepared_edited an employee changed the AI subject or text before sending
  *
  * @property CmsCommConversation     $conversation
  * @property CmsCommAccount|null     $account

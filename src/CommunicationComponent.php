@@ -7,6 +7,7 @@
 
 namespace skeeks\cms\communication;
 
+use skeeks\cms\communication\campaign\CampaignChannelInterface;
 use skeeks\cms\communication\drivers\ConnectionDriver;
 use skeeks\cms\communication\send\SendableSourceInterface;
 use skeeks\cms\communication\send\SendChannelInterface;
@@ -92,6 +93,26 @@ class CommunicationComponent extends Component
     public $channels = [];
 
     /**
+     * Address of the site for personal links made outside a web request
+     * (jobs: campaign letters, API), e.g. "https://skeeks.com". Null — the
+     * main domain of the site. A local stand with a copy of the production
+     * database sets its own address, so the links of its letters lead to
+     * the stand, not to production. In a web request links always use the
+     * host of the request.
+     */
+    public $baseUrl;
+
+    /**
+     * Channels of mailing campaigns: channel id => class name or Yii object
+     * config of a campaign\CampaignChannelInterface. The managers' mailboxes
+     * come with this package (config/common.php); mailing service drivers
+     * (Unisender Go and the like) add theirs.
+     *
+     * @var array
+     */
+    public $campaignChannels = [];
+
+    /**
      * More networks (CIDR, IPv4 or IPv6) whose openings of a personal link
      * look like link checks of mail services and security systems, beside
      * services\LinkChecks::NETWORKS.
@@ -100,11 +121,25 @@ class CommunicationComponent extends Component
      */
     public $linkCheckNetworks = [];
 
+    /**
+     * Limits of AI actions through MCP/REST (services\AiActions): perCall —
+     * drafts or campaign recipients in one call; perDay — of them per CRM
+     * user and day (CRM time zone); recentDays — no new offer to a client
+     * who got a letter or this offer within these days. Missing keys keep
+     * AiActions::LIMITS (20, 100, 30).
+     *
+     * @var array
+     */
+    public $aiLimits = [];
+
     /** @var SendableSourceInterface[] */
     private $_sendableSources = [];
 
     /** @var SendChannelInterface[] */
     private $_channels = [];
+
+    /** @var CampaignChannelInterface[] */
+    private $_campaignChannels = [];
 
     public function isRecipientAllowed(string $address): bool
     {
@@ -180,6 +215,51 @@ class CommunicationComponent extends Component
         $result = [];
         foreach (array_keys($this->channels) as $id) {
             $result[(string)$id] = $this->getChannel((string)$id);
+        }
+
+        return $result;
+    }
+
+    /**
+     * "https://site.ru" for personal links of the site: the host of the web
+     * request, otherwise $baseUrl, otherwise the main domain of the site.
+     */
+    public function siteUrl(?int $siteId = null): string
+    {
+        if (\Yii::$app instanceof \yii\web\Application && \Yii::$app->request->hostInfo) {
+            return rtrim((string)\Yii::$app->request->hostInfo, '/');
+        }
+        if (is_string($this->baseUrl) && trim($this->baseUrl) !== '') {
+            return rtrim(trim($this->baseUrl), '/');
+        }
+        $site = $siteId ? \skeeks\cms\models\CmsSite::findOne($siteId) : null;
+
+        return rtrim($site ? (string)$site->url : '', '/');
+    }
+
+    /** The channel of mailing campaigns, or null. */
+    public function getCampaignChannel(string $id): ?CampaignChannelInterface
+    {
+        if (!isset($this->campaignChannels[$id])) {
+            return null;
+        }
+        if (!isset($this->_campaignChannels[$id])) {
+            $channel = \Yii::createObject($this->campaignChannels[$id]);
+            if (!$channel instanceof CampaignChannelInterface) {
+                throw new InvalidConfigException("Campaign channel «{$id}» must implement ".CampaignChannelInterface::class);
+            }
+            $this->_campaignChannels[$id] = $channel;
+        }
+
+        return $this->_campaignChannels[$id];
+    }
+
+    /** @return CampaignChannelInterface[] channel id => channel */
+    public function getCampaignChannels(): array
+    {
+        $result = [];
+        foreach (array_keys($this->campaignChannels) as $id) {
+            $result[(string)$id] = $this->getCampaignChannel((string)$id);
         }
 
         return $result;

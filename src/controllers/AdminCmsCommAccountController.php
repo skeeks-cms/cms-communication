@@ -18,6 +18,7 @@ use skeeks\cms\communication\mail\MailDriverInterface;
 use skeeks\cms\communication\models\CmsCommAccount;
 use skeeks\cms\communication\models\CmsCommAccountAccess;
 use skeeks\cms\communication\models\CmsCommConnection;
+use skeeks\cms\communication\services\MailboxPace;
 use skeeks\cms\grid\BooleanColumn;
 use skeeks\cms\job\models\CmsJobRun;
 use skeeks\cms\helpers\RequestResponse;
@@ -150,6 +151,43 @@ class AdminCmsCommAccountController extends BackendModelStandartController
                 'priority' => 210,
                 'callback' => [$this, 'history'],
             ],
+
+            'mailing' => [
+                'class' => BackendModelAction::class,
+                'name' => 'Рассылки',
+                'icon' => 'far fa-paper-plane',
+                'priority' => 220,
+                'callback' => [$this, 'mailing'],
+            ],
+        ]);
+    }
+
+    /**
+     * "Рассылки": how fast campaign letters leave the mailbox
+     * (services\MailboxPace) and what is waiting to leave.
+     */
+    public function mailing()
+    {
+        /** @var CmsCommAccount $account */
+        $account = $this->model;
+        $request = \Yii::$app->request;
+        $errors = [];
+        $saved = false;
+        if ($request->isPost) {
+            $errors = MailboxPace::save($account, (array)$request->post('pace', []));
+            $saved = !$errors;
+        }
+        $now = time();
+
+        return $this->render('@skeeks/cms/communication/views/account/mailing', [
+            'account' => $account,
+            'settings' => $errors ? MailboxPace::DEFAULTS + (array)$request->post('pace', []) : MailboxPace::settings($account),
+            'errors' => $errors,
+            'saved' => $saved,
+            'sentToday' => MailboxPace::sentToday((int)$account->id, $now),
+            'nextSlot' => MailboxPace::nextSlotFor($account, $now),
+            'pending' => (int)\skeeks\cms\communication\models\CmsCommCampaignRecipient::find()
+                ->andWhere(['cms_comm_account_id' => (int)$account->id, 'status' => \skeeks\cms\communication\models\CmsCommCampaignRecipient::STATUS_PENDING])->count(),
         ]);
     }
 

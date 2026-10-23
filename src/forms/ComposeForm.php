@@ -81,6 +81,35 @@ class ComposeForm extends Model
      */
     public $cms_comm_topic_id;
 
+    /** The mailing campaign of the letter (CmsCommCampaign id): set in code, never loaded from a request. */
+    public $cms_comm_campaign_id;
+
+    /**
+     * The CRM record of the recipient, set in code by campaigns (the record
+     * was checked when the campaign was launched): the letter is linked to it
+     * and its sends belong to it. Never loaded from a request.
+     *
+     * @var \yii\db\ActiveRecord|null
+     */
+    public $record;
+
+    /**
+     * @var \skeeks\cms\communication\send\SendableInterface[] "type:id" => the document prepared in
+     * code (campaigns: a document made from a template for this recipient), used instead of finding
+     * it for the employee. Never loaded from a request.
+     */
+    public $sendableInstances = [];
+
+    /**
+     * "Подготовлено ИИ" of the letter (services\AiMark): taken from the
+     * employee's own draft made by AI (MailDrafts::applyAiDraft()) or from a
+     * campaign recipient whose letter AI wrote. Set in code, never loaded
+     * from a request.
+     *
+     * @var array|null
+     */
+    public $aiMark;
+
     /** @var MailComposeService|null set by the controller for validation */
     public $service;
 
