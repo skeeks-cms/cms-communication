@@ -28,5 +28,7 @@ class MailClientAsset extends AssetBundle
         \skeeks\cms\backend\widgets\assets\ControllerActionsWidgetAsset::class,
         // The letter editor; the quick reply is inserted later without its own assets.
         \skeeks\cms\widgets\formInputs\richText\RichTextAsset::class,
+        // Letter attachments (shared field); also loads before mail.css, which tunes the "Прикрепить из…" chips.
+        \skeeks\cms\widgets\formInputs\attachments\AttachmentsAsset::class,
     ];
 }

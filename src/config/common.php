@@ -17,6 +17,11 @@ return [
         'communication' => [
             'class' => \skeeks\cms\communication\CommunicationComponent::class,
             'secretKey' => $secretKey,
+            // "Отправить клиенту": messenger drivers add their channels here.
+            'channels' => [
+                'email' => \skeeks\cms\communication\send\EmailSendChannel::class,
+                'sms' => \skeeks\cms\communication\send\SmsSendChannel::class,
+            ],
         ],
 
         // Letters in the activity feeds of leads, companies and clients.
@@ -91,6 +96,22 @@ return [
                 'idempotent' => false,
                 'overlapPolicy' => 'skip',
                 'dedupKey' => static fn($payload) => 'comm.mail.send:'.(int)($payload['messageId'] ?? 0),
+            ],
+            // An SMS of "Отправить клиенту" handed to the SMS provider of the site (SmsSendJobHandler).
+            'comm.sms.send' => [
+                'type' => 'comm.sms.send',
+                'title' => 'Отправка СМС',
+                'handler' => \skeeks\cms\communication\jobs\SmsSendJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'visible',
+                'retentionDays' => 30,
+                'timeout' => 60,
+                'leaseSeconds' => 120,
+                // An external send with an unknown outcome is never retried.
+                'maxAttempts' => 1,
+                'idempotent' => false,
+                'overlapPolicy' => 'skip',
+                'dedupKey' => static fn($payload) => 'comm.sms.send:'.(int)($payload['messageId'] ?? 0),
             ],
             // Moves and labels asked for in the CRM, done on the server (MailApplyJobHandler).
             // The run reads waiting copies when it starts: "coalesce" keeps one waiting run beside

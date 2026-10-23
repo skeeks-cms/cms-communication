@@ -124,7 +124,9 @@ class MailFolders
     {
         $t = CmsCommMessage::tableName();
         $messageId = new Expression($t.'.id');
+        // "Почта" shows letters; SMS and messenger messages live in the feeds and conversations.
         $query = CmsCommMessage::find()->cmsSite($this->siteId)->forManager($this->user)
+            ->andWhere([$t.'.channel' => CmsCommAccount::CHANNEL_EMAIL])
             ->orderBy([$t.'.message_at' => SORT_DESC, $t.'.id' => SORT_DESC]);
         $hasLinks = ['exists', CmsCommLink::find()->andWhere([CmsCommLink::tableName().'.cms_comm_message_id' => $messageId])];
 

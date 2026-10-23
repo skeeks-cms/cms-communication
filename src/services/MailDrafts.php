@@ -111,6 +111,9 @@ class MailDrafts
         // Attachments of the forwarded letter only.
         $allowed = $forward ? array_map(static fn($f) => (int)$f->storage_file_id, $forward->files) : [];
         $draft->setFileIds(array_intersect(array_map('intval', (array)$form->file_ids), $allowed));
+        // "Прикрепить из…": only what the employee may still send.
+        $sends = new SendService($this->user, $this->siteId);
+        $draft->setSendableRefs(array_filter((array)$form->sendables, static fn($ref) => (bool)$sends->findRef((string)$ref)));
 
         $transaction = \Yii::$app->db->beginTransaction();
         try {
@@ -206,6 +209,7 @@ class MailDrafts
         $form->context_model_code = (string)$draft->context_model_code;
         $form->context_model_id = $draft->context_model_id;
         $form->file_ids = $draft->getFileIds();
+        $form->sendables = $draft->getSendableRefs();
 
         $tokens = [];
         $attachments = [];

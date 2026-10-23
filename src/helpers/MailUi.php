@@ -130,6 +130,8 @@ class MailUi
         'spam' => '<path d="M12 16h.01"></path><path d="M12 8v4"></path><path d="M15.312 2a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586l-4.688-4.688A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2z"></path>',
         'tag' => '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"></path><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"></circle>',
         'undo' => '<path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"></path>',
+        'file-text' => '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path>',
+        'message' => '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"></path>',
     ];
 
     /** A thin backend icon, or its icon-font fallback on an older cms-backend. */
@@ -153,6 +155,55 @@ class MailUi
     public static function composeOnClick(array $params = []): string
     {
         return self::openWindow(array_merge([self::ROUTE_MESSAGE.'/create'], $params));
+    }
+
+    /**
+     * The window "Отправить клиенту" of a sendable ("proposal:12"); $record —
+     * the card it is opened from (its contacts first, the send in its feed).
+     */
+    public static function sendUrl(string $sendable, $record = null): string
+    {
+        return (string)BackendUrlHelper::createByParams([self::ROUTE_MESSAGE.'/send', 'sendable' => $sendable,
+            'record' => \skeeks\cms\communication\services\SendService::recordRefOf($record) ?: null])
+            // Not _sxb[noa]: it would follow the window into the menu links (see ARCHITECTURE.md, «Известные мелочи»).
+            ->enableEmptyLayout()->url;
+    }
+
+    /** onclick JS of a "Отправить клиенту" control. */
+    public static function sendOnClick(string $sendable, $record = null): string
+    {
+        return 'new sx.classes.backend.widgets.Action('.Json::encode(['isOpenNewWindow' => true, 'url' => self::sendUrl($sendable, $record)]).').go(); return false;';
+    }
+
+    /** @return array[] each: type, title — kinds offered by "Прикрепить из…" */
+    public static function sendableSources(): array
+    {
+        $component = \Yii::$app->has('communication') ? \Yii::$app->communication : null;
+        $result = [];
+        foreach ($component ? array_keys((array)$component->sendables) : [] as $type) {
+            if ($source = $component->getSendableSource((string)$type)) {
+                $result[] = ['type' => (string)$type, 'title' => $source->title()];
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * A thing put into the letter: its title, its files and the hidden "type:id" value.
+     * A chip of the shared attachments list (AttachmentsInputWidget, sx-attach__*).
+     */
+    public static function sendableChip(array $sendable, string $inputName): string
+    {
+        $files = $sendable['files'] ? ' · '.implode(', ', $sendable['files']) : '';
+
+        return Html::tag('span',
+            self::icon('file-text', 14)
+            .Html::tag('span', Html::encode($sendable['title']), ['class' => 'sx-attach__name', 'title' => $sendable['title'].$files])
+            .Html::tag('span', Html::encode('ссылка'.($sendable['files'] ? ' и '.(count($sendable['files']) > 1 ? 'файлы' : 'файл') : '')), ['class' => 'sx-attach__size'])
+            .Html::button('×', ['class' => 'sx-attach__remove', 'data-sx-compose-sendable-remove' => true, 'aria-label' => 'Убрать из письма'])
+            .Html::hiddenInput($inputName.'[]', $sendable['ref']),
+            ['class' => 'sx-attach__file sx-compose__file--sendable', 'data-sx-compose-sendable' => $sendable['ref']]);
     }
 
     /** onclick JS that opens a letter. */

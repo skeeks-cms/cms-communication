@@ -8,6 +8,9 @@
 namespace skeeks\cms\communication;
 
 use skeeks\cms\communication\drivers\ConnectionDriver;
+use skeeks\cms\communication\send\SendableSourceInterface;
+use skeeks\cms\communication\send\SendChannelInterface;
+use skeeks\cms\helpers\PhoneHelper;
 use yii\base\Component;
 use yii\base\InvalidConfigException;
 
@@ -60,6 +63,49 @@ class CommunicationComponent extends Component
      */
     public $showLinkedFilter = false;
 
+    /**
+     * Allowed phones of outgoing SMS and messages to phone numbers: numbers in
+     * any notation, compared by digits. Empty allows everyone, unless
+     * allowedRecipients is set: a stand that restricts letters sends no SMS
+     * until its own test numbers are listed here.
+     *
+     * @var string[]
+     */
+    public $allowedPhones = [];
+
+    /**
+     * Things packages send to clients ("Отправить клиенту", "Прикрепить
+     * из…"): type => class name or Yii object config of a
+     * send\SendableSourceInterface. Registrations of several packages merge.
+     *
+     * @var array
+     */
+    public $sendables = [];
+
+    /**
+     * Channels of "Отправить клиенту": channel id => class name or Yii object
+     * config of a send\SendChannelInterface. Mail and SMS come with this
+     * package (config/common.php); messenger drivers add theirs.
+     *
+     * @var array
+     */
+    public $channels = [];
+
+    /**
+     * More networks (CIDR, IPv4 or IPv6) whose openings of a personal link
+     * look like link checks of mail services and security systems, beside
+     * services\LinkChecks::NETWORKS.
+     *
+     * @var string[]
+     */
+    public $linkCheckNetworks = [];
+
+    /** @var SendableSourceInterface[] */
+    private $_sendableSources = [];
+
+    /** @var SendChannelInterface[] */
+    private $_channels = [];
+
     public function isRecipientAllowed(string $address): bool
     {
         if (!$this->allowedRecipients) {
@@ -74,6 +120,69 @@ class CommunicationComponent extends Component
         }
 
         return false;
+    }
+
+    public function isPhoneAllowed(string $phone): bool
+    {
+        $digits = PhoneHelper::digits($phone);
+        if ($digits === '') {
+            return false;
+        }
+        if (!$this->allowedPhones) {
+            return !$this->allowedRecipients;
+        }
+        foreach ($this->allowedPhones as $allowed) {
+            if (PhoneHelper::searchDigits((string)$allowed) === PhoneHelper::searchDigits($digits)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** The registered kind of sendable things, or null. */
+    public function getSendableSource(string $type): ?SendableSourceInterface
+    {
+        if (!isset($this->sendables[$type]) || !preg_match('/^[a-z][a-z0-9_-]*$/', $type)) {
+            return null;
+        }
+        if (!isset($this->_sendableSources[$type])) {
+            $source = \Yii::createObject($this->sendables[$type]);
+            if (!$source instanceof SendableSourceInterface) {
+                throw new InvalidConfigException("Sendable source «{$type}» must implement ".SendableSourceInterface::class);
+            }
+            $this->_sendableSources[$type] = $source;
+        }
+
+        return $this->_sendableSources[$type];
+    }
+
+    /** The channel of "Отправить клиенту", or null. */
+    public function getChannel(string $id): ?SendChannelInterface
+    {
+        if (!isset($this->channels[$id])) {
+            return null;
+        }
+        if (!isset($this->_channels[$id])) {
+            $channel = \Yii::createObject($this->channels[$id]);
+            if (!$channel instanceof SendChannelInterface) {
+                throw new InvalidConfigException("Send channel «{$id}» must implement ".SendChannelInterface::class);
+            }
+            $this->_channels[$id] = $channel;
+        }
+
+        return $this->_channels[$id];
+    }
+
+    /** @return SendChannelInterface[] channel id => channel */
+    public function getChannels(): array
+    {
+        $result = [];
+        foreach (array_keys($this->channels) as $id) {
+            $result[(string)$id] = $this->getChannel((string)$id);
+        }
+
+        return $result;
     }
 
     /** @var string|null */

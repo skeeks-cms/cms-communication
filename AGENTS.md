@@ -43,6 +43,12 @@ it on the server and find letters moved or deleted in the mail service);
 drivers that can change a mailbox implement `mail\MailManageSessionInterface`.
 Conversation search is `services\MailSearch` (`cms_comm_message_search`,
 written by `CmsCommMessage::afterSave()`).
+"Отправить клиенту" is `services\SendService` with channels in `send\`
+(`EmailSendChannel` reuses `MailComposeService::queue()` and its
+`ComposeForm::$sendables`, `SmsSendChannel` + job `comm.sms.send`); documents of
+other packages come through `communication.sendables`
+(`send\SendableSourceInterface`, `send\SendableInterface`). This package never
+ships a production sendable: the sample lives in `tests/support`.
 `CmsCommMessageQuery::forManager()` relies on core forManager() scopes, which
 read `Yii::$app->user` for subordinates: call it in web requests, not in jobs.
 

@@ -15,6 +15,8 @@
  * @var $uploads array[] files of the opened draft as uploads of this session: token, name, size
  * @var $signatures array mailbox id => signature HTML of the employee
  * @var $templates array[] quick reply templates: id, name, html, account (null — any mailbox)
+ * @var $sendables array[] things put in with "Прикрепить из…" (MailComposeService::formSendables())
+ * @var $noDrafts bool the form keeps no draft (the window "Отправить клиенту")
  */
 
 use skeeks\cms\communication\helpers\MailUi;
@@ -22,6 +24,10 @@ use yii\helpers\Html;
 use yii\helpers\Url;
 
 $name = static fn(string $attribute) => Html::getInputName($form, $attribute);
+$sendables = $sendables ?? [];
+$noDrafts = $noDrafts ?? false;
+// "Прикрепить из…": kinds of things installed packages send (communication.sendables).
+$sendableSources = MailUi::sendableSources();
 $forward = (bool)$form->forward_message_id;
 $reply = (bool)$form->reply_to_message_id;
 $accountTitle = static fn($a) => $a->name ? $a->name.' <'.$a->address.'>' : $a->address;
@@ -62,7 +68,9 @@ $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByPar
       data-personal-url="<?= Html::encode($personalUrl) ?>"
       data-signatures="<?= Html::encode(\yii\helpers\Json::encode((object)$signatures)) ?>"
       data-templates="<?= Html::encode(\yii\helpers\Json::encode($templates)) ?>"
-      data-max-size="<?= \skeeks\cms\communication\services\MailFiles::MAX_SIZE ?>">
+      data-sendables-url="<?= Html::encode(Url::to(['sendables'])) ?>"
+      data-sendable-sources="<?= Html::encode(\yii\helpers\Json::encode($sendableSources)) ?>"
+      <?= $noDrafts ? 'data-no-drafts="1"' : '' ?>>
     <?= Html::hiddenInput(\Yii::$app->request->csrfParam, \Yii::$app->request->csrfToken) ?>
     <?= Html::hiddenInput($name('context_model_code'), $form->context_model_code) ?>
     <?= Html::hiddenInput($name('context_model_id'), $form->context_model_id) ?>
@@ -132,31 +140,29 @@ $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByPar
         <div class="sx-compose__error" data-sx-compose-error="body"></div>
     </div>
 
-    <?php // Attachments: the button, drag and drop onto the form, or paste. ?>
-    <div class="sx-compose__files" data-sx-compose-files>
-        <?= Html::hiddenInput($name('file_ids'), '') ?>
-        <?= Html::hiddenInput($name('uploads'), '', ['data-sx-compose-uploads' => true]) ?>
-        <?php foreach ($files as $file) : ?>
-            <span class="sx-compose__file" data-sx-compose-file="<?= (int)$file['id'] ?>">
-                <?= MailUi::icon('paperclip', 14) ?>
-                <span class="sx-compose__file-name" title="<?= Html::encode($file['name']) ?>"><?= Html::encode($file['name']) ?></span>
-                <span class="sx-compose__file-size"><?= Html::encode(\Yii::$app->formatter->asShortSize($file['size'])) ?></span>
-                <button type="button" class="sx-compose__chip-remove" data-sx-compose-file-remove aria-label="Убрать файл">×</button>
-                <?= Html::hiddenInput($name('file_ids').'[]', (int)$file['id']) ?>
-            </span>
-        <?php endforeach; ?>
-        <?php // Attachments of an opened draft: uploads of this session, as if just attached. ?>
-        <?php foreach ($uploads as $upload) : ?>
-            <span class="sx-compose__file">
-                <span class="sx-compose__file-name" title="<?= Html::encode($upload['name']) ?>"><?= Html::encode($upload['name']) ?></span>
-                <span class="sx-compose__file-size"><?= Html::encode(\Yii::$app->formatter->asShortSize($upload['size'])) ?></span>
-                <button type="button" class="sx-compose__chip-remove" data-sx-compose-file-remove aria-label="Убрать файл">×</button>
-                <?= Html::hiddenInput($name('uploads').'[]', $upload['token']) ?>
-            </span>
-        <?php endforeach; ?>
-    </div>
+    <?php
+    // Attachments (shared skeeks/cms field): the button, drag and drop onto the form, or paste.
+    // New files are uploads of this session (uploads[]); files of the forwarded letter
+    // and of an opened draft are in the storage already (file_ids[]).
+    $sendableChips = Html::hiddenInput($name('sendables'), '');
+    // "Прикрепить из…": the personal link goes into the text, the files go with the letter.
+    foreach ($sendables as $sendable) {
+        $sendableChips .= MailUi::sendableChip($sendable, $name('sendables'));
+    }
+    ?>
+    <?= \skeeks\cms\widgets\formInputs\attachments\AttachmentsInputWidget::widget([
+        'name'           => $name('uploads'),
+        'storedName'     => $name('file_ids'),
+        'files'          => $files,
+        'uploads'        => $uploads,
+        'uploadUrl'      => ['upload'],
+        'maxSize'        => \skeeks\cms\communication\services\MailFiles::MAX_SIZE,
+        'maxSizeMessage' => '«{name}» больше {size} МБ: почтовые серверы такие письма не принимают.',
+        'options'        => ['id' => 'sx-compose-files-'.substr(md5(uniqid('', true)), 0, 8)],
+        'listOptions'    => ['class' => 'sx-compose__files', 'data-sx-compose-files' => true],
+        'listContent'    => $sendableChips,
+    ]) ?>
     <div class="sx-compose__error" data-sx-compose-error="file_ids"></div>
-    <input type="file" multiple hidden data-sx-compose-file-input>
 
     <?php
     // Files of the forwarded (or quoted) letter that lie only in the mailbox are fetched before sending.
@@ -195,15 +201,21 @@ $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByPar
 
     <div class="sx-compose__footer">
         <button type="submit" class="btn btn-primary sx-compose__send" data-sx-compose-send><?= MailUi::icon('send', 16) ?> Отправить</button>
-        <button type="button" class="sx-compose__attach" data-sx-compose-attach title="Прикрепить файлы (можно перетащить в письмо)">
-            <?= MailUi::icon('paperclip', 18) ?> <span>Прикрепить</span>
-        </button>
+        <?= \skeeks\cms\widgets\formInputs\attachments\AttachmentsInputWidget::button(['class' => 'sx-compose__attach', 'title' =>'Прикрепить файлы (можно перетащить в письмо или вставить из буфера)']) ?>
         <div class="sx-compose__templates" data-sx-compose-templates>
             <button type="button" class="sx-compose__attach" data-sx-compose-templates-toggle aria-haspopup="true" title="Вставить шаблон ответа">
                 <?= MailUi::icon('file', 18) ?> <span>Шаблоны</span>
             </button>
             <div class="sx-compose__templates-menu" data-sx-compose-templates-menu hidden role="menu"></div>
         </div>
+        <?php if ($sendableSources) : ?>
+            <div class="sx-compose__templates sx-compose__sendables" data-sx-compose-sendables>
+                <button type="button" class="sx-compose__attach" data-sx-compose-sendables-toggle aria-haspopup="true" title="Вставить в письмо документ: личную ссылку и файл">
+                    <?= MailUi::icon('file-text', 18) ?> <span>Прикрепить из…</span>
+                </button>
+                <div class="sx-compose__templates-menu sx-compose__sendables-menu" data-sx-compose-sendables-menu hidden role="menu"></div>
+            </div>
+        <?php endif; ?>
         <span class="sx-compose__hint">Ctrl+Enter</span>
         <span class="sx-compose__status" data-sx-compose-status></span>
         <span class="sx-compose__draft" data-sx-compose-draft-status><?= $form->draft_id ? 'Черновик' : '' ?></span>

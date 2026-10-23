@@ -36,7 +36,11 @@ class MessageLogRenderer implements CmsLogRendererInterface
         }
 
         $incoming = $message->direction === CmsCommMessage::DIRECTION_IN;
-        $title = $incoming ? 'Входящее письмо' : 'Исходящее письмо';
+        $sms = $message->channel === \skeeks\cms\communication\send\SmsSendChannel::CHANNEL;
+        $title = $sms ? ($incoming ? 'Входящее СМС' : 'СМС') : ($incoming ? 'Входящее письмо' : 'Исходящее письмо');
+        if ($message->channel === \skeeks\cms\communication\services\SiteMessages::CHANNEL) {
+            $title = 'Сообщение с сайта';
+        }
         // The record was created from this letter ("Создать задачу / лид / сделку").
         $link = $log->id ? CmsCommLink::find()->andWhere(['cms_log_id' => (int)$log->id])->one() : null;
         if ($link && $link->link_type === CmsCommLink::TYPE_CREATED) {
@@ -46,7 +50,10 @@ class MessageLogRenderer implements CmsLogRendererInterface
         }
         $who = $incoming
             ? '<span class="sx-gray">От:</span> '.Html::encode($message->getFromAsText())
-            : '<span class="sx-gray">Кому:</span> '.Html::encode($message->getToAsText());
+            : '<span class="sx-gray">Кому:</span> '.Html::encode($sms
+                ? implode(', ', array_map(static fn($phone, $name) => \skeeks\cms\communication\services\SendContacts::formatPhone((string)$phone).($name ? ' ('.$name.')' : ''),
+                    array_keys($message->getTo()), $message->getTo()))
+                : $message->getToAsText());
         $status = '';
         if (!$incoming && $message->status !== CmsCommMessage::STATUS_SENT) {
             $status = ' · '.Html::tag('span', Html::encode($message->getStatusName()), [

@@ -14,6 +14,8 @@ use skeeks\cms\communication\models\CmsCommConversation;
 use skeeks\cms\communication\models\CmsCommLink;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\models\CmsCommMessageMailbox;
+use skeeks\cms\communication\send\SendableInterface;
+use skeeks\cms\communication\send\SendContext;
 use skeeks\cms\models\CmsCompany;
 use skeeks\cms\models\CmsLead;
 use skeeks\cms\models\CmsStorageFile;
@@ -172,6 +174,11 @@ class MailComposeService
                 $size += (int)filesize($path);
             }
         }
+        foreach ($this->sendableItems($form) as $item) {
+            foreach ($item['sendable']->getSendFiles() as $file) {
+                $size += $file->size();
+            }
+        }
         $storageIds = array_map('intval', (array)$form->file_ids);
         if ($storageIds) {
             $source = $form->forward_message_id ? $this->visibleMessage((int)$form->forward_message_id) : null;
@@ -186,6 +193,51 @@ class MailComposeService
         }
 
         return null;
+    }
+
+    /** Text of the first problem with "Прикрепить из…" items, or null. */
+    public function sendablesError(ComposeForm $form): ?string
+    {
+        $sends = new SendService($this->user, $this->siteId);
+        foreach ((array)$form->sendables as $ref) {
+            if (!$sends->findRef((string)$ref)) {
+                return 'Документ для отправки не найден или у вас нет к нему доступа.';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Things of other packages in the letter, found for the employee.
+     *
+     * @return array[] each: ref, type, id, sendable (SendableInterface)
+     */
+    public function sendableItems(ComposeForm $form): array
+    {
+        $sends = new SendService($this->user, $this->siteId);
+        $result = [];
+        foreach ((array)$form->sendables as $ref) {
+            $parsed = SendService::parseRef((string)$ref);
+            $sendable = $parsed ? $sends->find($parsed[0], $parsed[1]) : null;
+            if ($sendable) {
+                $result[] = ['ref' => $parsed[0].':'.$parsed[1], 'type' => $parsed[0], 'id' => $parsed[1], 'sendable' => $sendable];
+            }
+        }
+
+        return $result;
+    }
+
+    /** @return array[] each: ref, title, button, link (editor HTML), files (names) — "Прикрепить из…" chips of the form */
+    public function formSendables(ComposeForm $form): array
+    {
+        return array_map(static fn($item) => [
+            'ref' => $item['ref'],
+            'title' => $item['sendable']->getSendTitle(),
+            'button' => $item['sendable']->getSendButton(),
+            'link' => SendService::editorLink($item['type'], $item['id'], $item['sendable']->getSendButton()),
+            'files' => array_map(static fn($f) => $f->name, $item['sendable']->getSendFiles()),
+        ], $this->sendableItems($form));
     }
 
     /** @return array[] each: file (CmsStorageFile), name — attachments kept from the forwarded letter */
@@ -422,10 +474,7 @@ class MailComposeService
             return '<img src="cid:'.$cid.'" alt="" style="max-width:100%">';
         }, $html);
         $quoted = $forwarded ? $this->quoteOf($forwarded, true) : ($original && $form->include_quote ? $this->quoteOf($original, false) : null);
-        if ($quoted) {
-            $text = ($text !== '' ? $text."\n\n" : '').$quoted[1];
-            $html = ($html !== '' ? $html.'<br><br>' : '').$quoted[0];
-        }
+        $sendables = $this->sendableItems($form);
         $attachments = $this->composeFiles($form, $forwarded ?: $original);
         $list = array_map(static fn($a) => ['name' => $a['name'], 'type' => $a['file']->mime_type, 'size' => (int)$a['file']->size], $attachments);
         foreach ((array)$form->uploads as $token) {
@@ -435,6 +484,27 @@ class MailComposeService
 
         $transaction = \Yii::$app->db->beginTransaction();
         try {
+            // "Прикрепить из…" and "Отправить клиенту": a personal link of this letter, its files.
+            // The links are made inside the transaction: a failed letter leaves no send behind.
+            $sends = [];
+            foreach ($sendables as $item) {
+                /** @var SendableInterface $sendable */
+                $sendable = $item['sendable'];
+                $context = $this->sendContext($form, $item['type'], (int)$item['id']);
+                $context->url = $sendable->createSendLink($context);
+                [$html, $text] = SendService::applyLink($html, $text, $item['type'], (int)$item['id'], $context->url, $sendable->getSendButton());
+                $files = [];
+                foreach ($sendable->getSendFiles() as $file) {
+                    $files[] = ['file' => SendService::storeFile($file, $this->siteId), 'name' => $file->name];
+                    $list[] = ['name' => $file->name, 'type' => $file->type, 'size' => $file->size()];
+                }
+                $sends[] = ['sendable' => $sendable, 'context' => $context, 'files' => $files];
+            }
+            if ($quoted) {
+                $text = ($text !== '' ? $text."\n\n" : '').$quoted[1];
+                $html = ($html !== '' ? $html.'<br><br>' : '').$quoted[0];
+            }
+
             if ($original) {
                 $conversation = $original->conversation;
             } else {
@@ -492,6 +562,11 @@ class MailComposeService
             foreach ($attachments as $attachment) {
                 MailFiles::attach($message, $attachment['file'], $attachment['name'], null, null, null, false, $priority += 10);
             }
+            foreach ($sends as $send) {
+                foreach ($send['files'] as $file) {
+                    MailFiles::attach($message, $file['file'], $file['name'], null, null, null, false, $priority += 10);
+                }
+            }
             // Editor uploads leave the temporary area only now, with a letter that owns them.
             foreach ((array)$form->uploads as $token) {
                 $file = MailFiles::storeFromTemp((string)$token, $this->siteId);
@@ -520,6 +595,13 @@ class MailComposeService
             $linker->link($message, $this->addresses->findRecords($external, $this->siteId), CmsCommLink::TYPE_AUTO, (int)$this->user->id);
             $linker->inheritFromConversation($message);
 
+            // The send lands in the feeds of its records; the package learns which letter carries it.
+            foreach ($sends as $send) {
+                $linker->link($message, (new SendService($this->user, $this->siteId))->records($send['sendable'], $send['context']->record),
+                    CmsCommLink::TYPE_CONTEXT, (int)$this->user->id);
+                $send['sendable']->afterSend($send['context'], $message);
+            }
+
             \Yii::$app->jobs->push('comm.mail.send', ['messageId' => (int)$message->id], ['siteId' => $this->siteId]);
 
             $transaction->commit();
@@ -529,6 +611,24 @@ class MailComposeService
         }
 
         return $message;
+    }
+
+    /**
+     * One send of a sendable by this letter: to its first recipient, with the
+     * CRM record of that address (or the card the letter is written from).
+     */
+    private function sendContext(ComposeForm $form, string $type, int $id): SendContext
+    {
+        $recipient = (string)($form->getToAddresses()[0] ?? '');
+        $context = new SendContext($type, $id, 'email', $recipient, $this->user);
+        $records = $recipient !== '' ? $this->addresses->findRecords([$recipient], $this->siteId, $this->user) : [];
+        $context->record = $records[0] ?? ($form->context_model_code && $form->context_model_id
+            ? $this->contextRecord((string)$form->context_model_code, (int)$form->context_model_id) : null);
+        if ($context->record) {
+            $context->recipientName = CrmRecords::name($context->record);
+        }
+
+        return $context;
     }
 
     public function visibleMessage(int $id): ?CmsCommMessage

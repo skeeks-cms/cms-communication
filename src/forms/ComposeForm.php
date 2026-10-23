@@ -65,6 +65,13 @@ class ComposeForm extends Model
     /** @var string[] attachments uploaded into the editor: MailFiles::storeTemp() tokens */
     public $uploads = [];
 
+    /**
+     * @var string[] things of other packages put in with "Прикрепить из…" or
+     * sent from "Отправить клиенту": "type:id" (send\SendableInterface). Each
+     * goes as its personal link (a button) and its files.
+     */
+    public $sendables = [];
+
     /** @var MailComposeService|null set by the controller for validation */
     public $service;
 
@@ -78,6 +85,8 @@ class ComposeForm extends Model
             [['include_quote', 'reply_all'], 'boolean'],
             [['file_ids'], 'filter', 'filter' => static fn($v) => array_values(array_unique(array_filter(array_map('intval', (array)$v)))), 'skipOnEmpty' => false],
             [['uploads'], 'filter', 'filter' => static fn($v) => array_values(array_unique(array_filter(array_map('strval', (array)$v)))), 'skipOnEmpty' => false],
+            [['sendables'], 'filter', 'filter' => static fn($v) => array_values(array_unique(array_filter(array_map(static fn($r) => trim((string)$r), (array)$v)))), 'skipOnEmpty' => false],
+            [['sendables'], 'validateSendables', 'skipOnEmpty' => false],
             [['file_ids'], 'validateFiles', 'skipOnEmpty' => false],
             [['subject'], 'string', 'max' => 500],
             [['body', 'body_html'], 'string', 'max' => 500000],
@@ -189,6 +198,18 @@ class ComposeForm extends Model
         }
     }
 
+    /** Things of other packages: each must be found for this employee. */
+    public function validateSendables($attribute)
+    {
+        if (count($this->sendables) > 5) {
+            $this->addError($attribute, 'Не больше 5 документов в одном письме.');
+            return;
+        }
+        if ($this->service && ($error = $this->service->sendablesError($this))) {
+            $this->addError($attribute, $error);
+        }
+    }
+
     /** @return string[] upload tokens of the images inside the text */
     public function getImageUploads(): array
     {
@@ -198,7 +219,7 @@ class ComposeForm extends Model
     /** A letter needs some text; a forwarded letter is text enough. */
     public function validateText($attribute)
     {
-        if (!$this->forward_message_id && !$this->file_ids && !$this->uploads && !$this->getImageUploads()
+        if (!$this->forward_message_id && !$this->file_ids && !$this->uploads && !$this->sendables && !$this->getImageUploads()
             && trim($this->getText()) === '') {
             $this->addError($attribute, 'Напишите текст письма.');
         }

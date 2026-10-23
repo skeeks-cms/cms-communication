@@ -36,6 +36,7 @@ use yii\helpers\Json;
  * @property string|null         $context_model_code
  * @property int|null            $context_model_id
  * @property string|null         $file_ids JSON: storage file ids kept from the forwarded letter
+ * @property string|null         $sendables JSON: "type:id" put in with "Прикрепить из…"
  *
  * @property CmsCommDraftFile[]  $files
  * @property CmsCommAccount|null $account
@@ -86,6 +87,22 @@ class CmsCommDraft extends ActiveRecord
     {
         $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
         $this->file_ids = $ids ? Json::encode($ids) : null;
+    }
+
+    /** @return string[] "type:id" of things of other packages put into the letter */
+    public function getSendableRefs(): array
+    {
+        $refs = $this->hasAttribute('sendables') && $this->sendables ? Json::decode((string)$this->sendables) : [];
+
+        return is_array($refs) ? array_values(array_map('strval', $refs)) : [];
+    }
+
+    public function setSendableRefs(array $refs): void
+    {
+        if ($this->hasAttribute('sendables')) {
+            $refs = array_values(array_unique(array_filter(array_map('strval', $refs))));
+            $this->sendables = $refs ? Json::encode($refs) : null;
+        }
     }
 
     /** Addresses typed into "Кому", as a list for the drafts folder. */

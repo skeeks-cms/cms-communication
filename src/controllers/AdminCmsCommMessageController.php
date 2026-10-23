@@ -23,6 +23,9 @@ use skeeks\cms\communication\services\MailNotifier;
 use skeeks\cms\communication\services\MailboxActions;
 use skeeks\cms\communication\services\MailTemplates;
 use skeeks\cms\communication\services\MessageSorting;
+use skeeks\cms\communication\send\SendException;
+use skeeks\cms\communication\services\SendContacts;
+use skeeks\cms\communication\services\SendService;
 use skeeks\cms\grid\DateTimeColumnData;
 use skeeks\cms\rbac\CmsManager;
 use yii\base\Event;
@@ -185,6 +188,18 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'unlink' => $hidden([$this, 'unlinkRecord']),
             // GET pk: who may be responsible, JSON; POST pk, user_id (empty: nobody): assign, JSON.
             'assign' => $hidden([$this, 'assign']),
+            // GET sendable=type:id, record=type:id: the window "Отправить клиенту";
+            // POST sendable, channel, recipient, text, subject, account, record: send, JSON.
+            'send' => [
+                'class' => \skeeks\cms\backend\ViewBackendAction::class,
+                'name' => 'Отправить клиенту',
+                'icon' => 'far fa-paper-plane',
+                'isVisible' => false,
+                'accessCallback' => static fn() => (bool)\Yii::$app->communication->sendables,
+                'callback' => [$this, 'sendToClient'],
+            ],
+            // GET type, q, context_model_code/_id: things for "Прикрепить из…"; GET ref: one of them for the form, JSON.
+            'sendables' => $hidden([$this, 'sendables']),
             // "Мои настройки почты": notifications, signatures, quick reply templates.
             'personal' => [
                 'class' => \skeeks\cms\backend\ViewBackendAction::class,
@@ -930,7 +945,12 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             if (!$form->validate()) {
                 return ['success' => false, 'errors' => $form->getFirstErrors()];
             }
-            $message = $service->queue($form);
+            try {
+                $message = $service->queue($form);
+            } catch (SendException $e) {
+                // A package refused its document ("Прикрепить из…"): nothing was sent.
+                return ['success' => false, 'errors' => $e->errors];
+            }
             // The letter is on its way: its draft goes. Files the letter took stay with the letter.
             $drafts = $this->drafts();
             if ($draft = $drafts->find((int)$form->draft_id)) {
@@ -975,11 +995,99 @@ class AdminCmsCommMessageController extends BackendModelStandartController
                 : ($form->forward_message_id ? $service->visibleMessage((int)$form->forward_message_id) : null),
             'inline' => (bool)$request->get('inline'),
             'files' => $service->formFiles($form),
+            'sendables' => $service->formSendables($form),
         ];
 
         return $params['inline']
             ? $this->renderPartial('@skeeks/cms/communication/views/message/_compose', $params)
             : $this->render('@skeeks/cms/communication/views/message/compose', ['params' => $params]);
+    }
+
+    /**
+     * "Отправить клиенту": the client's contacts, the channels with their
+     * forms (mail is the letter form with the sendable put in, it posts to
+     * "create"); POST sends through a channel (SendService).
+     */
+    public function sendToClient()
+    {
+        $request = \Yii::$app->request;
+        $service = new SendService(\Yii::$app->user->identity);
+
+        if ($request->isPost) {
+            \Yii::$app->response->format = Response::FORMAT_JSON;
+            try {
+                $send = $service->request((string)$request->post('sendable'), (array)$request->post());
+                $message = $service->send($send);
+            } catch (SendException $e) {
+                return ['success' => false, 'errors' => $e->errors];
+            }
+            $channel = \Yii::$app->communication->getChannel($send->channel);
+
+            return ['success' => true, 'id' => (int)$message->id, 'message' => ($channel ? $channel->title() : 'Сообщение').' отправляется'];
+        }
+
+        try {
+            $send = $service->request((string)$request->get('sendable'), ['record' => (string)$request->get('record')]);
+        } catch (SendException $e) {
+            throw new NotFoundHttpException($e->getMessage());
+        }
+        $contacts = $service->contacts($send->sendable, $send->record);
+        $channels = [];
+        foreach (\Yii::$app->communication->getChannels() as $id => $channel) {
+            $reason = $channel->unavailableReason(\Yii::$app->user->identity, $send->siteId);
+            $send->channel = $id;
+            $channels[$id] = [
+                'channel' => $channel,
+                'reason' => $reason,
+                'contacts' => SendContacts::ofKind($contacts, $channel->contactKind()),
+                'form' => $reason ? '' : $channel->renderForm($send, SendContacts::ofKind($contacts, $channel->contactKind())),
+            ];
+        }
+        $send->channel = '';
+
+        return $this->render('@skeeks/cms/communication/views/message/send', [
+            'send' => $send,
+            'contacts' => $contacts,
+            'channels' => $channels,
+            'active' => (string)$request->get('channel'),
+        ]);
+    }
+
+    /**
+     * "Прикрепить из…": GET type, q — things of that kind the employee may
+     * send (those of the card the letter is written from first); GET ref —
+     * one thing as the form shows it (title, its link for the text, files).
+     */
+    public function sendables()
+    {
+        \Yii::$app->response->format = Response::FORMAT_JSON;
+        $request = \Yii::$app->request;
+        $user = \Yii::$app->user->identity;
+        if ($ref = (string)$request->get('ref')) {
+            $form = new \skeeks\cms\communication\forms\ComposeForm(['sendables' => [$ref]]);
+            $item = $this->composeService()->formSendables($form)[0] ?? null;
+            if (!$item) {
+                return ['success' => false, 'message' => 'Документ не найден или у вас нет к нему доступа.'];
+            }
+
+            return ['success' => true, 'item' => $item, 'chip' => MailUi::sendableChip($item, \yii\helpers\Html::getInputName($form, 'sendables'))];
+        }
+
+        $source = \Yii::$app->communication->getSendableSource((string)$request->get('type'));
+        if (!$source) {
+            return ['success' => false, 'items' => []];
+        }
+        $record = null;
+        if ($request->get('context_model_code') && $request->get('context_model_id')) {
+            $record = $this->composeService()->contextRecord((string)$request->get('context_model_code'), (int)$request->get('context_model_id'));
+        }
+        $items = $source->suggest($user, mb_substr(trim((string)$request->get('q')), 0, 100), $record, 20);
+
+        return ['success' => true, 'items' => array_map(static fn($i) => [
+            'ref' => $request->get('type').':'.(int)$i['id'],
+            'title' => (string)$i['title'],
+            'hint' => (string)($i['hint'] ?? ''),
+        ], $items)];
     }
 
     public function getModel()

@@ -1169,107 +1169,18 @@
         $(this).text($quote.prop('hidden') ? 'Показать' : 'Скрыть');
     });
 
-    /* Files: attachments. Formatting, links, paste and pictures inside the text
-     * belong to the shared editor (skeeks/cms RichTextInputWidget, sx.RichText). */
+    /* Files: attachments belong to the shared field (skeeks/cms AttachmentsInputWidget,
+     * sx.Attachments): the button, drag and drop onto the letter, paste, the editor's
+     * "Прикрепить файлом" zone. Formatting, links, paste and pictures inside the text
+     * belong to the shared editor (RichTextInputWidget, sx.RichText). */
 
-    function uploadFile($form, file) {
-        var max = parseInt($form.data('max-size'), 10) || 0;
-        if (max && file.size > max) {
-            notify('error', '«' + file.name + '» больше ' + Math.round(max / 1024 / 1024) + ' МБ: почтовые серверы такие письма не принимают.');
-            return $.Deferred().reject().promise();
-        }
-        var data = new FormData();
-        data.append('file', file, file.name);
-        data.append(yii.getCsrfParam(), yii.getCsrfToken());
-        $form.data('uploads', ($form.data('uploads') || 0) + 1);
-        return $.ajax({
-            url: $form.data('upload-url'),
-            type: 'POST',
-            data: data,
-            processData: false,
-            contentType: false,
-            xhr: function () {
-                var xhr = $.ajaxSettings.xhr();
-                if (xhr.upload && file.$chip) {
-                    xhr.upload.addEventListener('progress', function (e) {
-                        if (e.lengthComputable) {
-                            file.$chip.find('.sx-compose__file-size').text(Math.round(e.loaded / e.total * 100) + '%');
-                        }
-                    });
-                }
-                return xhr;
-            }
-        }).then(function (response) {
-            if (!response.success) {
-                notify('error', response.message || 'Файл не загрузился.');
-                return $.Deferred().reject().promise();
-            }
-            return response;
-        }, function () {
-            notify('error', 'Файл «' + file.name + '» не загрузился.');
-            return $.Deferred().reject().promise();
-        }).always(function () {
-            $form.data('uploads', $form.data('uploads') - 1);
-        });
+    $(document).on('sx-attach:change', '[data-sx-compose] [data-sx-attach]', function () {
+        markDirty($(this).closest('[data-sx-compose]'));
+    });
+
+    function isUploading($form) {
+        return sx.Attachments.isBusy($form) || sx.RichText.isBusy(composeEditor($form));
     }
-
-    function attachFiles($form, files) {
-        // New files wait in the temporary upload area until the letter is sent.
-        var name = $form.find('[data-sx-compose-uploads]').attr('name');
-        Array.prototype.forEach.call(files, function (file) {
-            var $chip = $('<span class="sx-compose__file is-loading"></span>');
-            $('<span class="sx-compose__file-name"></span>').text(file.name).attr('title', file.name).appendTo($chip);
-            $('<span class="sx-compose__file-size">0%</span>').appendTo($chip);
-            $form.find('[data-sx-compose-files]').append($chip);
-            file.$chip = $chip;
-            uploadFile($form, file).done(function (response) {
-                $chip.removeClass('is-loading');
-                $chip.find('.sx-compose__file-size').text(response.sizeText);
-                $chip.append('<button type="button" class="sx-compose__chip-remove" data-sx-compose-file-remove aria-label="Убрать файл">×</button>');
-                $('<input type="hidden">').attr('name', name + '[]').val(response.token).appendTo($chip);
-                markDirty($form);
-            }).fail(function () {
-                $chip.remove();
-            });
-        });
-    }
-
-    $(document).on('click', '[data-sx-compose-attach]', function () {
-        $(this).closest('[data-sx-compose]').find('[data-sx-compose-file-input]').trigger('click');
-    });
-
-    $(document).on('change', '[data-sx-compose-file-input]', function () {
-        attachFiles($(this).closest('[data-sx-compose]'), this.files);
-        this.value = '';
-    });
-
-    $(document).on('click', '[data-sx-compose-file-remove]', function () {
-        var $form = $(this).closest('[data-sx-compose]');
-        $(this).closest('.sx-compose__file').remove();
-        markDirty($form);
-    });
-
-    // The editor's "Прикрепить файлом" drop zone, and non-image files pasted or dropped into the text.
-    $(document).on('sx-rte:attach', '[data-sx-compose-rte]', function (e, files) {
-        attachFiles($(this).closest('[data-sx-compose]'), files);
-    });
-
-    // Files dropped anywhere else on the letter are attached.
-    $(document).on('dragover', '[data-sx-compose]', function (e) {
-        var dt = e.originalEvent.dataTransfer;
-        if (dt && Array.prototype.indexOf.call(dt.types || [], 'Files') !== -1) {
-            e.preventDefault();
-        }
-    });
-
-    $(document).on('drop', '[data-sx-compose]', function (e) {
-        var dt = e.originalEvent.dataTransfer;
-        if (!dt || !dt.files || !dt.files.length) {
-            return;
-        }
-        e.preventDefault();
-        attachFiles($(this), dt.files);
-    });
 
     /* Sending */
 
@@ -1426,7 +1337,8 @@
     }
 
     function markDirty($form) {
-        if (!$form.length || $form.data('quiet') || $form.data('sent')) {
+        // The window "Отправить клиенту" keeps no draft.
+        if (!$form.length || $form.data('quiet') || $form.data('sent') || $form.data('no-drafts')) {
             return;
         }
         $form.data('dirty', true);
@@ -1445,7 +1357,7 @@
             $form.data('draftAgain', true);
             return $form.data('draftXhr');
         }
-        if ($form.data('uploads') > 0 || sx.RichText.isBusy(composeEditor($form))) {
+        if (isUploading($form)) {
             clearTimeout($form.data('draftTimer'));
             $form.data('draftTimer', setTimeout(function () {
                 saveDraft($form);
@@ -1484,7 +1396,7 @@
 
     $(document).on('input change', '[data-sx-compose] input, [data-sx-compose] select, [data-sx-compose] textarea', function () {
         // The recipient being typed is saved once it becomes a chip.
-        if (!$(this).is('[data-sx-compose-chips-input], [data-sx-compose-file-input]')) {
+        if (!$(this).is('[data-sx-compose-chips-input], [data-sx-attach-input]')) {
             markDirty($(this).closest('[data-sx-compose]'));
         }
     });
@@ -1596,7 +1508,7 @@
         if ($send.prop('disabled')) {
             return;
         }
-        if ($form.data('uploads') > 0 || sx.RichText.isBusy(composeEditor($form))) {
+        if (isUploading($form)) {
             notify('error', 'Дождитесь, пока загрузятся файлы.');
             return;
         }
@@ -2361,6 +2273,317 @@
         }).fail(function () {
             $error.text('Не удалось привязать письмо.').prop('hidden', false);
             $submit.prop('disabled', false);
+        });
+    });
+
+    /* ------------------------------------------------------------------
+     * "Прикрепить из…": a document of another package (a proposal, a bill)
+     * goes into the letter as its personal link in the text and its files.
+     * The server makes the link when the letter is sent (SendService).
+     * ------------------------------------------------------------------ */
+
+    var SEND_PLACEHOLDER = 'https://sx-send.invalid/';
+
+    function sendableMenu($form) {
+        return $form.find('[data-sx-compose-sendables-menu]');
+    }
+
+    /** Where the link goes: the caret in the text when the menu was opened. */
+    function rememberCaret($form) {
+        var editor = editorElement($form);
+        var selection = window.getSelection();
+        $form.removeData('sendableRange');
+        if (editor && selection.rangeCount && editor.contains(selection.anchorNode)) {
+            $form.data('sendableRange', selection.getRangeAt(0).cloneRange());
+        }
+    }
+
+    function insertSendableLink($form, html) {
+        var range = $form.data('sendableRange');
+        var editor = editorElement($form);
+        if (range && editor && editor.contains(range.startContainer)) {
+            editor.focus();
+            var selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+        insertTemplate($form, html);
+    }
+
+    function sendableLinks($form, ref) {
+        var parts = String(ref).split(':');
+        var href = SEND_PLACEHOLDER + parts[0] + '/' + parts[1];
+        return $(editorElement($form)).find('a').filter(function () {
+            return (this.getAttribute('href') || '').replace(/\/$/, '') === href;
+        });
+    }
+
+    function closeSendableMenus() {
+        $('[data-sx-compose-sendables-menu]').prop('hidden', true).empty();
+    }
+
+    function showSources($form) {
+        var $menu = sendableMenu($form).empty();
+        ($form.data('sendable-sources') || []).forEach(function (source) {
+            $('<button type="button" class="sx-compose__templates-item" role="menuitem" data-sx-compose-sendable-source></button>')
+                .text(source.title).data('source', source).appendTo($menu);
+        });
+        $menu.prop('hidden', false);
+    }
+
+    function showPicker($form, source) {
+        var $menu = sendableMenu($form).empty();
+        var many = ($form.data('sendable-sources') || []).length > 1;
+        var $head = $('<div class="sx-compose__sendables-head"></div>').appendTo($menu);
+        if (many) {
+            $('<button type="button" class="sx-compose__link" data-sx-compose-sendables-back>‹</button>').attr('aria-label', 'Назад').appendTo($head);
+        }
+        $('<strong></strong>').text(source.title).appendTo($head);
+        var $search = $('<input type="search" class="sx-compose__input sx-compose__sendables-search" autocomplete="off">')
+            .attr('placeholder', 'Поиск').attr('aria-label', 'Поиск: ' + source.title).appendTo($menu);
+        var $list = $('<div class="sx-compose__sendables-list" role="listbox"></div>').appendTo($menu);
+        $menu.prop('hidden', false);
+        var load = function () {
+            var xhr = $menu.data('xhr');
+            if (xhr) {
+                xhr.abort();
+            }
+            $list.html('<div class="sx-compose__templates-empty">Загрузка…</div>');
+            $menu.data('xhr', $.get($form.data('sendables-url'), {
+                type: source.type,
+                q: $search.val(),
+                context_model_code: $form.find('[name$="[context_model_code]"]').val(),
+                context_model_id: $form.find('[name$="[context_model_id]"]').val()
+            }).done(function (response) {
+                $list.empty();
+                var items = (response && response.items) || [];
+                if (!items.length) {
+                    $('<div class="sx-compose__templates-empty"></div>').text('Ничего не найдено.').appendTo($list);
+                }
+                items.forEach(function (item) {
+                    var $item = $('<button type="button" class="sx-compose__templates-item sx-compose__sendables-item" role="option" data-sx-compose-sendable-item></button>')
+                        .data('ref', item.ref).appendTo($list);
+                    $('<span class="sx-compose__sendables-title"></span>').text(item.title).appendTo($item);
+                    if (item.hint) {
+                        $('<span class="sx-compose__sendables-hint"></span>').text(item.hint).appendTo($item);
+                    }
+                });
+            }));
+        };
+        $search.on('input', function () {
+            clearTimeout($menu.data('timer'));
+            $menu.data('timer', setTimeout(load, 250));
+        }).on('keydown', function (e) {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                closeSendableMenus();
+            }
+        });
+        load();
+        $search.trigger('focus');
+    }
+
+    $(document).on('mousedown', '[data-sx-compose-sendables-toggle]', function (e) {
+        e.preventDefault();
+        rememberCaret($(this).closest('[data-sx-compose]'));
+    });
+
+    $(document).on('click', '[data-sx-compose-sendables-toggle]', function () {
+        var $form = $(this).closest('[data-sx-compose]');
+        var $menu = sendableMenu($form);
+        if (!$menu.prop('hidden')) {
+            closeSendableMenus();
+            return;
+        }
+        $form.find('[data-sx-compose-templates-menu]').prop('hidden', true);
+        var sources = $form.data('sendable-sources') || [];
+        if (sources.length === 1) {
+            showPicker($form, sources[0]);
+        } else {
+            showSources($form);
+        }
+    });
+
+    $(document).on('click', '[data-sx-compose-sendable-source]', function () {
+        showPicker($(this).closest('[data-sx-compose]'), $(this).data('source'));
+    });
+
+    $(document).on('click', '[data-sx-compose-sendables-back]', function () {
+        showSources($(this).closest('[data-sx-compose]'));
+    });
+
+    $(document).on('click', '[data-sx-compose-sendable-item]', function () {
+        var $form = $(this).closest('[data-sx-compose]');
+        var ref = $(this).data('ref');
+        closeSendableMenus();
+        if ($form.find('[data-sx-compose-sendable="' + ref + '"]').length) {
+            notify('info', 'Этот документ уже в письме.');
+            return;
+        }
+        $.get($form.data('sendables-url'), {ref: ref}).done(function (response) {
+            if (!response || !response.success) {
+                notify('error', (response && response.message) || 'Документ недоступен.');
+                return;
+            }
+            $form.find('[data-sx-compose-files]').append(response.chip);
+            // On a line of its own: the server turns the link into a button there.
+            var $link = $('<div>').html(response.item.link).find('a').first();
+            insertSendableLink($form, '<br>' + $link.prop('outerHTML') + '<br>');
+            $form.find('[data-sx-compose-error="sendables"]').text('');
+            markDirty($form);
+        }).fail(function () {
+            notify('error', 'Не удалось добавить документ.');
+        });
+    });
+
+    // Removing the document takes its link out of the text too.
+    $(document).on('click', '[data-sx-compose-sendable-remove]', function () {
+        var $form = $(this).closest('[data-sx-compose]');
+        var $chip = $(this).closest('[data-sx-compose-sendable]');
+        sendableLinks($form, $chip.data('sx-compose-sendable')).each(function () {
+            var $block = $(this).parent();
+            $(this).remove();
+            if ($block.is('div, p') && !$.trim($block.text()) && !$block.find('img').length && $block.get(0) !== editorElement($form)) {
+                $block.remove();
+            }
+        });
+        $chip.remove();
+        editorChanged($form);
+        markDirty($form);
+    });
+
+    $(document).on('click', function (e) {
+        if (!$(e.target).closest('[data-sx-compose-sendables]').length) {
+            $('[data-sx-compose-sendables-menu]:not([hidden])').prop('hidden', true).empty();
+        }
+    });
+
+    /* ------------------------------------------------------------------
+     * "Отправить клиенту": contacts of the client choose the channel and the
+     * recipient; each channel has its own form (mail — the letter form).
+     * ------------------------------------------------------------------ */
+
+    function sendTab($root, id) {
+        $root.find('[data-sx-send-tab]').each(function () {
+            var on = $(this).data('sx-send-tab') === id;
+            $(this).toggleClass('is-active', on).attr('aria-selected', on ? 'true' : 'false');
+        });
+        $root.find('[data-sx-send-panel]').each(function () {
+            $(this).prop('hidden', $(this).data('sx-send-panel') !== id);
+        });
+        // The chosen contact is shown for the open channel only.
+        $root.find('[data-sx-send-contact]').each(function () {
+            $(this).toggleClass('is-current', $(this).data('channel') === id);
+        });
+    }
+
+    $(document).on('click', '[data-sx-send-tab]', function () {
+        sendTab($(this).closest('[data-sx-send]'), $(this).data('sx-send-tab'));
+    });
+
+    $(document).on('click', '[data-sx-send-contact]', function () {
+        var $contact = $(this);
+        var $root = $contact.closest('[data-sx-send]');
+        var channel = $contact.data('channel');
+        if (!channel) {
+            return;
+        }
+        sendTab($root, channel);
+        $root.find('[data-sx-send-contact]').filter(function () {
+            return $(this).data('channel') === channel;
+        }).removeClass('is-chosen');
+        $contact.addClass('is-chosen');
+        var $panel = $root.find('[data-sx-send-panel="' + channel + '"]');
+        var $chips = $panel.find('[data-sx-compose-row="to"] [data-sx-compose-chips]');
+        if ($chips.length) {
+            // One send — one recipient: the contact replaces the address.
+            $chips.find('[data-sx-compose-chip]').remove();
+            addChip($chips, String($contact.data('value')), String($contact.data('name') || ''));
+        } else {
+            $panel.find('[data-sx-send-recipient]').val($contact.data('value')).trigger('input');
+        }
+    });
+
+    function smsCount(n, one, few, many) {
+        var mod10 = n % 10, mod100 = n % 100;
+        return n + ' ' + ((mod10 === 1 && mod100 !== 11) ? one
+            : (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) ? few : many);
+    }
+
+    /** What the client gets: the text and the link on its own line, with a rough SMS count. */
+    function sendPreview($form) {
+        var text = $.trim($form.find('[data-sx-send-text]').val() || '');
+        var $preview = $form.find('[data-sx-send-preview]').empty();
+        if (text) {
+            $('<span></span>').text(text).appendTo($preview);
+            $preview.append('<br>');
+        }
+        $('<span class="sx-send-form__link"></span>').text($preview.data('link-label')).appendTo($preview);
+        // A personal link is about 40 characters; Cyrillic SMS hold 70 (67 in a long one), Latin 160 (153).
+        var total = text.length + (text ? 1 : 0) + 40;
+        var cyrillic = /[^\x00-\x7F]/.test(text);
+        var parts = Math.ceil(total / (cyrillic ? (total > 70 ? 67 : 70) : (total > 160 ? 153 : 160)));
+        $form.find('[data-sx-send-count]').text(smsCount(text.length, 'символ', 'символа', 'символов') + ' + ссылка ≈ ' + parts + ' СМС');
+    }
+
+    $(document).on('input', '[data-sx-send-form] [data-sx-send-text]', function () {
+        sendPreview($(this).closest('[data-sx-send-form]'));
+    });
+
+    $(document).on('input', '[data-sx-send-form] [data-sx-send-recipient]', function () {
+        $(this).closest('[data-sx-send-form]').find('[data-sx-send-error="recipient"]').text('')
+            .closest('.sx-compose__row').removeClass('has-error');
+    });
+
+    $(document).on('submit', '[data-sx-send-form]', function (e) {
+        e.preventDefault();
+        var $form = $(this);
+        var $submit = $form.find('[data-sx-send-submit]');
+        if ($submit.prop('disabled')) {
+            return;
+        }
+        $form.find('[data-sx-send-error]').text('').closest('.sx-compose__row').removeClass('has-error');
+        $submit.prop('disabled', true);
+        $form.find('[data-sx-send-status]').text('Отправка…');
+        $.post($form.attr('action'), $form.serialize()).done(function (response) {
+            $form.find('[data-sx-send-status]').text('');
+            if (!response.success) {
+                $.each(response.errors || {}, function (field, text) {
+                    var $error = $form.find('[data-sx-send-error="' + field + '"]');
+                    ($error.length ? $error : $form.find('[data-sx-send-error="channel"]')).text(text)
+                        .closest('.sx-compose__row').addClass('has-error');
+                });
+                $submit.prop('disabled', false);
+                return;
+            }
+            notify('success', response.message);
+            if (!closeOwnPanel()) {
+                $form.replaceWith($('<div class="sx-compose__done"></div>').text(response.message + '.'));
+            }
+        }).fail(function () {
+            $form.find('[data-sx-send-status]').text('');
+            $submit.prop('disabled', false);
+            notify('error', 'Не отправлено: ошибка на сервере. Попробуйте ещё раз.');
+        });
+    });
+
+    $(function () {
+        $('[data-sx-send-form]').each(function () {
+            sendPreview($(this));
+        });
+        // The first contact of each channel is its recipient already: show it chosen.
+        $('[data-sx-send]').each(function () {
+            var $root = $(this);
+            sendTab($root, $root.find('[data-sx-send-tab].is-active').data('sx-send-tab'));
+            $root.find('[data-sx-send-contact]').each(function () {
+                var $c = $(this);
+                var first = $root.find('[data-sx-send-contact]').filter(function () {
+                    return $(this).data('channel') === $c.data('channel');
+                }).first();
+                if (first.get(0) === this) {
+                    $c.addClass('is-chosen');
+                }
+            });
         });
     });
 })(jQuery);

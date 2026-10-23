@@ -27,6 +27,7 @@ use yii\helpers\Json;
  * @property string                  $direction
  * @property string                  $status
  * @property string                  $external_id
+ * @property string|null             $provider_ref record of the channel provider: cms_sms_message.id of an SMS
  * @property string|null             $in_reply_to
  * @property string|null             $references_list
  * @property string|null             $from_address
