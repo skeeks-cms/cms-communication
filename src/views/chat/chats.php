@@ -19,7 +19,7 @@ use yii\helpers\Url;
 
 ChatAsset::register($this);
 $icons = [
-    \skeeks\cms\communication\chat\ChatFolders::NEW => 'inbox',
+    \skeeks\cms\communication\chat\ChatFolders::NEW => 'mail-in',
     \skeeks\cms\communication\chat\ChatFolders::MINE => 'user',
     \skeeks\cms\communication\chat\ChatFolders::GROUPS => 'users',
     \skeeks\cms\communication\chat\ChatFolders::ALL => 'chat',
