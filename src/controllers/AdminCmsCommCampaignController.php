@@ -485,6 +485,7 @@ JS);
             'pending' => ['label' => 'Ждут отправки', 'where' => ['status' => [$r::STATUS_PENDING, $r::STATUS_SENDING]]],
             'failed' => ['label' => 'Ошибка', 'where' => ['status' => $r::STATUS_FAILED]],
             'opened' => ['label' => 'Открыли предложение', 'where' => ['not', ['opened_at' => null]]],
+            'visited' => ['label' => 'Перешли на сайт', 'where' => ['not', ['visited_at' => null]]],
             'replied' => ['label' => 'Ответили', 'where' => ['not', ['replied_at' => null]]],
             'accepted' => ['label' => 'Приняли КП', 'where' => ['not', ['accepted_at' => null]]],
             'unsubscribed' => ['label' => 'Отписались', 'where' => ['not', ['unsubscribed_at' => null]]],

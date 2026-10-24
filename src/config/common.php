@@ -30,9 +30,16 @@ return [
 
         // Letters in the activity feeds of leads, companies and clients.
         'skeeks' => [
-            'logTypes' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => 'Письмо'],
-            'logRenderers' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => \skeeks\cms\communication\log\MessageLogRenderer::class],
-            'activityLogTypes' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE],
+            'logTypes' => [
+                \skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => 'Письмо',
+                // Visits of our sites by links of letters, with the pages of the visit (services\LinkVisits).
+                \skeeks\cms\communication\services\LinkVisits::LOG_TYPE => 'Переход на сайт из письма',
+            ],
+            'logRenderers' => [
+                \skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => \skeeks\cms\communication\log\MessageLogRenderer::class,
+                \skeeks\cms\communication\services\LinkVisits::LOG_TYPE => \skeeks\cms\communication\log\VisitLogRenderer::class,
+            ],
+            'activityLogTypes' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE, \skeeks\cms\communication\services\LinkVisits::LOG_TYPE],
             // "Создать задачу / лид / сделку" from a letter: ?source=message:ID in the standard create window.
             'recordSources' => [\skeeks\cms\communication\source\MessageRecordSource::TYPE => \skeeks\cms\communication\source\MessageRecordSource::class],
         ],
@@ -280,10 +287,14 @@ return [
             // AI actions: drafts and campaign letters prepared for people to send (never sent or launched here).
             'communication-actions' => \skeeks\cms\communication\mcp\CommunicationActionToolProvider::class,
         ],
-        'historyLogDescribers' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => \skeeks\cms\communication\mcp\MessageHistoryDescriber::class],
+        'historyLogDescribers' => [
+            \skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => \skeeks\cms\communication\mcp\MessageHistoryDescriber::class,
+            \skeeks\cms\communication\services\LinkVisits::LOG_TYPE => \skeeks\cms\communication\mcp\VisitHistoryDescriber::class,
+        ],
         'historySources' => ['mailing' => \skeeks\cms\communication\mcp\MailingHistorySource::class],
         'overviewContributors' => ['mailing' => \skeeks\cms\communication\mcp\MailingOverviewContributor::class],
         // The personal opt-out link of a letter is never shown to API clients: opening it unsubscribes.
-        'personalLinkPatterns' => ['unsubscribe' => '~/\~unsub/~'],
+        // A link with the personal code of the recipient neither: an agent opening it would be the client's visit.
+        'personalLinkPatterns' => ['unsubscribe' => '~/\~unsub/~', 'visit' => '~[?&]sx=[A-Za-z0-9_-]{16}(?:[&#]|$)~'],
     ]],
 ];

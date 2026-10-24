@@ -51,6 +51,7 @@ use yii\db\ActiveRecord;
  * @property int|null    $replied_at
  * @property int|null    $accepted_at
  * @property int|null    $unsubscribed_at
+ * @property int|null    $visited_at first came to our site by a link of the letter (services\LinkVisits)
  *
  * @property CmsCommCampaign     $campaign
  * @property CmsCommAccount|null $account

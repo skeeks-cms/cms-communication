@@ -609,7 +609,8 @@ p.sx-import__muted {
     white-space: nowrap;
 }
 
-.sx-campaign__event--opened { color: var(--sx-color-accent, #3d6eea); }
+.sx-campaign__event--opened,
+.sx-campaign__event--visited { color: var(--sx-color-accent, #3d6eea); }
 .sx-campaign__event--replied,
 .sx-campaign__event--accepted { color: var(--sx-color-success, #1f8a4c); }
 .sx-campaign__event--unsubscribed { color: var(--sx-color-danger, #d64545); }

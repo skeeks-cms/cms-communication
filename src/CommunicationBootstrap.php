@@ -7,8 +7,11 @@
 
 namespace skeeks\cms\communication;
 
+use skeeks\cms\communication\assets\VisitAsset;
 use skeeks\cms\communication\helpers\MailingUi;
 use skeeks\cms\communication\helpers\MailUi;
+use skeeks\cms\communication\services\LinkMarks;
+use skeeks\cms\communication\services\LinkVisits;
 use skeeks\cms\communication\services\MailComposeService;
 use skeeks\cms\rbac\CmsManager;
 use skeeks\cms\widgets\admin\CrmCardBlocksEvent;
@@ -17,6 +20,7 @@ use skeeks\cms\widgets\admin\CrmContactActionsEvent;
 use skeeks\cms\widgets\admin\CrmContactBlockWidget;
 use yii\base\BootstrapInterface;
 use yii\base\Event;
+use yii\web\View;
 
 /**
  * Plugs mail into CRM cards: the "write a letter" button next to an email
@@ -42,6 +46,23 @@ class CommunicationBootstrap implements BootstrapInterface
                 'name_one' => 'Импорт',
                 'controller' => 'cmsCommunication/admin-cms-comm-import',
             ];
+        }
+
+        if ($app instanceof \yii\web\Application) {
+            // Visits by links of letters (step F): fixed endpoints go before the CMS tree rule, whose fallback
+            // would take the last part of the path as a section code (client-link-pages of the package skill).
+            $app->urlManager->addRules([
+                'POST ~comm-visit/<action:(seen|page)>' => 'cmsCommunication/visit/<action>',
+                '~comm-visit/visit.js' => 'cmsCommunication/visit/script',
+            ], false);
+            $app->view->on(View::EVENT_END_BODY, [self::class, 'registerVisitScript']);
+            // The canonical address of skeeks/cms-seo redirects away unknown parameters: the code must reach the page script.
+            $app->on(\yii\base\Application::EVENT_BEFORE_ACTION, static function () use ($app) {
+                if ($app->has('seo') && !(class_exists(\skeeks\cms\backend\BackendComponent::class) && \skeeks\cms\backend\BackendComponent::getCurrent())
+                    && ($canUrl = $app->seo->canUrl) && method_exists($canUrl, 'ADDminor_pname')) {
+                    $canUrl->ADDminor_pname(LinkMarks::CODE_PARAM);
+                }
+            });
         }
 
         if (!$app instanceof \yii\web\Application || !defined(CrmContactBlockWidget::class.'::EVENT_CONTACT_ACTIONS')) {
@@ -105,5 +126,27 @@ class CommunicationBootstrap implements BootstrapInterface
                 'onclick' => MailUi::composeOnClick($params),
             ]);
         });
+    }
+
+    /**
+     * The visit script on a page of the site opened by a marked link of a
+     * letter (`?sx=`) or within such a visit (cookie `sx_visit`): every other
+     * page, the administration and AJAX answers load nothing.
+     */
+    public static function registerVisitScript(Event $event): void
+    {
+        $request = \Yii::$app->request;
+        if (!$request instanceof \yii\web\Request || !$request->isGet || $request->isAjax || $request->isPjax
+            || (class_exists(\skeeks\cms\backend\BackendComponent::class) && \skeeks\cms\backend\BackendComponent::getCurrent())) {
+            return;
+        }
+        $code = $request->get(LinkMarks::CODE_PARAM);
+        $cookie = $_COOKIE[LinkVisits::COOKIE] ?? null;
+        if (!(is_string($code) && preg_match('~^'.LinkMarks::CODE_PATTERN.'$~', $code)) && !(is_string($cookie) && preg_match('~^[A-Za-z0-9_-]{20,48}$~', $cookie))) {
+            return;
+        }
+        if ($event->sender instanceof View) {
+            VisitAsset::register($event->sender);
+        }
     }
 }

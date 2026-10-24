@@ -996,10 +996,10 @@ class Campaigns
     }
 
     /**
-     * Totals of the campaign. Percents of opened, replied, accepted and
-     * opted out are of the letters sent.
+     * Totals of the campaign. Percents of opened, visited the site, replied,
+     * accepted and opted out are of the letters sent.
      *
-     * @return array total, excluded, pending, sent, failed, cancelled, opened, replied, accepted, unsubscribed, percent (field => %)
+     * @return array total, excluded, pending, sent, failed, cancelled, opened, visited, replied, accepted, unsubscribed, percent (field => %)
      */
     public static function stats(CmsCommCampaign $campaign): array
     {
@@ -1018,13 +1018,14 @@ class Campaigns
             'failed' => $counts[CmsCommCampaignRecipient::STATUS_FAILED] ?? 0,
             'cancelled' => $counts[CmsCommCampaignRecipient::STATUS_CANCELLED] ?? 0,
         ];
-        foreach (['opened' => 'opened_at', 'replied' => 'replied_at', 'accepted' => 'accepted_at', 'unsubscribed' => 'unsubscribed_at'] as $key => $field) {
+        // "Перешёл на сайт": the first counted visit by a link of the letter (LinkVisits).
+        foreach (['opened' => 'opened_at', 'visited' => 'visited_at', 'replied' => 'replied_at', 'accepted' => 'accepted_at', 'unsubscribed' => 'unsubscribed_at'] as $key => $field) {
             $result[$key] = (int)(clone $sentQuery)->andWhere(['not', [$field => null]])->count();
         }
         $result['personal'] = (int)CmsCommCampaignRecipient::find()->andWhere(['cms_comm_campaign_id' => (int)$campaign->id])
             ->andWhere(['not', ['body_html' => null]])->count();
         $result['percent'] = [];
-        foreach (['opened', 'replied', 'accepted', 'unsubscribed'] as $key) {
+        foreach (['opened', 'visited', 'replied', 'accepted', 'unsubscribed'] as $key) {
             $result['percent'][$key] = $result['sent'] ? round($result[$key] * 100 / $result['sent'], 1) : 0;
         }
 

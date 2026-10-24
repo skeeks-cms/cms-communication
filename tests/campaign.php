@@ -117,7 +117,7 @@ $create('cms_comm_campaign_recipient', ['id' => 'pk', 'created_at' => 'integer',
     'record_type' => 'string', 'record_id' => 'integer', 'address' => 'string', 'name' => 'string', 'subject' => 'string', 'body_html' => 'text',
     'text_by' => 'string', 'text_client' => 'string', 'text_user_id' => 'integer', 'text_at' => 'integer', 'text_edited_by' => 'integer', 'cms_comm_account_id' => 'integer', 'sender_user_id' => 'integer',
     'status' => 'string', 'reason' => 'string', 'error' => 'string', 'cms_comm_message_id' => 'integer', 'send_ref' => 'string', 'sent_at' => 'integer',
-    'opened_at' => 'integer', 'replied_at' => 'integer', 'accepted_at' => 'integer', 'unsubscribed_at' => 'integer']);
+    'opened_at' => 'integer', 'replied_at' => 'integer', 'accepted_at' => 'integer', 'unsubscribed_at' => 'integer', 'visited_at' => 'integer']);
 $db->createCommand()->createIndex('recipient_unique', 'cms_comm_campaign_recipient', ['cms_comm_campaign_id', 'record_type', 'record_id'], true)->execute();
 $create('cms_lead', ['id' => 'pk', 'cms_site_id' => 'integer', 'name' => 'string', 'status' => 'string', 'source_type' => 'string', 'executor_id' => 'integer', 'cms_company_id' => 'integer',
     'cms_user_id' => 'integer']);

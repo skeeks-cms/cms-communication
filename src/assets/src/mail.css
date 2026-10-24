@@ -1455,6 +1455,18 @@ button.sx-letter__file {
     padding-left: 18px;
 }
 
+/* «Переходы из писем»: the script for a site on another installation */
+.sx-mail-settings__code {
+    padding: 10px 12px;
+    overflow-x: auto;
+    border: 1px solid var(--sx-color-border, #e3e6ee);
+    border-radius: var(--sx-radius-control, 6px);
+    background: var(--sx-color-surface-muted, #f6f7fa);
+    color: var(--sx-color-text, #262626);
+    font-size: 13px;
+    white-space: pre;
+}
+
 .sx-mail-settings__form {
     display: flex;
     flex-direction: column;

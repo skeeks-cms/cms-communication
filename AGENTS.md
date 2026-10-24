@@ -109,5 +109,19 @@ site's `communication.aiTestRecipients` (exact record–address pairs,
 administrators) and skips only the repetition checks. Mailing topics by API are
 `services\MailingTopics` (administrator only); a send never creates a topic.
 
+Visits by links of letters (step F): links are marked only in
+`MailComposeService::queue()` by `services\LinkMarks` (the text written now,
+before quotes, sendable links and the opt-out link; never a link that has
+`sx`, a `/~` path or another host; the code `cms_comm_track` in the letter's
+transaction); no pixel, no redirect. Visits are `services\LinkVisits` only:
+counted by the page signal of the shared `link-signal.js`
+(`assets\LinkSignalAsset`, also used by cms-proposal), robots
+`LinkChecks::ROBOT_PATTERNS`, checks `LinkChecks::reason()`, employees never.
+The site script is registered by the bootstrap only for `?sx=` or the cookie
+`sx_visit`; endpoints `controllers\VisitController` answer CORS only for
+domains of `components\LinkTrackingSettings`. One feed entry per visit
+(`log\VisitLogRenderer`), the call task once per code and never beside an
+open "Позвонить…" task of the executor on the record.
+
 Run isolated tests and PHP syntax checks. No external sends, release,
 commit, push or production deployment are implied by a local code change.

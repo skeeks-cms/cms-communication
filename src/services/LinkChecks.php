@@ -54,6 +54,33 @@ class LinkChecks
         '64.235.144.0/20', '209.222.80.0/21',
     ];
 
+    /**
+     * Robots that open links for previews and checks, matched case-insensitively
+     * against the User-Agent; an empty User-Agent is a robot too. Kept in the
+     * history as robots and never counted (pages of offers, visits by links
+     * of letters). Not broadly "yandex" or "bot": the Yandex app and Cubot
+     * phones are people.
+     */
+    public const ROBOT_PATTERNS = [
+        // "Cubot" is a phone, not a robot.
+        '(?<!cu)bot\b', 'bot/', '_bot', '-bot', 'crawl', 'spider', 'slurp', 'preview', 'scanner', 'checker', 'monitor',
+        'telegram', 'whatsapp', 'viber', 'vkshare', 'skypeuripreview', 'facebookexternalhit', 'meta-externalagent',
+        'yandex(?!search|browser)', 'mail\.ru', '\bmax(?:bot|messenger)?/',
+        'kaspersky', 'drweb', 'safebrowsing', 'safelinks', 'proofpoint', 'mimecast', 'barracuda',
+        'curl', 'wget', 'httpie', 'python', 'java/', 'okhttp', 'go-http-client', 'libwww', 'axios', 'node-fetch', 'guzzle', 'php/',
+        'headlesschrome', 'phantomjs', 'puppeteer', 'playwright', 'lighthouse', 'pagespeed',
+    ];
+
+    public static function isRobot(?string $userAgent): bool
+    {
+        $userAgent = trim((string)$userAgent);
+        if ($userAgent === '') {
+            return true;
+        }
+
+        return (bool)preg_match('~'.implode('|', self::ROBOT_PATTERNS).'~i', $userAgent);
+    }
+
     /** User-Agents of link previews that run scripts in a browser. Case-insensitive. */
     public const USER_AGENTS = ['bingpreview', 'msoffice', 'ms-office', 'microsoft office', 'zscaler', 'forcepoint', 'symantec', 'trendmicro', 'sophos'];
 

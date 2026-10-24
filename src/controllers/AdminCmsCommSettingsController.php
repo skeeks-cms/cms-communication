@@ -10,6 +10,7 @@ namespace skeeks\cms\communication\controllers;
 use skeeks\cms\backend\BackendAction;
 use skeeks\cms\backend\BackendController;
 use skeeks\cms\base\Component;
+use skeeks\cms\communication\components\LinkTrackingSettings;
 use skeeks\cms\communication\components\MailFileSettings;
 use skeeks\cms\communication\forms\MailFileCleanupForm;
 use skeeks\cms\communication\forms\MailFileSaveForm;
@@ -63,7 +64,55 @@ class AdminCmsCommSettingsController extends BackendController
                 'priority' => 20,
                 'callback' => [$this, 'cleanup'],
             ],
+            // Step F: marks and the personal code in links to our sites, visits in the feed (LinkTrackingSettings).
+            'links' => [
+                'class' => BackendAction::class,
+                'name' => 'Переходы из писем',
+                'icon' => 'fas fa-link',
+                'priority' => 30,
+                'callback' => [$this, 'links'],
+            ],
         ];
+    }
+
+    /** Marks of links to our sites and visits by them, at the level the administration edits (component-settings.md). */
+    public function links()
+    {
+        $site = \Yii::$app->skeeks->site;
+        $component = new LinkTrackingSettings();
+        if ($site->is_default) {
+            $component->overridePath = [Component::OVERRIDE_DEFAULT];
+        } else {
+            $component->overridePath = [Component::OVERRIDE_DEFAULT, Component::OVERRIDE_SITE];
+            $component->cmsSite = $site;
+        }
+        $component->refresh();
+
+        $request = \Yii::$app->request;
+        if ($request->isPost && !$request->post(RequestResponse::DYNAMIC_RELOAD_NOT_SUBMIT)) {
+            if ($component->load($request->post()) && $component->validate()) {
+                $component->domains = implode("\n", LinkTrackingSettings::parseDomains((string)$component->domains));
+                if ($site->is_default) {
+                    $component->override = Component::OVERRIDE_DEFAULT;
+                } else {
+                    $component->override = Component::OVERRIDE_SITE;
+                    $component->cmsSite = $site;
+                }
+                $saved = $component->save();
+                LinkTrackingSettings::reset();
+                \Yii::$app->getSession()->setFlash($saved ? 'success' : 'error', $saved ? 'Сохранено' : 'Не удалось сохранить');
+            } else {
+                \Yii::$app->getSession()->setFlash('error', 'Не удалось сохранить');
+            }
+        } elseif ($request->isPost) {
+            $component->load($request->post());
+        }
+
+        return $this->render('@skeeks/cms/communication/views/settings/links', [
+            'component' => $component,
+            'settings' => LinkTrackingSettings::forSite((int)$site->id),
+            'scriptUrl' => \yii\helpers\Url::to(['/cmsCommunication/visit/script'], true),
+        ]);
     }
 
     /**

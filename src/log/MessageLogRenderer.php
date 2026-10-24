@@ -76,7 +76,8 @@ class MessageLogRenderer implements CmsLogRendererInterface
                 'style' => 'font-weight:600',
             ]).($attachments ? ' <span class="sx-gray">· вложений: '.$attachments.'</span>' : ''))
             .Html::tag('div', Html::encode($message->getSnippet(300)), ['class' => 'sx-gray']),
-            ['class' => 'sx-comm-message-log']
+            // Long addresses in the text (marked links of letters) wrap instead of widening the feed on a phone.
+            ['class' => 'sx-comm-message-log', 'style' => 'overflow-wrap:anywhere']
         );
     }
 }

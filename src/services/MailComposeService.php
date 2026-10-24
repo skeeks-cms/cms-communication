@@ -488,6 +488,21 @@ class MailComposeService
         }, $html);
         $quoted = $forwarded ? $this->quoteOf($forwarded, true) : ($original && $form->include_quote ? $this->quoteOf($original, false) : null);
         $sendables = $this->sendableItems($form);
+        // Links to our sites get marks and the personal code of the recipient: only the text written now,
+        // before the quote, the forwarded letter and the personal links of offers are added (LinkMarks).
+        $offer = null;
+        foreach ($sendables as $item) {
+            if ($item['sendable'] instanceof \skeeks\cms\communication\send\SendableMarksInterface) {
+                $offer = $item;
+                break;
+            }
+        }
+        $marked = LinkMarks::prepare($this->siteId, $html, $text, CmsCommAccount::CHANNEL_EMAIL,
+            $form->cms_comm_campaign_id ? (int)$form->cms_comm_campaign_id : null, $offer ? $offer['sendable']->getSendUtmCampaign() : null);
+        if ($marked) {
+            $html = $marked['html'];
+            $text = $marked['text'];
+        }
         $attachments = $this->composeFiles($form, $forwarded ?: $original);
         $list = array_map(static fn($a) => ['name' => $a['name'], 'type' => $a['file']->mime_type, 'size' => (int)$a['file']->size], $attachments);
         foreach ((array)$form->uploads as $token) {
@@ -569,6 +584,9 @@ class MailComposeService
             // "Подготовлено ИИ": set in code from the employee's AI draft or the campaign recipient.
             AiMark::apply($message, is_array($form->aiMark) ? $form->aiMark : null);
             $message->save(false);
+            if ($marked) {
+                LinkMarks::store($marked, $message, $this->recipientRecord($form), (string)($form->getToAddresses()[0] ?? ''), $sendables[0]['ref'] ?? null);
+            }
 
             // An advertising letter: the personal opt-out link of its recipient, knowing this letter.
             if ($form->cms_comm_topic_id) {
@@ -655,20 +673,29 @@ class MailComposeService
         $context = new SendContext($type, $id, 'email', $recipient, $this->user);
         $context->campaignId = $form->cms_comm_campaign_id ? (int)$form->cms_comm_campaign_id : null;
         $context->aiMark = is_array($form->aiMark) ? $form->aiMark : null;
-        if ($form->record instanceof \yii\db\ActiveRecord) {
-            $context->record = $form->record;
-            $context->recipientName = CrmRecords::name($form->record);
-
-            return $context;
-        }
-        $records = $recipient !== '' ? $this->addresses->findRecords([$recipient], $this->siteId, $this->user) : [];
-        $context->record = $records[0] ?? ($form->context_model_code && $form->context_model_id
-            ? $this->contextRecord((string)$form->context_model_code, (int)$form->context_model_id) : null);
+        $context->record = $this->recipientRecord($form);
         if ($context->record) {
             $context->recipientName = CrmRecords::name($context->record);
         }
 
         return $context;
+    }
+
+    /**
+     * The CRM record of the first recipient: the trusted record of the form
+     * (campaigns), the record of that address, otherwise the card the letter
+     * is written from.
+     */
+    private function recipientRecord(ComposeForm $form): ?\yii\db\ActiveRecord
+    {
+        if ($form->record instanceof \yii\db\ActiveRecord) {
+            return $form->record;
+        }
+        $recipient = (string)($form->getToAddresses()[0] ?? '');
+        $records = $recipient !== '' ? $this->addresses->findRecords([$recipient], $this->siteId, $this->user) : [];
+
+        return $records[0] ?? ($form->context_model_code && $form->context_model_id
+            ? $this->contextRecord((string)$form->context_model_code, (int)$form->context_model_id) : null);
     }
 
     public function visibleMessage(int $id): ?CmsCommMessage
