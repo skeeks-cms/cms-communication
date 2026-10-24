@@ -681,3 +681,80 @@ p.sx-import__muted {
     margin: 0;
     font-weight: normal;
 }
+
+/* Lists of recipients (stage 4D): counters of a list, its lists in the window of a card. */
+.sx-list__stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.sx-list__stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 12px 14px;
+    border: 1px solid var(--sx-color-border, #e3e6ec);
+    border-radius: var(--sx-radius, 10px);
+    background: var(--sx-color-surface, #fff);
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+}
+
+.sx-list__stat strong {
+    color: var(--sx-color-text, #1f2430);
+    font-size: 22px;
+    line-height: 1.2;
+}
+
+.sx-list__stat--ok strong {
+    color: var(--sx-color-success, #1f8a4c);
+}
+
+.sx-list__stat--warn strong {
+    color: var(--sx-color-warning-on-soft, #8a5300);
+}
+
+.sx-list-add__lists {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.sx-list-add__lists li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--sx-color-border, #e3e6ec);
+}
+
+.sx-list-add__lists li:last-child {
+    border-bottom: 0;
+}
+
+.sx-list__table td:first-child {
+    min-width: 220px;
+    color: var(--sx-color-text, #1f2430);
+}
+
+.sx-list__table .sx-import__who {
+    font-weight: normal;
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
+.sx-list__rule-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+@media (max-width: 600px) {
+    .sx-list__rules li {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

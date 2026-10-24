@@ -10,6 +10,7 @@ namespace skeeks\cms\communication\services;
 use skeeks\cms\communication\campaign\CampaignChannelInterface;
 use skeeks\cms\communication\campaign\CampaignLetter;
 use skeeks\cms\communication\campaign\MailboxCampaignChannel;
+use skeeks\cms\communication\components\MailingSettings;
 use skeeks\cms\communication\forms\ComposeForm;
 use skeeks\cms\communication\models\CmsCommAccount;
 use skeeks\cms\communication\models\CmsCommCampaign;
@@ -18,6 +19,9 @@ use skeeks\cms\communication\models\CmsCommContact;
 use skeeks\cms\communication\models\CmsCommContactTopic;
 use skeeks\cms\communication\models\CmsCommImport;
 use skeeks\cms\communication\models\CmsCommImportRow;
+use skeeks\cms\communication\models\CmsCommConversationLink;
+use skeeks\cms\communication\models\CmsCommLink;
+use skeeks\cms\communication\models\CmsCommList;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\models\CmsCommSuppression;
 use skeeks\cms\communication\send\CampaignSourceInterface;
@@ -42,13 +46,20 @@ use yii\helpers\Html;
  * Mailing campaigns (stage 4B): one service for the CRM section, future API
  * and AI callers.
  *
- * - The audience — leads by a filter or the leads of an import — is read in
+ * - The audience — members of lists of recipients (RecipientLists), leads by
+ *   a filter or the leads of an import — is read in
  *   the launching employee's web request through forManager(), together with
  *   the recipients added by hand or by AI before launch (addRecipient():
  *   a lead, a company or a client, usually with a personal letter); summary()
  *   says who will get the letter and who is excluded and why (no address,
  *   the stop list, opted out of the topic, no mailbox to send from, the
- *   stand allowlist); launch() fixes the recipients, one per lead.
+ *   stand allowlist); launch() fixes the recipients, one per CRM record.
+ * - Rules that protect every mailing (protect()): members of excluding lists
+ *   and the people and leads of companies in them get nothing; one
+ *   advertising letter to a contact in MailingSettings::$frequencyDays over
+ *   all campaigns; "не мешать менеджеру" — nobody we talked to in the
+ *   campaign's quiet_days; one letter per company with one_per_company. The
+ *   frequency and the quiet days are asked again before every letter.
  * - Every letter is made when it leaves (letter()): the placeholders are
  *   filled for the recipient, the offer is the document for everybody or
  *   the recipient's own document made from a template, the opt-out link is
@@ -193,6 +204,7 @@ class Campaigns
         }
         $recipients = array_values($recipients);
         $this->exclude($campaign, $recipients);
+        $this->protect($campaign, $recipients);
         $pending = array_filter($recipients, static fn($r) => $r->status === CmsCommCampaignRecipient::STATUS_PENDING);
         if ($pending) {
             self::channel($campaign)->assignSenders($campaign, array_values($pending), $user);
@@ -201,9 +213,12 @@ class Campaigns
         return $recipients;
     }
 
-    /** @return CmsCommCampaignRecipient[] "lead:id" => recipient: the leads of the filter or of the import */
+    /** @return CmsCommCampaignRecipient[] "type:id" => recipient: the members of the lists, the leads of the filter or of the import */
     private function audienceRecipients(CmsCommCampaign $campaign, User $user): array
     {
+        if ($campaign->audience_type === CmsCommCampaign::AUDIENCE_LISTS) {
+            return $this->listRecipients($campaign, $user);
+        }
         $query = $this->audienceQuery($campaign, $user);
         $t = CmsLead::tableName();
         $count = (int)(clone $query)->count();
@@ -231,6 +246,92 @@ class Campaigns
             ]);
             $recipient->populateRelation('record', $lead);
             $recipients[CrmRecords::LEAD.':'.(int)$lead->id] = $recipient;
+        }
+
+        return $recipients;
+    }
+
+    /** @return int[] the lists of the audience and the excluding lists of the campaign */
+    public static function listIds(CmsCommCampaign $campaign): array
+    {
+        $audience = $campaign->getAudienceArray();
+
+        return self::siteLists($campaign, array_merge(
+            $campaign->audience_type === CmsCommCampaign::AUDIENCE_LISTS ? (array)($audience['lists'] ?? []) : [],
+            (array)($audience['exclude_lists'] ?? [])
+        ));
+    }
+
+    /**
+     * Counts the rules of the campaign's lists not counted for $maxAge
+     * seconds (ListRules): before the summary and, with 0, at launch.
+     *
+     * @return int records added
+     */
+    public function refreshLists(CmsCommCampaign $campaign, int $maxAge): int
+    {
+        $ids = self::listIds($campaign);
+
+        return $ids ? (new ListRules())->runDue($ids, $maxAge) : 0;
+    }
+
+    /** @return int[] ids of the given lists that belong to the campaign's site */
+    public static function siteLists(CmsCommCampaign $campaign, array $ids): array
+    {
+        $ids = array_values(array_filter(array_map('intval', $ids)));
+
+        return $ids ? array_map('intval', CmsCommList::find()->select('id')->andWhere(['id' => $ids, 'cms_site_id' => (int)$campaign->cms_site_id])->column()) : [];
+    }
+
+    /**
+     * One recipient per active member of the lists: its first email (a
+     * company — its own, then its people's). Members the employee does not
+     * see stay in the summary as excluded.
+     *
+     * @return CmsCommCampaignRecipient[] "type:id" => recipient
+     */
+    private function listRecipients(CmsCommCampaign $campaign, User $user): array
+    {
+        $members = RecipientLists::members(self::siteLists($campaign, (array)($campaign->getAudienceArray()['lists'] ?? [])));
+        if (count($members) > self::MAX_RECIPIENTS) {
+            throw new \DomainException('В списках '.count($members).' участников: из ящиков менеджеров за один запуск — не больше '.self::MAX_RECIPIENTS
+                .'. Разделите список; для больших баз будет сервис рассылок.');
+        }
+        $byType = [];
+        foreach ($members as [$type, $id]) {
+            $byType[$type][] = $id;
+        }
+        $data = [];
+        $visible = [];
+        foreach ($byType as $type => $ids) {
+            $data[$type] = RecipientLists::addresses($type, $ids);
+            $class = CrmRecords::codeOf($type);
+            foreach (array_chunk($ids, 1000) as $chunk) {
+                foreach (CrmRecords::visibleQuery($type, $user)->select([$class::tableName().'.id'])->andWhere([$class::tableName().'.id' => $chunk])->column() as $id) {
+                    $visible[$type.':'.(int)$id] = true;
+                }
+            }
+        }
+
+        $recipients = [];
+        foreach ($members as $key => [$type, $id]) {
+            $record = $data[$type]['records'][$id] ?? null;
+            $addresses = $data[$type]['addresses'][$id] ?? [];
+            $address = array_key_first($addresses);
+            $recipient = new CmsCommCampaignRecipient([
+                'record_type' => $type,
+                'record_id' => $id,
+                'address' => $address !== null ? (string)$address : null,
+                'name' => $address !== null ? (mb_substr((string)$addresses[$address], 0, 255) ?: null) : null,
+                'status' => CmsCommCampaignRecipient::STATUS_PENDING,
+            ]);
+            if ($record) {
+                $recipient->populateRelation('record', $record);
+            }
+            if (!$record || !isset($visible[$key])) {
+                $this->excludeRow($recipient, CmsCommCampaignRecipient::REASON_HIDDEN);
+            }
+            $recipients[$key] = $recipient;
         }
 
         return $recipients;
@@ -278,6 +379,197 @@ class Campaigns
     {
         $recipient->status = CmsCommCampaignRecipient::STATUS_EXCLUDED;
         $recipient->reason = $reason;
+    }
+
+    /**
+     * Rules that protect every mailing, over the recipients still waiting:
+     * excluding lists, the frequency per contact, "не мешать менеджеру", one
+     * letter per company.
+     *
+     * @param CmsCommCampaignRecipient[] $recipients
+     */
+    private function protect(CmsCommCampaign $campaign, array $recipients): void
+    {
+        $pending = static fn() => array_filter($recipients, static fn($r) => $r->status === CmsCommCampaignRecipient::STATUS_PENDING);
+        if (!$pending()) {
+            return;
+        }
+        $refs = [];
+        $records = [];
+        foreach ($pending() as $recipient) {
+            $key = $recipient->record_type.':'.(int)$recipient->record_id;
+            $refs[$key] = [(string)$recipient->record_type, (int)$recipient->record_id];
+            if ($recipient->isRelationPopulated('record') && $recipient->getRecord()) {
+                $records[$key] = $recipient->getRecord();
+            }
+        }
+        $companies = RecipientLists::companies($refs, $records);
+        $key = static fn(CmsCommCampaignRecipient $r) => $r->record_type.':'.(int)$r->record_id;
+
+        // Excluding lists: their members, and the people and leads of the companies in them.
+        if ($excludeLists = self::siteLists($campaign, (array)($campaign->getAudienceArray()['exclude_lists'] ?? []))) {
+            $excluded = RecipientLists::members($excludeLists);
+            $excludedCompanies = [];
+            foreach ($excluded as [$type, $id]) {
+                if ($type === CrmRecords::COMPANY) {
+                    $excludedCompanies[$id] = true;
+                }
+            }
+            foreach ($pending() as $recipient) {
+                if (isset($excluded[$key($recipient)]) || array_intersect_key(array_flip($companies[$key($recipient)] ?? []), $excludedCompanies)) {
+                    $this->excludeRow($recipient, CmsCommCampaignRecipient::REASON_EXCLUDED_LIST);
+                }
+            }
+        }
+
+        // One advertising letter to a contact in so many days, over every campaign of the site.
+        if (($days = MailingSettings::frequencyDays((int)$campaign->cms_site_id)) > 0 && $pending()) {
+            $recent = self::recentAddresses((int)$campaign->cms_site_id, array_map(static fn($r) => (string)$r->address, $pending()),
+                (int)$campaign->id, time() - $days * 86400, true);
+            foreach ($pending() as $recipient) {
+                if (isset($recent[(string)$recipient->address])) {
+                    $this->excludeRow($recipient, CmsCommCampaignRecipient::REASON_RECENT);
+                }
+            }
+        }
+
+        // "Не мешать менеджеру": nobody we talked to lately, about the record or its company.
+        if (($quiet = (int)$campaign->quiet_days) > 0 && $pending()) {
+            $talked = self::talkedTo($refs, $companies, time() - $quiet * 86400);
+            foreach ($pending() as $recipient) {
+                if (isset($talked[$key($recipient)])) {
+                    $this->excludeRow($recipient, CmsCommCampaignRecipient::REASON_QUIET);
+                }
+            }
+        }
+
+        // One letter per company: the recipient added one by one, then the company itself, then the first of its people and leads.
+        if ($campaign->one_per_company && $pending()) {
+            $order = array_values($pending());
+            $position = array_flip(array_map('spl_object_id', $order));
+            usort($order, static fn($a, $b) => [$a->id ? 0 : 1, $a->record_type === CrmRecords::COMPANY ? 0 : 1, $position[spl_object_id($a)]]
+                <=> [$b->id ? 0 : 1, $b->record_type === CrmRecords::COMPANY ? 0 : 1, $position[spl_object_id($b)]]);
+            $taken = [];
+            foreach ($order as $recipient) {
+                $own = $companies[$key($recipient)] ?? [];
+                if (array_intersect_key(array_flip($own), $taken)) {
+                    $this->excludeRow($recipient, CmsCommCampaignRecipient::REASON_SAME_COMPANY);
+                    continue;
+                }
+                foreach ($own as $companyId) {
+                    $taken[$companyId] = true;
+                }
+            }
+        }
+    }
+
+    /**
+     * Addresses that got an advertising letter of another campaign of the
+     * site since the moment, or are getting it now; with $waiting also those
+     * waiting in another running or paused campaign.
+     *
+     * @return true[] address => true
+     */
+    public static function recentAddresses(int $siteId, array $addresses, int $campaignId, int $since, bool $waiting): array
+    {
+        $addresses = array_values(array_unique(array_filter(array_map('strval', $addresses))));
+        $r = CmsCommCampaignRecipient::tableName();
+        $c = CmsCommCampaign::tableName();
+        $result = [];
+        foreach (array_chunk($addresses, 1000) as $chunk) {
+            $condition = ['or',
+                ['and', [$r.'.status' => CmsCommCampaignRecipient::STATUS_SENT], ['>=', $r.'.sent_at', $since]],
+                [$r.'.status' => CmsCommCampaignRecipient::STATUS_SENDING],
+            ];
+            if ($waiting) {
+                $condition[] = ['and', [$r.'.status' => CmsCommCampaignRecipient::STATUS_PENDING],
+                    [$c.'.status' => [CmsCommCampaign::STATUS_RUNNING, CmsCommCampaign::STATUS_PAUSED]]];
+            }
+            $rows = CmsCommCampaignRecipient::find()->select([$r.'.address'])->distinct()
+                ->innerJoin($c, $c.'.id = '.$r.'.cms_comm_campaign_id')
+                ->andWhere([$c.'.cms_site_id' => $siteId, $r.'.address' => $chunk])
+                ->andWhere(['!=', $r.'.cms_comm_campaign_id', $campaignId])
+                ->andWhere($condition)->column();
+            foreach ($rows as $address) {
+                $result[(string)$address] = true;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Records we talked to since the moment — a letter or a message in their
+     * feed or in a chat linked to them (not a mailing letter, not an internal
+     * note), a call — about themselves or their company.
+     *
+     * @param array[] $refs "type:id" => [type, id]
+     * @param int[][] $companies "type:id" => company ids (RecipientLists::companies())
+     * @return true[] "type:id" => true
+     */
+    public static function talkedTo(array $refs, array $companies, int $since): array
+    {
+        $ask = $refs;
+        foreach ($companies as $ids) {
+            foreach ($ids as $companyId) {
+                $ask[CrmRecords::COMPANY.':'.$companyId] = [CrmRecords::COMPANY, (int)$companyId];
+            }
+        }
+        $byType = [];
+        foreach ($ask as [$type, $id]) {
+            $byType[$type][] = (int)$id;
+        }
+        $m = CmsCommMessage::tableName();
+        $chatLinks = class_exists(CmsCommConversationLink::class)
+            && \Yii::$app->db->getTableSchema(CmsCommConversationLink::tableName()) !== null;
+        $talked = [];
+        foreach ($byType as $type => $ids) {
+            $code = CrmRecords::codeOf($type);
+            foreach (array_chunk(array_values(array_unique($ids)), 1000) as $chunk) {
+                $recent = static fn($query) => $query->andWhere(['>=', $m.'.message_at', $since])->andWhere([$m.'.cms_comm_campaign_id' => null])
+                    ->andWhere(['!=', $m.'.is_internal', 1])->andWhere(['!=', $m.'.status', CmsCommMessage::STATUS_FAILED]);
+                $l = CmsCommLink::tableName();
+                $found = $recent(CmsCommLink::find()->select([$l.'.model_id'])->distinct()->innerJoin($m, $m.'.id = '.$l.'.cms_comm_message_id')
+                    ->andWhere([$l.'.model_code' => $code, $l.'.model_id' => $chunk]))->column();
+                // Chats of bots linked to the record as a whole (stage 5), where the site has them.
+                if ($chatLinks) {
+                    $cl = CmsCommConversationLink::tableName();
+                    $found = array_merge($found, $recent(CmsCommConversationLink::find()->select([$cl.'.model_id'])->distinct()
+                        ->innerJoin($m, $m.'.cms_comm_conversation_id = '.$cl.'.cms_comm_conversation_id')
+                        ->andWhere([$cl.'.model_code' => $code, $cl.'.model_id' => $chunk]))->column());
+                }
+                foreach ($found as $id) {
+                    $talked[$type.':'.(int)$id] = true;
+                }
+            }
+        }
+        // Calls of the telephony of the CRM (core), when the site has it.
+        $call = \skeeks\cms\models\CmsTelephonyCall::class;
+        if (class_exists($call) && \Yii::$app->db->getTableSchema($call::tableName()) !== null) {
+            foreach ([CrmRecords::LEAD => 'cms_lead_id', CrmRecords::COMPANY => 'cms_company_id', CrmRecords::CLIENT => 'cms_user_id'] as $type => $column) {
+                foreach (array_chunk(array_values(array_unique($byType[$type] ?? [])), 1000) as $chunk) {
+                    foreach ($call::find()->select([$column])->distinct()->andWhere([$column => $chunk])->andWhere(['>=', 'started_at', $since])->column() as $id) {
+                        $talked[$type.':'.(int)$id] = true;
+                    }
+                }
+            }
+        }
+
+        $result = [];
+        foreach ($refs as $key => $ref) {
+            if (isset($talked[$key])) {
+                $result[$key] = true;
+                continue;
+            }
+            foreach ($companies[$key] ?? [] as $companyId) {
+                if (isset($talked[CrmRecords::COMPANY.':'.$companyId])) {
+                    $result[$key] = true;
+                    break;
+                }
+            }
+        }
+
+        return $result;
     }
 
     /* Recipients added by hand or by AI, personal letters */
@@ -575,6 +867,8 @@ class Campaigns
         if ($errors = $this->launchErrors($campaign, $user)) {
             throw new \DomainException(implode(' ', $errors));
         }
+        // Lists with rules take the records their filters find right now.
+        $this->refreshLists($campaign, 0);
         $recipients = $this->candidates($campaign, $user);
         $summary = self::summarize($recipients);
         if (!$summary['pending']) {
@@ -853,6 +1147,8 @@ class Campaigns
                 $reason = (string)$check['reason'];
             } elseif (!\Yii::$app->communication->isRecipientAllowed((string)$recipient->address)) {
                 $reason = CmsCommCampaignRecipient::REASON_NOT_ALLOWED;
+            } else {
+                $reason = $this->protectBeforeLetter($campaign, $recipient, $record);
             }
         }
         $sender = $recipient->sender_user_id ? CmsUser::findOne((int)$recipient->sender_user_id) : null;
@@ -895,6 +1191,30 @@ class Campaigns
             $this->fail($recipient, mb_substr($e->getMessage(), 0, 900));
         }
         self::finishIfDone($campaign);
+    }
+
+    /**
+     * The rules asked again right before a letter: another campaign wrote to
+     * this contact meanwhile, or the manager has talked to the client since
+     * the launch. Returns the reason to exclude, or null.
+     */
+    private function protectBeforeLetter(CmsCommCampaign $campaign, CmsCommCampaignRecipient $recipient, ActiveRecord $record): ?string
+    {
+        if (($days = MailingSettings::frequencyDays((int)$campaign->cms_site_id)) > 0
+            && self::recentAddresses((int)$campaign->cms_site_id, [(string)$recipient->address], (int)$campaign->id, time() - $days * 86400, false)) {
+            return CmsCommCampaignRecipient::REASON_RECENT;
+        }
+        if (($quiet = (int)$campaign->quiet_days) > 0) {
+            $key = $recipient->record_type.':'.(int)$recipient->record_id;
+            $refs = [$key => [(string)$recipient->record_type, (int)$recipient->record_id]];
+            // Since the launch only: what the summary saw before it was already excluded there.
+            $since = max(time() - $quiet * 86400, (int)$campaign->launched_at);
+            if (self::talkedTo($refs, RecipientLists::companies($refs, [$key => $record]), $since)) {
+                return CmsCommCampaignRecipient::REASON_QUIET;
+            }
+        }
+
+        return null;
     }
 
     private function fail(CmsCommCampaignRecipient $recipient, string $error): void

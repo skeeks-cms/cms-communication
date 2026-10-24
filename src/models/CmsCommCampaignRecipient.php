@@ -76,6 +76,11 @@ class CmsCommCampaignRecipient extends ActiveRecord
     public const REASON_DUPLICATE_ADDRESS = 'duplicate_address';
     public const REASON_HIDDEN = 'hidden';
     public const REASON_CLOSED = 'closed';
+    /* Rules that protect every mailing (stage 4D) */
+    public const REASON_EXCLUDED_LIST = 'excluded_list';
+    public const REASON_RECENT = 'recent';
+    public const REASON_QUIET = 'quiet';
+    public const REASON_SAME_COMPANY = 'same_company';
 
     public const TEXT_BY_USER = 'user';
     public const TEXT_BY_AI = 'ai';
@@ -112,6 +117,10 @@ class CmsCommCampaignRecipient extends ActiveRecord
             self::REASON_DUPLICATE_ADDRESS => 'Этот адрес уже есть у другого получателя кампании',
             self::REASON_HIDDEN => 'Запись не видна запустившему кампанию',
             self::REASON_CLOSED => 'Лид закрыт',
+            self::REASON_EXCLUDED_LIST => 'Есть в исключающем списке (сам или его компания)',
+            self::REASON_RECENT => 'Недавно получал рассылку: не чаще одной в срок из настроек рассылок',
+            self::REASON_QUIET => 'Недавно общались: не мешаем менеджеру',
+            self::REASON_SAME_COMPANY => 'Письмо получит другой контакт этой компании',
         ];
     }
 

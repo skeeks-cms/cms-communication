@@ -89,6 +89,25 @@ Recipients added one by one (an employee, AI through MCP) are
 `Campaigns::addRecipient()` rows in status `draft` with an optional personal
 letter and who prepared it (`text_by`, `text_client`, `text_user_id`); they
 join any audience at launch and pass the same exclusions.
+Lists of recipients (4D) are `services\RecipientLists` (one operation for the
+list card, CRM cards, the bulk action of core sections, imports and MCP): a
+member is a CRM record, never an address, and keeps who, when and from where
+added it; removing only marks it. Core sections get the bulk action through
+`actionsMap` of their controllers (`helpers\ListUi::bulkAction()`, the
+standard multi window over the section's own filters), cards through
+`CrmCardBlocksWidget`. Every campaign is protected in `Campaigns::protect()`:
+excluding lists (a company excludes its people and leads), the frequency per
+contact over all campaigns (`components\MailingSettings`), "не мешать
+менеджеру" (`quiet_days`) and one letter per company (`one_per_company`);
+the frequency and the quiet days are asked again in `deliver()`.
+Rules of a list (`services\ListRules`, `CmsCommListRule`) are saved filters of
+a core section counted with the section's own code (its index grid
+`on init` and the `on apply` of its explicit filter fields) on behalf of the
+employee who saved them (`ListRules::asUser()`, also in the console job
+`comm.list.rules`); never build a filter of our own. A rule adds only records
+that never were in the list (`RecipientLists::addFound()`). A rule stores the raw page
+values; before every count it checks keys and options against the current
+section filters and stops instead of widening silently.
 AI actions through MCP/REST (AI-2) are `services\AiActions` behind
 `mcp\CommunicationActionToolProvider`: drafts saved by `MailDrafts` for the
 responsible employee and checked by their letter form, draft campaigns and

@@ -10,7 +10,14 @@ namespace skeeks\cms\communication\controllers;
 use skeeks\cms\backend\actions\BackendModelAction;
 use skeeks\cms\backend\controllers\BackendModelStandartController;
 use skeeks\cms\backend\grid\BackendEntityLinkColumn;
+use skeeks\cms\backend\ViewBackendAction;
+use skeeks\cms\base\Component;
 use skeeks\cms\communication\assets\MailingAsset;
+use skeeks\cms\communication\components\MailingSettings;
+use skeeks\cms\communication\models\CmsCommList;
+use skeeks\cms\helpers\RequestResponse;
+use skeeks\cms\rbac\CmsManager;
+use skeeks\yii2\form\fields\NumberField;
 use skeeks\cms\communication\forms\ComposeForm;
 use skeeks\cms\communication\models\CmsCommCampaign;
 use skeeks\cms\communication\models\CmsCommCampaignRecipient;
@@ -68,6 +75,7 @@ class AdminCmsCommCampaignController extends BackendModelStandartController
 
         return ArrayHelper::merge(parent::actions(), [
             'index' => [
+                'name' => 'Кампании',
                 'emptyState' => [
                     'title' => 'Кампаний пока нет',
                     'description' => 'Кампания — письмо по теме рассылки группе лидов: из ящиков менеджеров, с паузами и только в рабочие часы, '
@@ -104,6 +112,23 @@ class AdminCmsCommCampaignController extends BackendModelStandartController
                         'launched_at' => ['class' => DateTimeColumnData::class],
                     ],
                 ],
+            ],
+            // Lists of recipients (stage 4D): the standard list of AdminCmsCommListController in a tab of this section.
+            'lists' => [
+                'class' => ViewBackendAction::class,
+                'name' => 'Списки',
+                'icon' => 'fas fa-list-ul',
+                'priority' => 20,
+                'callback' => [AdminCmsCommListController::class, 'renderCampaignsTab'],
+            ],
+            // Rules of every mailing of the site; the administrators' tab.
+            'settings' => [
+                'class' => ViewBackendAction::class,
+                'name' => 'Настройки',
+                'icon' => 'fas fa-sliders-h',
+                'priority' => 30,
+                'accessCallback' => static fn() => \Yii::$app->user->can(CmsManager::PERMISSION_ROLE_ADMIN_ACCESS),
+                'callback' => [$this, 'settings'],
             ],
             'create' => [
                 'fields' => [$this, 'updateFields'],
@@ -160,6 +185,8 @@ class AdminCmsCommCampaignController extends BackendModelStandartController
         $shared = $source ? $source->sharedItems($user, $siteId) : [];
         $templates = $source ? $source->templates($siteId) : [];
         $accounts = ArrayHelper::map((new MailComposeService($user, $siteId))->sendableAccounts(), 'id', static fn($a) => $a->asText());
+        $lists = CmsCommList::forSite($siteId);
+        $frequency = MailingSettings::frequencyDays($siteId);
         $executors = [];
         foreach (CmsUser::find()->isWorker()->andWhere([CmsUser::tableName().'.is_active' => 1])->all() as $worker) {
             $executors[(int)$worker->id] = (string)$worker->shortDisplayName;
@@ -194,6 +221,7 @@ class AdminCmsCommCampaignController extends BackendModelStandartController
         var audience = $('#cmscommcampaign-audience_type').val();
         $('.field-cmscommcampaign-audiencestatuses, .field-cmscommcampaign-audiencestages, .field-cmscommcampaign-audiencesources, .field-cmscommcampaign-audienceexecutors').toggle(audience === 'leads');
         $('.field-cmscommcampaign-audienceimportid').toggle(audience === 'import');
+        $('.field-cmscommcampaign-audiencelists').toggle(audience === 'lists');
         var offer = $('#cmscommcampaign-offer_kind').val();
         $('[data-sx-campaign-offer]').each(function () { $(this).toggle($(this).data('sx-campaign-offer') === offer); });
         $('.field-cmscommcampaign-cms_comm_account_id').toggle($('#cmscommcampaign-sender_mode').val() === 'account');
@@ -236,9 +264,23 @@ JS);
                         'elementOptions' => ['size' => 6]],
                     'audienceImportId' => ['class' => SelectField::class, 'items' => $campaigns->imports($user, $siteId), 'allowNull' => true,
                         'nullLabel' => '— выберите импорт —'],
+                    'audienceLists' => ['class' => SelectField::class, 'multiple' => true, 'allowNull' => false, 'items' => $lists,
+                        'hint' => $lists ? 'Участники всех выбранных списков, каждый один раз.' : 'Списков пока нет: создайте их на вкладке «Списки».'],
+                    'audienceExcludeLists' => ['class' => SelectField::class, 'multiple' => true, 'allowNull' => false, 'items' => $lists],
                     'hint' => ['class' => HtmlBlock::class, 'content' => Html::tag('p',
-                        'Получатели — только лиды, которые вы видите. Каждому лиду — одно письмо на его первый email. Точный список и исключённых '
-                        .'с причиной покажет карточка кампании перед запуском.', ['class' => 'form-group sx-campaign-form__hint'])],
+                        'Получатели — только записи, которые вы видите. Каждой записи — одно письмо на её первый email (у компании — её email, иначе '
+                        .'email её людей). Точный список и исключённых с причиной покажет карточка кампании перед запуском.', ['class' => 'form-group sx-campaign-form__hint'])],
+                ],
+            ],
+            'protect' => [
+                'class' => FieldSet::class,
+                'name' => 'Бережная рассылка',
+                'fields' => [
+                    'one_per_company' => ['class' => BoolField::class, 'allowNull' => false],
+                    'quiet_days' => ['class' => NumberField::class],
+                    'frequency' => ['class' => HtmlBlock::class, 'content' => Html::tag('p', Html::encode($frequency > 0
+                        ? 'Для всех кампаний сайта: одному контакту — не больше одной рассылки за '.$frequency.' дн. (вкладка «Настройки»).'
+                        : 'Частота писем одному контакту не ограничена (вкладка «Настройки»).'), ['class' => 'form-group sx-campaign-form__hint'])],
                 ],
             ],
             'letter' => [
@@ -283,6 +325,39 @@ JS);
         ];
     }
 
+    /** "Настройки": rules of every mailing of the site, at the level the administration edits (component-settings.md). */
+    public function settings()
+    {
+        $site = \Yii::$app->skeeks->site;
+        $component = new MailingSettings();
+        if ($site->is_default) {
+            $component->overridePath = [Component::OVERRIDE_DEFAULT];
+        } else {
+            $component->overridePath = [Component::OVERRIDE_DEFAULT, Component::OVERRIDE_SITE];
+            $component->cmsSite = $site;
+        }
+        $component->refresh();
+
+        $request = \Yii::$app->request;
+        if ($request->isPost && !$request->post(RequestResponse::DYNAMIC_RELOAD_NOT_SUBMIT)) {
+            if ($component->load($request->post()) && $component->validate()) {
+                if ($site->is_default) {
+                    $component->override = Component::OVERRIDE_DEFAULT;
+                } else {
+                    $component->override = Component::OVERRIDE_SITE;
+                    $component->cmsSite = $site;
+                }
+                $saved = $component->save();
+                MailingSettings::reset();
+                \Yii::$app->session->setFlash($saved ? 'success' : 'error', $saved ? 'Сохранено' : 'Не удалось сохранить');
+            } else {
+                \Yii::$app->session->setFlash('error', implode(' ', $component->getFirstErrors()) ?: 'Не удалось сохранить');
+            }
+        }
+
+        return $this->render('@skeeks/cms/communication/views/campaign/settings', ['component' => $component]);
+    }
+
     /** The card: the summary, preview and launch of a draft; progress and the report of a launched campaign. */
     public function view()
     {
@@ -307,7 +382,7 @@ JS);
                     $service->cancel($campaign);
                     $session->setFlash('success', 'Кампания отменена: неотправленные письма не уйдут.');
                 } elseif ($do === 'test') {
-                    $sample = $this->sample($campaign, $service, (int)$request->post('lead'));
+                    $sample = $this->sample($campaign, $service, (string)$request->post('lead'));
                     if (!$sample) {
                         throw new \DomainException('Нет получателя для тестового письма.');
                     }
@@ -330,6 +405,8 @@ JS);
         $page = max(1, (int)$request->get('page', 1));
         if ($campaign->isDraft) {
             try {
+                // Lists with rules: recount what was not counted in the last quarter of an hour.
+                $service->refreshLists($campaign, 900);
                 $summary = $service->summary($campaign, $user);
             } catch (\DomainException $e) {
                 $summaryError = $e->getMessage();
@@ -346,7 +423,7 @@ JS);
             $report = $query->offset(($page - 1) * 100)->limit(100)->with(['account', 'senderUser'])->all();
         }
 
-        $sample = $this->sample($campaign, $service, (int)$request->get('lead'), $summary);
+        $sample = $this->sample($campaign, $service, (string)$request->get('lead'), $summary);
         $preview = null;
         $previewError = null;
         if ($sample) {
@@ -495,14 +572,20 @@ JS);
         ];
     }
 
-    /** The recipient of the preview: the chosen lead, otherwise the first one to get the letter. */
-    private function sample(CmsCommCampaign $campaign, Campaigns $service, int $leadId, ?array $summary = null): ?CmsCommCampaignRecipient
+    /**
+     * The recipient of the preview: the chosen one ("company:15"; a bare
+     * number is a lead, as links made before lists), otherwise the first one
+     * to get the letter.
+     */
+    private function sample(CmsCommCampaign $campaign, Campaigns $service, string $ref, ?array $summary = null): ?CmsCommCampaignRecipient
     {
+        $ref = ctype_digit($ref) ? CrmRecords::LEAD.':'.$ref : $ref;
+        $is = static fn(CmsCommCampaignRecipient $r) => $r->record_type.':'.(int)$r->record_id === $ref;
         if (!$campaign->isDraft) {
             $query = CmsCommCampaignRecipient::find()->andWhere(['cms_comm_campaign_id' => (int)$campaign->id])
                 ->andWhere(['not', ['status' => CmsCommCampaignRecipient::STATUS_EXCLUDED]]);
-            if ($leadId) {
-                $query->andWhere(['record_id' => $leadId]);
+            if ($parsed = \skeeks\cms\communication\services\SendService::parseRef($ref)) {
+                $query->andWhere(['record_type' => $parsed[0], 'record_id' => $parsed[1]]);
             }
 
             return $query->orderBy(['id' => SORT_ASC])->one();
@@ -519,7 +602,7 @@ JS);
             if ($recipient->status !== CmsCommCampaignRecipient::STATUS_PENDING) {
                 continue;
             }
-            if (!$leadId || (int)$recipient->record_id === $leadId) {
+            if ($ref === '' || $is($recipient)) {
                 return $recipient;
             }
             $first = $first ?? $recipient;
@@ -528,7 +611,7 @@ JS);
         return $first;
     }
 
-    /** @return string[] lead id => "name <email>": recipients to preview on */
+    /** @return string[] "type:id" => "name <email>": recipients to preview on */
     private function samples(CmsCommCampaign $campaign, ?array $summary): array
     {
         $recipients = $summary !== null ? $summary['recipients'] : CmsCommCampaignRecipient::find()
@@ -539,7 +622,7 @@ JS);
             if ($recipient->status === CmsCommCampaignRecipient::STATUS_EXCLUDED) {
                 continue;
             }
-            $result[(int)$recipient->record_id] = trim(($recipient->name ? $recipient->name.' ' : '').'<'.$recipient->address.'>');
+            $result[$recipient->record_type.':'.(int)$recipient->record_id] = trim(($recipient->name ? $recipient->name.' ' : '').'<'.$recipient->address.'>');
             if (count($result) >= 300) {
                 break;
             }

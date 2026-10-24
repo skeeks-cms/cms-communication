@@ -18,7 +18,7 @@
  * @var $sample skeeks\cms\communication\models\CmsCommCampaignRecipient|null
  * @var $preview array|null Campaigns::preview()
  * @var $previewError string|null
- * @var $samples string[] lead id => recipient
+ * @var $samples string[] "type:id" => recipient
  */
 
 use skeeks\cms\communication\assets\MailingAsset;
@@ -59,6 +59,16 @@ $textCell = static function (CmsCommCampaignRecipient $r, bool $draft) use ($cam
             Url::to(['recipient', 'pk' => (int)$campaign->id, 'record' => $r->record_type.':'.(int)$r->record_id]), ['data-pjax' => 0]);
 };
 $source = Campaigns::offerSource($campaign);
+// Who the audience is: the lists by name, the excluding lists.
+$listNames = \skeeks\cms\communication\models\CmsCommList::forSite((int)$campaign->cms_site_id);
+$names = static fn(array $ids) => implode(', ', array_map(static fn($id) => '«'.($listNames[(int)$id] ?? '№'.(int)$id).'»', $ids));
+$audienceText = CmsCommCampaign::audienceTypes()[$campaign->audience_type] ?? (string)$campaign->audience_type;
+if ($campaign->audience_type === CmsCommCampaign::AUDIENCE_LISTS && $campaign->audienceLists) {
+    $audienceText .= ' '.$names($campaign->audienceLists);
+}
+if ($campaign->audienceExcludeLists) {
+    $audienceText .= ', кроме '.$names($campaign->audienceExcludeLists);
+}
 $offer = CmsCommCampaign::offerKinds()[$campaign->offer_kind] ?? '';
 if ($campaign->offer_id && $source) {
     $items = $campaign->offer_kind === CmsCommCampaign::OFFER_EACH
@@ -79,6 +89,13 @@ if ($campaign->offer_id && $source) {
             <?= Html::encode(mb_strtolower(CmsCommCampaign::senderModes()[$campaign->sender_mode] ?? '')) ?>
             <?= $campaign->account ? Html::encode($campaign->account->address) : '' ?></span>
         <span>Предложение: <strong><?= Html::encode($offer) ?></strong></span>
+        <span>Аудитория: <strong><?= Html::encode($audienceText) ?></strong></span>
+        <span>Бережно: <strong><?= Html::encode(implode(', ', array_filter([
+                    $campaign->one_per_company ? 'одна компания — одно письмо' : null,
+                    (int)$campaign->quiet_days > 0 ? 'не мешать менеджеру '.(int)$campaign->quiet_days.' дн.' : null,
+                    ($frequency = \skeeks\cms\communication\components\MailingSettings::frequencyDays((int)$campaign->cms_site_id)) > 0
+                        ? 'не чаще раза в '.$frequency.' дн.' : null,
+                ])) ?: 'без ограничений') ?></strong></span>
         <span>Задачи менеджеру: <strong><?= Html::encode(implode(', ', array_filter([
                     $campaign->task_on_open ? 'открыл предложение или перешёл на сайт' : null,
                     $campaign->task_on_reply ? 'ответил' : null,
@@ -206,7 +223,7 @@ if ($campaign->offer_id && $source) {
                     <?= Html::hiddenInput($key, $value) ?>
                 <?php endforeach; ?>
                 <label for="sx-campaign-lead">Как увидит</label>
-                <?= Html::dropDownList('lead', $sample ? (int)$sample->record_id : null, $samples, ['class' => 'form-control', 'id' => 'sx-campaign-lead', 'onchange' => 'this.form.submit()']) ?>
+                <?= Html::dropDownList('lead', $sample ? $sample->record_type.':'.(int)$sample->record_id : null, $samples, ['class' => 'form-control', 'id' => 'sx-campaign-lead', 'onchange' => 'this.form.submit()']) ?>
             </form>
         <?php endif; ?>
         <?php if ($previewError) : ?>
@@ -224,7 +241,7 @@ if ($campaign->offer_id && $source) {
             <?php endif; ?>
             <?= Html::beginForm(Url::current(), 'post', ['class' => 'sx-campaign__inline']) ?>
             <?= Html::hiddenInput('do', 'test') ?>
-            <?= Html::hiddenInput('lead', $sample ? (int)$sample->record_id : '') ?>
+            <?= Html::hiddenInput('lead', $sample ? $sample->record_type.':'.(int)$sample->record_id : '') ?>
             <?= Html::submitButton('Отправить тестовое письмо себе', ['class' => 'btn btn-default']) ?>
             <span class="sx-import__muted">на <?= Html::encode((string)\Yii::$app->user->identity->email ?: 'email из профиля') ?>; ссылки в тесте не работают</span>
             <?= Html::endForm() ?>

@@ -84,6 +84,21 @@ class CommunicationBootstrap implements BootstrapInterface
             \Yii::$container->set($leads, $definition);
         }
 
+        // Lists of recipients: the bulk action "В список рассылки" of the core sections over their own filters
+        // (marked rows or "для всех"), added the same way; the leads table gets its checkbox column by default.
+        foreach (['leads' => $leads, 'companies' => \skeeks\cms\controllers\AdminCmsCompanyController::class,
+                     'clients' => \skeeks\cms\controllers\AdminUserController::class] as $section => $controller) {
+            if (!class_exists($controller)) {
+                continue;
+            }
+            $definition = \Yii::$container->getDefinitions()[$controller] ?? [];
+            $definition['actionsMap']['comm-list-add'] = \skeeks\cms\communication\helpers\ListUi::bulkAction($section);
+            if ($section === 'leads') {
+                $definition['actionsMap']['index']['grid']['visibleColumns'] = ['checkbox'];
+            }
+            \Yii::$container->set($controller, $definition);
+        }
+
         // Mailings: the block "Рассылки" in lead, company and client cards, a mark at opted-out contacts.
         if (defined(CrmCardBlocksWidget::class.'::EVENT_BLOCKS')) {
             Event::on(CrmCardBlocksWidget::class, CrmCardBlocksWidget::EVENT_BLOCKS, static function (CrmCardBlocksEvent $event) {
@@ -93,6 +108,18 @@ class CommunicationBootstrap implements BootstrapInterface
                 }
                 $event->blocks['comm-mailing'] = MailingUi::cardBlock($event->owner);
                 $event->priority['comm-mailing'] = 150;
+                // "Списки рассылок": the lists the record is in, "+ Добавить в список".
+                $event->blocks['comm-lists'] = \skeeks\cms\communication\helpers\ListUi::cardBlock($event->owner);
+                $event->priority['comm-lists'] = 155;
+            });
+        }
+        // "Добавить в список рассылки" in the menu "Действие" of the lead card; an older core has no actions event.
+        if (defined(CrmCardBlocksWidget::class.'::EVENT_ACTIONS')) {
+            Event::on(CrmCardBlocksWidget::class, CrmCardBlocksWidget::EVENT_ACTIONS, static function (CrmCardBlocksEvent $event) {
+                if ($action = \skeeks\cms\communication\helpers\ListUi::cardAction($event->owner)) {
+                    $event->actions['comm-list-add'] = $action;
+                    $event->priority['comm-list-add'] = 300;
+                }
             });
         }
         Event::on(CrmContactBlockWidget::class, CrmContactBlockWidget::EVENT_CONTACT_ACTIONS, static function (CrmContactActionsEvent $event) {

@@ -117,6 +117,14 @@ $who = static function (array $data): string {
                         <span class="sx-import__label">Основание согласия</span>
                         <?= Html::dropDownList('consent_basis', $import->consent_basis ?: CmsCommContactTopic::BASIS_COLD, CmsCommContactTopic::bases(), ['class' => 'form-control']) ?>
                     </label>
+                    <?php if (\skeeks\cms\communication\helpers\ListUi::canUse()) : ?>
+                        <label>
+                            <span class="sx-import__label">Список рассылки</span>
+                            <?= Html::dropDownList('cms_comm_list_id', $import->listChoice ?? (string)$import->cms_comm_list_id,
+                                ['' => 'Не добавлять в список', 'new' => '+ Новый список «Импорт №'.(int)$import->id.'»']
+                                + \skeeks\cms\communication\models\CmsCommList::forSite((int)$import->cms_site_id), ['class' => 'form-control']) ?>
+                        </label>
+                    <?php endif; ?>
                 </div>
                 <p class="sx-import__muted">Тема и основание отмечаются у каждого email и телефона файла — и у новых лидов, и у найденных повторов.
                     Отписку клиента импорт не снимает, а настоящее согласие не превращается в «холодный контакт». «Холодным» контактам можно
@@ -199,6 +207,9 @@ $who = static function (array $data): string {
                 <span>Тема: <strong><?= Html::encode($import->topic ? $import->topic->name : 'без темы') ?></strong></span>
                 <?php if ($import->topic) : ?>
                     <span>Основание: <strong><?= Html::encode(CmsCommContactTopic::bases()[$import->consent_basis] ?? '—') ?></strong></span>
+                <?php endif; ?>
+                <?php if ($import->list) : ?>
+                    <span>Список: <strong><?= Html::encode($import->list->name) ?></strong></span>
                 <?php endif; ?>
             </div>
             <div class="sx-import__counts">

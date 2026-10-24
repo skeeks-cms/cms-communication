@@ -107,12 +107,18 @@ $create('cms_comm_message', ['id' => 'pk', 'created_at' => 'integer', 'updated_a
     'body_html' => 'text', 'attachments' => 'text', 'is_internal' => 'integer default 0', 'is_auto' => 'integer default 0', 'is_history' => 'integer default 0',
     'box_state' => 'string', 'message_at' => 'integer', 'sent_by_user_id' => 'integer', 'error' => 'text']);
 $create('cms_comm_message_search', ['cms_comm_message_id' => 'integer', 'cms_site_id' => 'integer', 'cms_comm_conversation_id' => 'integer', 'search_text' => 'text']);
+$create('cms_comm_link', ['id' => 'pk', 'created_at' => 'integer', 'created_by' => 'integer', 'cms_comm_message_id' => 'integer', 'model_code' => 'string',
+    'model_id' => 'integer', 'link_type' => 'string', 'cms_log_id' => 'integer']);
+$create('cms_comm_conversation_link', ['id' => 'pk', 'created_at' => 'integer', 'created_by' => 'integer', 'cms_comm_conversation_id' => 'integer',
+    'model_code' => 'string', 'model_id' => 'integer']);
 $create('cms_comm_message_mailbox', ['id' => 'pk', 'created_at' => 'integer', 'updated_at' => 'integer', 'cms_comm_message_id' => 'integer', 'cms_comm_account_id' => 'integer', 'cms_comm_connection_id' => 'integer']);
 $create('cms_comm_campaign', ['id' => 'pk', 'created_by' => 'integer', 'updated_by' => 'integer', 'created_at' => 'integer', 'updated_at' => 'integer',
     'cms_site_id' => 'integer', 'name' => 'string', 'status' => 'string', 'cms_comm_topic_id' => 'integer', 'audience_type' => 'string', 'audience' => 'text',
     'channel' => 'string', 'sender_mode' => 'string', 'cms_comm_account_id' => 'integer', 'subject' => 'string', 'body_html' => 'text', 'offer_kind' => 'string',
     'offer_type' => 'string', 'offer_id' => 'integer', 'task_on_open' => 'integer default 1', 'task_on_reply' => 'integer default 1', 'launched_at' => 'integer',
-    'launched_by' => 'integer', 'finished_at' => 'integer']);
+    'launched_by' => 'integer', 'finished_at' => 'integer', 'one_per_company' => 'integer default 0', 'quiet_days' => 'integer']);
+// The rules of stage 4D have their own test (tests/lists.php): no frequency limit here.
+\skeeks\cms\communication\components\MailingSettings::reset(1, 0);
 $create('cms_comm_campaign_recipient', ['id' => 'pk', 'created_at' => 'integer', 'updated_at' => 'integer', 'cms_comm_campaign_id' => 'integer',
     'record_type' => 'string', 'record_id' => 'integer', 'address' => 'string', 'name' => 'string', 'subject' => 'string', 'body_html' => 'text',
     'text_by' => 'string', 'text_client' => 'string', 'text_user_id' => 'integer', 'text_at' => 'integer', 'text_edited_by' => 'integer', 'cms_comm_account_id' => 'integer', 'sender_user_id' => 'integer',

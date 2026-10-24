@@ -201,8 +201,15 @@ class AdminCmsCommImportController extends BackendModelStandartController
             if ($import->status === CmsCommImport::STATUS_DRAFT) {
                 $errors = $this->loadSettings($import, $request->post(), $siteId);
                 if (!$errors) {
-                    $import->save(false, ['mapping', 'executor_id', 'cms_comm_topic_id', 'consent_basis', 'updated_at']);
+                    $import->save(false, ['mapping', 'executor_id', 'cms_comm_topic_id', 'consent_basis', 'cms_comm_list_id', 'updated_at']);
                 }
+            }
+            if (!$errors && $request->post('start') && $import->listChoice === 'new') {
+                // A new list of recipients is made only when the import starts, not at every preview.
+                $list = (new \skeeks\cms\communication\services\RecipientLists())->create($siteId,
+                    mb_substr('Импорт №'.(int)$import->id.($import->file_name ? ' · '.$import->file_name : ''), 0, 255), \Yii::$app->user->identity);
+                $import->cms_comm_list_id = (int)$list->id;
+                $import->save(false, ['cms_comm_list_id', 'updated_at']);
             }
             if (!$errors && $request->post('start')) {
                 if ((int)$import->row_count - (int)CmsCommImportRow::find()->andWhere(['cms_comm_import_id' => (int)$import->id])
@@ -284,6 +291,13 @@ class AdminCmsCommImportController extends BackendModelStandartController
         $import->cms_comm_topic_id = $topicId ?: null;
         $basis = (string)($post['consent_basis'] ?? '');
         $import->consent_basis = isset(CmsCommContactTopic::bases()[$basis]) ? $basis : CmsCommContactTopic::BASIS_COLD;
+
+        // Lists of recipients are of the campaigns right: without it the field is not shown and nothing changes.
+        if (\skeeks\cms\communication\helpers\ListUi::canUse() && array_key_exists('cms_comm_list_id', $post)) {
+            $choice = (string)$post['cms_comm_list_id'];
+            $import->listChoice = $choice === 'new' ? 'new' : (isset(\skeeks\cms\communication\models\CmsCommList::forSite($siteId)[(int)$choice]) ? (string)(int)$choice : '');
+            $import->cms_comm_list_id = ctype_digit($import->listChoice) ? (int)$import->listChoice : null;
+        }
 
         return $errors;
     }

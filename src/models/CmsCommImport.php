@@ -32,6 +32,7 @@ use yii\helpers\Json;
  * @property int|null    $executor_id
  * @property int|null    $cms_comm_topic_id
  * @property string|null $consent_basis
+ * @property int|null    $cms_comm_list_id the list of recipients the import fills (stage 4D)
  * @property int         $row_count
  * @property int         $created_count
  * @property int         $duplicate_count
@@ -44,6 +45,7 @@ use yii\helpers\Json;
  * @property CmsCommTopic|null  $topic
  * @property CmsUser|null       $executor
  * @property CmsUser|null       $createdBy
+ * @property CmsCommList|null   $list
  */
 class CmsCommImport extends ActiveRecord
 {
@@ -53,9 +55,17 @@ class CmsCommImport extends ActiveRecord
     public const STATUS_DONE = 'done';
     public const STATUS_FAILED = 'failed';
 
+    /** The choice of the form before the import starts: a list id, "new" (made at the start) or "" — no list. */
+    public $listChoice;
+
     public static function tableName()
     {
         return '{{%cms_comm_import}}';
+    }
+
+    public function getList()
+    {
+        return $this->hasOne(CmsCommList::class, ['id' => 'cms_comm_list_id']);
     }
 
     public static function statuses(): array

@@ -221,6 +221,21 @@ return [
                 'overlapPolicy' => 'skip',
                 'dedupKey' => static fn() => 'comm.campaign.tick',
             ],
+            // Lists of recipients fill themselves by their rules (saved filters of CRM sections).
+            'comm.list.rules' => [
+                'type' => 'comm.list.rules',
+                'title' => 'Рассылки: пополнить списки по правилам',
+                'handler' => \skeeks\cms\communication\jobs\ListRulesJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'transient',
+                'timeout' => 600,
+                'leaseSeconds' => 300,
+                'maxAttempts' => 1,
+                // A rule adds only records that never were in the list: running twice adds nothing twice.
+                'idempotent' => true,
+                'overlapPolicy' => 'skip',
+                'dedupKey' => static fn() => 'comm.list.rules',
+            ],
             // Removes CRM copies of letter files that the mailbox still has.
             'comm.mail.cleanup-files' => [
                 'type' => 'comm.mail.cleanup-files',
@@ -273,6 +288,11 @@ return [
                     'jobType' => 'comm.campaign.tick',
                     'name' => 'Рассылки: продолжить идущие кампании',
                     'interval' => 300,
+                ],
+                'comm.list.rules' => [
+                    'jobType' => 'comm.list.rules',
+                    'name' => 'Рассылки: пополнить списки по правилам',
+                    'interval' => 3600,
                 ],
                 // By the storage settings of each mailbox ("Хранить копии файлов, дней").
                 'comm.mail.cleanup-files' => [

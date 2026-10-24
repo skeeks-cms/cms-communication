@@ -11,6 +11,8 @@ use skeeks\cms\communication\models\CmsCommContact;
 use skeeks\cms\communication\models\CmsCommContactTopic;
 use skeeks\cms\communication\models\CmsCommImport;
 use skeeks\cms\communication\models\CmsCommImportRow;
+use skeeks\cms\communication\models\CmsCommList;
+use skeeks\cms\communication\models\CmsCommListMember;
 use skeeks\cms\job\contracts\JobReporterInterface;
 use skeeks\cms\models\CmsLead;
 use skeeks\cms\models\CmsWebNotify;
@@ -410,6 +412,7 @@ class LeadImport
             }
             if ($outcome['status'] !== CmsCommImportRow::STATUS_SKIPPED) {
                 self::applyConsent($import, $data);
+                self::addToList($import, $row);
             }
             $row->save(false);
             $counter = [CmsCommImportRow::STATUS_CREATED => 'created_count', CmsCommImportRow::STATUS_DUPLICATE => 'duplicate_count',
@@ -419,6 +422,32 @@ class LeadImport
         } catch (\Throwable $e) {
             $transaction->rollBack();
             throw $e;
+        }
+    }
+
+    /**
+     * The list of recipients chosen for the import gets the new lead or the
+     * CRM record the row matched (a lead, company or client), "импорт №N",
+     * in the transaction of the row.
+     */
+    private static function addToList(CmsCommImport $import, CmsCommImportRow $row): void
+    {
+        if (!$import->cms_comm_list_id) {
+            return;
+        }
+        $list = CmsCommList::findOne((int)$import->cms_comm_list_id);
+        $user = $import->created_by ? \skeeks\cms\models\CmsUser::findOne((int)$import->created_by) : null;
+        if (!$list || !$user) {
+            return;
+        }
+        $record = $row->cms_lead_id ? CmsLead::findOne((int)$row->cms_lead_id) : null;
+        if (!$record && $row->match_code && $row->match_id && ($type = CrmRecords::typeOfCode((string)$row->match_code))) {
+            $class = CrmRecords::codeOf($type);
+            $record = $class::findOne((int)$row->match_id);
+        }
+        if ($record && RecipientLists::recordType($record)) {
+            // The employee runs the import on records of the import: the list needs no second visibility check (also in jobs).
+            (new RecipientLists())->add($list, $record, $user, CmsCommListMember::VIA_IMPORT, 'import:'.(int)$import->id, false);
         }
     }
 

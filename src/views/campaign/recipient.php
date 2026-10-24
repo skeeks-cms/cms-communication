@@ -22,16 +22,12 @@
 use skeeks\cms\communication\assets\MailingAsset;
 use skeeks\cms\communication\forms\ComposeForm;
 use skeeks\cms\communication\models\CmsCommCampaign;
-use skeeks\cms\communication\services\Campaigns;
 use skeeks\cms\communication\services\CrmRecords;
-use skeeks\cms\models\CmsLead;
-use skeeks\cms\widgets\AjaxSelectModel;
 use skeeks\cms\widgets\formInputs\richText\RichTextInputWidget;
 use yii\helpers\Html;
 use yii\helpers\Url;
 
 MailingAsset::register($this);
-$user = \Yii::$app->user->identity;
 $siteId = (int)$campaign->cms_site_id;
 $back = Html::a('← К кампании', Url::to(['view', 'pk' => (int)$campaign->id]), ['data-pjax' => 0]);
 ?>
@@ -42,59 +38,14 @@ $back = Html::a('← К кампании', Url::to(['view', 'pk' => (int)$campai
     <?php endif; ?>
 
     <?php if (!$record) : ?>
-        <form method="get" action="<?= Html::encode(Url::to(['recipient'])) ?>" class="sx-import__card" data-sx-campaign-add>
-            <?= Html::hiddenInput('pk', (int)$campaign->id) ?>
-            <?= Html::hiddenInput('record', '', ['data-sx-campaign-record' => true]) ?>
-            <h2 class="sx-import__title">Добавить получателя</h2>
-            <p class="sx-import__muted">Лид, компания или клиент, которых вы видите в CRM. Дальше — адрес и, по желанию, личный текст письма.</p>
-            <div class="sx-campaign-recipient__types" role="radiogroup">
-                <?php foreach (Campaigns::ADDABLE as $i => $type) : ?>
-                    <label><input type="radio" name="type" value="<?= Html::encode($type) ?>" <?= $i === 0 ? 'checked' : '' ?>> <?= Html::encode(CrmRecords::type($type)['title']) ?></label>
-                <?php endforeach; ?>
-            </div>
-            <?php foreach (Campaigns::ADDABLE as $i => $type) :
-                $class = CrmRecords::codeOf($type); ?>
-                <div class="form-group" data-sx-campaign-type="<?= Html::encode($type) ?>" <?= $i === 0 ? '' : 'hidden' ?>>
-                    <?= AjaxSelectModel::widget([
-                        'name' => 'id_'.$type,
-                        'id' => 'sx-campaign-record-'.$type,
-                        'modelClass' => $class,
-                        'pluginOptions' => ['placeholder' => 'Начните вводить название, имя, телефон или email', 'allowClear' => true, 'width' => '100%'],
-                        'searchQuery' => static function ($word = '') use ($type, $class, $user, $siteId) {
-                            $query = CrmRecords::visibleQuery($type, $user);
-                            if ($type === CrmRecords::LEAD) {
-                                $query->andWhere([CmsLead::tableName().'.cms_site_id' => $siteId]);
-                            }
-                            $word = trim((string)$word);
-                            if ($word !== '' && method_exists($query, 'search')) {
-                                $query->search($word);
-                            }
-
-                            return $query->orderBy([$class::tableName().'.id' => SORT_DESC]);
-                        },
-                    ]) ?>
-                </div>
-            <?php endforeach; ?>
-            <div class="sx-import__actions">
-                <button type="submit" class="btn btn-primary">Дальше</button>
-            </div>
-        </form>
-        <?php $this->registerJs(<<<JS
-(function () {
-    var form = $('[data-sx-campaign-add]');
-    form.on('change', 'input[name=type]', function () {
-        var type = form.find('input[name=type]:checked').val();
-        form.find('[data-sx-campaign-type]').each(function () { this.hidden = $(this).data('sx-campaign-type') !== type; });
-    });
-    form.on('submit', function (e) {
-        var type = form.find('input[name=type]:checked').val();
-        var id = form.find('[name=id_' + type + ']').val();
-        if (!id) { e.preventDefault(); alert('Выберите запись CRM.'); return; }
-        form.find('[data-sx-campaign-record]').val(type + ':' + id);
-        form.find('[name^=id_], input[name=type]').prop('disabled', true);
-    });
-})();
-JS); ?>
+        <?= $this->render('@skeeks/cms/communication/views/campaign/_record-picker', [
+            'action' => Url::to(['recipient']),
+            'hidden' => ['pk' => (int)$campaign->id],
+            'title' => 'Добавить получателя',
+            'hint' => 'Лид, компания или клиент, которых вы видите в CRM. Дальше — адрес и, по желанию, личный текст письма.',
+            'button' => 'Дальше',
+            'siteId' => $siteId,
+        ]) ?>
     <?php else : ?>
         <div class="sx-campaign__head">
             <span><?= Html::encode(CrmRecords::type(explode(':', $recordRef)[0])['title'] ?? 'Запись') ?>:

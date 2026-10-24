@@ -46,6 +46,8 @@ use yii\helpers\Json;
  * @property int|null    $offer_id
  * @property int         $task_on_open
  * @property int         $task_on_reply
+ * @property int         $one_per_company one letter per company: the company and its people get one letter
+ * @property int|null    $quiet_days "не мешать менеджеру": no letter to whom we talked to in so many days; null or 0 — off
  * @property int|null    $launched_at
  * @property int|null    $launched_by
  * @property int|null    $finished_at
@@ -74,6 +76,11 @@ class CmsCommCampaign extends ActiveRecord
     public const AUDIENCE_IMPORT = 'import';
     /** Only the recipients added one by one (by hand or by AI, Campaigns::addRecipient()). */
     public const AUDIENCE_MANUAL = 'manual';
+    /** Members of lists of recipients (stage 4D, services\RecipientLists). */
+    public const AUDIENCE_LISTS = 'lists';
+
+    /** "Не мешать менеджеру" of a new campaign, days. */
+    public const QUIET_DAYS_DEFAULT = 14;
 
     /** The mailbox of the lead's responsible employee. */
     public const SENDER_RESPONSIBLE = 'responsible';
@@ -101,6 +108,9 @@ class CmsCommCampaign extends ActiveRecord
     public $audienceSources = [];
     public $audienceExecutors = [];
     public $audienceImportId;
+    public $audienceLists = [];
+    /** Lists whose members (and the people and leads of companies in them) get no letter; for every audience. */
+    public $audienceExcludeLists = [];
 
     public static function tableName()
     {
@@ -121,6 +131,7 @@ class CmsCommCampaign extends ActiveRecord
     public static function audienceTypes(): array
     {
         return [
+            self::AUDIENCE_LISTS => 'Списки получателей',
             self::AUDIENCE_LEADS => 'Лиды по фильтру',
             self::AUDIENCE_IMPORT => 'Лиды из импорта',
             self::AUDIENCE_MANUAL => 'Только добавленные получатели',
@@ -157,6 +168,8 @@ class CmsCommCampaign extends ActiveRecord
                 'offer_kind' => self::OFFER_NONE,
                 'task_on_open' => 1,
                 'task_on_reply' => 1,
+                'one_per_company' => 1,
+                'quiet_days' => self::QUIET_DAYS_DEFAULT,
                 'subject' => '',
                 'body_html' => '<p>Здравствуйте, {Имя}!</p><p></p><p>{Ссылка}</p><p>С уважением,<br>{Менеджер}</p>',
             ];
@@ -177,6 +190,8 @@ class CmsCommCampaign extends ActiveRecord
         $this->audienceSources = (array)($audience['sources'] ?? []);
         $this->audienceExecutors = (array)($audience['executors'] ?? []);
         $this->audienceImportId = $audience['import'] ?? null;
+        $this->audienceLists = (array)($audience['lists'] ?? []);
+        $this->audienceExcludeLists = (array)($audience['exclude_lists'] ?? []);
     }
 
     public function rules()
@@ -192,7 +207,9 @@ class CmsCommCampaign extends ActiveRecord
             [['subject'], 'string', 'max' => 500],
             [['body_html'], 'string', 'max' => 500000],
             [['cms_site_id', 'cms_comm_topic_id', 'cms_comm_account_id', 'offer_id'], 'integer'],
-            [['task_on_open', 'task_on_reply'], 'boolean'],
+            [['task_on_open', 'task_on_reply', 'one_per_company'], 'boolean'],
+            [['quiet_days'], 'integer', 'min' => 0, 'max' => 365],
+            [['quiet_days'], 'default', 'value' => 0],
             [['audience_type'], 'in', 'range' => array_keys(self::audienceTypes())],
             [['sender_mode'], 'in', 'range' => array_keys(self::senderModes())],
             [['offer_kind'], 'in', 'range' => array_keys(self::offerKinds())],
@@ -212,6 +229,20 @@ class CmsCommCampaign extends ActiveRecord
             }],
             [['audienceStatuses', 'audienceStages', 'audienceSources', 'audienceExecutors'], 'filter', 'filter' => $list, 'skipOnEmpty' => false],
             [['audienceImportId'], 'integer'],
+            [['audienceLists', 'audienceExcludeLists'], 'filter', 'filter' => static fn($v) => array_values(array_unique(array_filter(array_map('intval', (array)$v)))),
+                'skipOnEmpty' => false],
+            [['audienceLists'], 'required', 'when' => static fn(self $m) => $m->audience_type === self::AUDIENCE_LISTS,
+                'whenClient' => "function () { return $('#cmscommcampaign-audience_type').val() === '".self::AUDIENCE_LISTS."'; }",
+                'message' => 'Выберите один или несколько списков.'],
+            [['audienceLists', 'audienceExcludeLists'], function ($attribute) {
+                $ids = (array)$this->$attribute;
+                if ($ids && (int)CmsCommList::find()->andWhere(['id' => $ids, 'cms_site_id' => (int)$this->cms_site_id])->count() !== count($ids)) {
+                    $this->addError($attribute, 'Список не найден.');
+                }
+                if ($attribute === 'audienceExcludeLists' && $this->audience_type === self::AUDIENCE_LISTS && array_intersect($ids, (array)$this->audienceLists)) {
+                    $this->addError($attribute, 'Один и тот же список не может быть и в аудитории, и в исключениях.');
+                }
+            }],
             [['audienceImportId'], 'required', 'when' => static fn(self $m) => $m->audience_type === self::AUDIENCE_IMPORT,
                 'whenClient' => "function () { return $('#cmscommcampaign-audience_type').val() === '".self::AUDIENCE_IMPORT."'; }",
                 'message' => 'Выберите импорт.'],
@@ -224,7 +255,7 @@ class CmsCommCampaign extends ActiveRecord
     {
         if (!$this->isNewRecord && $this->getOldAttribute('status') !== self::STATUS_DRAFT
             && array_intersect(array_keys($this->getDirtyAttributes()), ['audience_type', 'audience', 'subject', 'body_html', 'offer_kind',
-                'offer_type', 'offer_id', 'sender_mode', 'cms_comm_account_id', 'cms_comm_topic_id', 'channel'])) {
+                'offer_type', 'offer_id', 'sender_mode', 'cms_comm_account_id', 'cms_comm_topic_id', 'channel', 'one_per_company', 'quiet_days'])) {
             $this->addError($attribute, 'Запущенную кампанию нельзя изменить: получатели и письмо уже зафиксированы.');
         }
     }
@@ -254,6 +285,10 @@ class CmsCommCampaign extends ActiveRecord
             'audienceSources' => 'Источники',
             'audienceExecutors' => 'Ответственные',
             'audienceImportId' => 'Импорт',
+            'audienceLists' => 'Списки',
+            'audienceExcludeLists' => 'Исключить списки',
+            'one_per_company' => 'Одна компания — одно письмо',
+            'quiet_days' => 'Не мешать менеджеру: не писать тем, с кем общались за последние, дней',
         ]);
     }
 
@@ -263,6 +298,10 @@ class CmsCommCampaign extends ActiveRecord
             'cms_comm_topic_id' => 'Клиент может отписаться от темы; отписанные от неё и от всех рассылок не получат письмо.',
             'sender_mode' => 'Письмо уходит как обычное личное письмо из почтового ящика: ответ приходит туда же и попадает в ленту лида.',
             'audienceStatuses' => 'Пусто — новые и в работе.',
+            'audienceExcludeLists' => 'Например, «Действующие клиенты». Если в исключающем списке компания, письмо не получат и её люди, и её лиды.',
+            'one_per_company' => 'Если в аудитории компания и её люди или лиды, письмо получит один контакт: добавленный по одному со своим адресом, '
+                .'иначе сама компания (её первый email), иначе первый из её людей и лидов.',
+            'quiet_days' => 'Письма и сообщения в ленте за этот срок (кроме писем рассылок): с такими клиентами менеджер уже общается. 0 — не проверять.',
         ]);
     }
 
@@ -271,17 +310,24 @@ class CmsCommCampaign extends ActiveRecord
         if (!parent::beforeSave($insert)) {
             return false;
         }
+        $ids = static fn($v) => array_values(array_unique(array_filter(array_map('intval', (array)$v))));
         if ($this->audience_type === self::AUDIENCE_IMPORT) {
             $audience = ['import' => (int)$this->audienceImportId];
+        } elseif ($this->audience_type === self::AUDIENCE_LISTS) {
+            $audience = ['lists' => $ids($this->audienceLists)];
+        } elseif ($this->audience_type === self::AUDIENCE_MANUAL) {
+            $audience = [];
         } else {
             $strings = static fn($v) => array_values(array_filter(array_map('strval', (array)$v), static fn($x) => $x !== ''));
-            $ids = static fn($v) => array_values(array_filter(array_map('intval', (array)$v)));
             $audience = array_filter([
                 'statuses' => $strings($this->audienceStatuses),
                 'stages' => $ids($this->audienceStages),
                 'sources' => $strings($this->audienceSources),
                 'executors' => $ids($this->audienceExecutors),
             ]);
+        }
+        if ($exclude = $ids($this->audienceExcludeLists)) {
+            $audience['exclude_lists'] = $exclude;
         }
         $this->audience = $audience ? Json::encode($audience) : null;
         if ($this->offer_kind === self::OFFER_NONE) {
@@ -297,7 +343,7 @@ class CmsCommCampaign extends ActiveRecord
         return true;
     }
 
-    /** @return array statuses, stages, sources, executors (leads) or import (an import id) */
+    /** @return array statuses, stages, sources, executors (leads), import (an import id) or lists; exclude_lists for any audience */
     public function getAudienceArray(): array
     {
         $value = $this->audience ? Json::decode((string)$this->audience) : [];
