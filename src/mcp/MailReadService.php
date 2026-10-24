@@ -163,7 +163,7 @@ class MailReadService extends AbstractCmsService
             $accesses[(int)$row->cms_comm_account_id] = $row;
         }
         $items = [];
-        $q = CmsCommAccount::find()->andWhere(['cms_site_id' => $this->siteId(), 'id' => array_keys($accesses) ?: [0]])->orderBy(['id' => SORT_ASC]);
+        $q = CmsCommAccount::findMailboxes()->andWhere(['cms_site_id' => $this->siteId(), 'id' => array_keys($accesses) ?: [0]])->orderBy(['id' => SORT_ASC]);
         foreach ($q->all() as $account) {
             $access = $accesses[(int)$account->id];
             $items[] = [

@@ -145,6 +145,33 @@ class CommunicationComponent extends Component
      */
     public $aiTestRecipients = [];
 
+    /**
+     * May this site take updates of its bots: set webhooks and poll. A local
+     * stand works with production bots (there are no test bots) and sets it
+     * to false: a webhook or a poll from the stand would take the updates
+     * away from production. Sending is limited by allowedChats.
+     */
+    public $botReceive = true;
+
+    /**
+     * Chats a bot may write to: chat ids or "<channel>:<chat id>". Empty
+     * allows every chat, unless allowedRecipients is set: a stand that
+     * restricts letters writes to no chat until its own chats are listed.
+     *
+     * @var string[]
+     */
+    public $allowedChats = [];
+
+    /**
+     * Handlers of bot events after they are stored (links by `?start=`,
+     * commands in groups, bot menus of other packages): id => class name or
+     * Yii object config of a bot\BotEventHandlerInterface. Called in the
+     * order of registration, inside the transaction of the event.
+     *
+     * @var array
+     */
+    public $botHandlers = [];
+
     /** @var SendableSourceInterface[] */
     private $_sendableSources = [];
 

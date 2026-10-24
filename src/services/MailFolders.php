@@ -53,7 +53,7 @@ class MailFolders
      */
     public function accounts(): array
     {
-        return CmsCommAccount::find()->andWhere(['cms_site_id' => $this->siteId])->orderBy(['address' => SORT_ASC])
+        return CmsCommAccount::findMailboxes()->andWhere(['cms_site_id' => $this->siteId])->orderBy(['address' => SORT_ASC])
             ->andWhere(['id' => CmsCommAccountAccess::find()->select('cms_comm_account_id')
                 ->andWhere(['cms_user_id' => $this->user->id, 'read_level' => CmsCommAccountAccess::READ_ALL])])
             ->all();

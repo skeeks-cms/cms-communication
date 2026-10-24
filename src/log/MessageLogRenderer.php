@@ -7,8 +7,10 @@
 
 namespace skeeks\cms\communication\log;
 
+use skeeks\cms\communication\helpers\ChatUi;
 use skeeks\cms\communication\helpers\MailUi;
 use skeeks\cms\communication\models\CmsCommCampaign;
+use skeeks\cms\communication\models\CmsCommConversation;
 use skeeks\cms\communication\models\CmsCommLink;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\send\SmsSendChannel;
@@ -22,7 +24,7 @@ use yii\helpers\ArrayHelper;
 use yii\helpers\Html;
 
 /**
- * A letter, an SMS or a message from the site in the
+ * A letter, an SMS, a message from the site or of a bot chat in the
  * activity feed of a lead, company or client: the content of the shared
  * feed entry (CmsLogEntry). The letter is shown only to employees who may
  * read it.
@@ -48,6 +50,12 @@ class MessageLogRenderer extends CmsLogEntryRenderer
         }
 
         $incoming = $message->direction === CmsCommMessage::DIRECTION_IN;
+        // A message of a bot chat (a private dialog linked to the record).
+        $conversation = $message->conversation;
+        if ($conversation && $conversation->isChat()) {
+            return $this->chatEntry($message, $conversation);
+        }
+
         $sms = $message->channel === SmsSendChannel::CHANNEL;
         $entry = new CmsLogEntry([
             'icon'  => $sms ? 'sms' : ($incoming ? 'mail-in' : 'mail-out'),
@@ -93,6 +101,33 @@ class MessageLogRenderer extends CmsLogEntryRenderer
             $entry->details[] = 'Рассылка «'.Html::encode((string)$name).'»';
         }
         $entry->snippet = (string)$message->getSnippet(300);
+
+        return $entry;
+    }
+
+    /** "Сообщение в Telegram": who wrote, the beginning, "Открыть чат". */
+    private function chatEntry(CmsCommMessage $message, CmsCommConversation $conversation): CmsLogEntry
+    {
+        $incoming = $message->direction === CmsCommMessage::DIRECTION_IN;
+        $channel = ChatUi::channelName($conversation);
+        $entry = new CmsLogEntry([
+            'icon'    => $incoming ? 'chat' : 'bot',
+            'tone'    => $incoming ? CmsLogEntry::TONE_SUCCESS : CmsLogEntry::TONE_ACCENT,
+            'title'   => $incoming ? 'Сообщение в '.$channel : 'Ответ в '.$channel,
+            'summary' => Html::encode(ChatUi::author($message)),
+            'snippet' => (string)$message->getSnippet(400),
+            'details' => [Html::a('Открыть чат «'.Html::encode($conversation->asText()).'»', '#', [
+                'data-pjax' => '0',
+                'onclick'   => ChatUi::openChatOnClick((int)$conversation->id),
+            ])],
+        ]);
+        if (!$incoming && in_array($message->status, [CmsCommMessage::STATUS_FAILED, CmsCommMessage::STATUS_UNKNOWN], true)) {
+            $entry->tone = CmsLogEntry::TONE_DANGER;
+            $entry->badges[] = CmsLogEntry::badge($message->getStatusName(), '', CmsLogEntry::TONE_DANGER);
+        }
+        if ($files = count($message->getAttachmentList())) {
+            $entry->details[] = 'Файлов: '.$files;
+        }
 
         return $entry;
     }

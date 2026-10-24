@@ -40,7 +40,7 @@ class AddressBook
     public function isOurs(string $address, int $siteId): bool
     {
         if (!isset($this->ours[$siteId])) {
-            $mailboxes = CmsCommAccount::find()->select('address')->andWhere(['cms_site_id' => $siteId])->column();
+            $mailboxes = CmsCommAccount::findMailboxes()->select('address')->andWhere(['cms_site_id' => $siteId])->column();
             $workers = CmsUser::find()->select(CmsUser::tableName().'.id')->andWhere(['is_worker' => 1]);
             $addresses = array_merge($mailboxes,
                 CmsUserEmail::find()->select('value')->andWhere(['cms_user_id' => $workers])->column()

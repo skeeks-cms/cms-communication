@@ -46,7 +46,7 @@ class MailComposeService
     /** @return CmsCommAccount[] active mailboxes with a connection the employee may send from */
     public function sendableAccounts(): array
     {
-        $query = CmsCommAccount::find()
+        $query = CmsCommAccount::findMailboxes()
             ->andWhere(['cms_site_id' => $this->siteId, 'is_active' => 1])
             ->andWhere(['not', ['cms_comm_connection_id' => null]])
             ->orderBy(['address' => SORT_ASC]);
@@ -333,7 +333,7 @@ class MailComposeService
     private function ourMailboxAddresses(): array
     {
         return array_map(static fn($a) => mb_strtolower((string)$a),
-            CmsCommAccount::find()->select('address')->andWhere(['cms_site_id' => $this->siteId])->column());
+            CmsCommAccount::findMailboxes()->select('address')->andWhere(['cms_site_id' => $this->siteId])->column());
     }
 
     /**

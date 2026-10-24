@@ -102,7 +102,7 @@ class MailFileCleanup
         $m = CmsCommMessage::tableName();
         $removed = 0;
         $freed = 0;
-        foreach (CmsCommAccount::find()->andWhere(['cms_site_id' => $siteId])->all() as $account) {
+        foreach (CmsCommAccount::findMailboxes()->andWhere(['cms_site_id' => $siteId])->all() as $account) {
             $policy = MailFilePolicy::forAccount($account, $siteId);
             $conditions = ['or',
                 // Copies fetched on demand: some days after the last opening.
@@ -119,7 +119,7 @@ class MailFileCleanup
                 ->andWhere($conditions);
             $result = $this->remove($query, function (CmsCommMessageFile $row) use ($siteId, $policy) {
                 // The letter's other mailboxes may keep it longer.
-                $accounts = CmsCommAccount::find()->andWhere(['id' => CmsCommMessageMailbox::find()
+                $accounts = CmsCommAccount::findMailboxes()->andWhere(['id' => CmsCommMessageMailbox::find()
                     ->select('cms_comm_account_id')->andWhere(['cms_comm_message_id' => (int)$row->cms_comm_message_id])])->all();
                 $all = MailFilePolicy::forAccounts($accounts, $siteId);
                 if ($row->is_cached) {

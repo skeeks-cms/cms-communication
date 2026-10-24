@@ -7,6 +7,8 @@
 
 namespace skeeks\cms\communication\source;
 
+use skeeks\cms\communication\chat\ChatAccess;
+use skeeks\cms\communication\helpers\ChatUi;
 use skeeks\cms\communication\helpers\MailText;
 use skeeks\cms\communication\helpers\MailUi;
 use skeeks\cms\communication\models\CmsCommLink;
@@ -33,8 +35,25 @@ class MessageRecordSource implements RecordSourceInterface, RecordOriginInterfac
             return null;
         }
 
+        return self::visible((int)$id);
+    }
+
+    /**
+     * A message the employee may read: a letter of a mailbox they see
+     * (forManager), a chat message of a chat they see (chat\ChatAccess).
+     */
+    public static function visible(int $id): ?CmsCommMessage
+    {
+        $message = CmsCommMessage::find()->cmsSite()->andWhere([CmsCommMessage::tableName().'.id' => $id])->one();
+        $conversation = $message ? $message->conversation : null;
+        if ($conversation && $conversation->isChat()) {
+            $user = \Yii::$app->user->identity;
+
+            return $user && (new ChatAccess($user))->canRead($conversation) ? $message : null;
+        }
+
         return CmsCommMessage::find()->cmsSite()->forManager()
-            ->andWhere([CmsCommMessage::tableName().'.id' => (int)$id])
+            ->andWhere([CmsCommMessage::tableName().'.id' => $id])
             ->one();
     }
 
@@ -84,9 +103,14 @@ class MessageRecordSource implements RecordSourceInterface, RecordOriginInterfac
         $createdIds = [];
         foreach ($links as $link) {
             $createdIds[] = (int)$link->cms_comm_message_id;
-            $message = CmsCommMessage::find()->cmsSite()->forManager()
-                ->andWhere([CmsCommMessage::tableName().'.id' => (int)$link->cms_comm_message_id])
-                ->one();
+            $message = self::visible((int)$link->cms_comm_message_id);
+            $chat = CmsCommMessage::find()->andWhere(['id' => (int)$link->cms_comm_message_id])->andWhere(['!=', 'channel', 'email'])->exists();
+            if ($chat) {
+                $result[] = $message
+                    ? ['label' => 'Создано из сообщения', 'html' => $this->chatMessageHtml($message)]
+                    : ['label' => 'Создано из сообщения', 'html' => Html::tag('span', 'из чата, к которому у вас нет доступа', ['class' => 'sx-gray'])];
+                continue;
+            }
             $result[] = $message
                 ? ['label' => 'Создано из письма', 'html' => $this->letterHtml($message)]
                 : ['label' => 'Создано из письма', 'html' => Html::tag('span', 'из почтового ящика, к которому у вас нет доступа', ['class' => 'sx-gray'])];
@@ -96,7 +120,9 @@ class MessageRecordSource implements RecordSourceInterface, RecordOriginInterfac
         $linked = CmsCommMessage::find()->cmsSite()->forManager()
             ->andWhere([CmsCommMessage::tableName().'.id' => CmsCommLink::find()->select('cms_comm_message_id')
                 ->andWhere(['model_code' => $code, 'model_id' => (int)$record->primaryKey])])
-            ->andWhere(['not', [CmsCommMessage::tableName().'.id' => $createdIds ?: [0]]]);
+            ->andWhere(['not', [CmsCommMessage::tableName().'.id' => $createdIds ?: [0]]])
+            // Chats are shown by the block "Мессенджеры" and the feed, not as a correspondence of letters.
+            ->andWhere([CmsCommMessage::tableName().'.channel' => 'email']);
         $count = (int)(clone $linked)->count();
         if ($count) {
             $latest = $linked->orderBy([CmsCommMessage::tableName().'.message_at' => SORT_DESC, CmsCommMessage::tableName().'.id' => SORT_DESC])->one();
@@ -123,6 +149,23 @@ class MessageRecordSource implements RecordSourceInterface, RecordOriginInterfac
             ])
             .' '.Html::encode(($incoming ? 'от ' : 'для ').$who.', '
                 .\Yii::$app->formatter->asDatetime((int)$message->message_at, 'php:d.m.Y H:i'));
+    }
+
+    /** «Текст…» (opens the chat in the panel) в чате «…», автор, дата. */
+    private function chatMessageHtml(CmsCommMessage $message): string
+    {
+        $conversation = $message->conversation;
+        $text = mb_substr(trim(preg_replace('/\s+/u', ' ', ChatUi::body($message))), 0, 80) ?: 'Файл';
+
+        return Html::a('«'.Html::encode($text).'»', '#', [
+                'data-pjax' => '0',
+                'onclick' => ChatUi::openChatOnClick((int)$conversation->id),
+                'title' => 'Открыть чат',
+            ])
+            .' '.Html::encode(($conversation->chat_type === \skeeks\cms\communication\models\CmsCommConversation::CHAT_PRIVATE
+                    ? 'в диалоге '.ChatUi::channelName($conversation)
+                    : 'в чате «'.$conversation->asText().'»')
+                .', '.ChatUi::author($message).', '.\Yii::$app->formatter->asDatetime((int)$message->message_at, 'php:d.m.Y H:i'));
     }
 
     private function factory(): MessageRecordFactory

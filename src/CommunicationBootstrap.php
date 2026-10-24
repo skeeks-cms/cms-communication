@@ -40,6 +40,12 @@ class CommunicationBootstrap implements BootstrapInterface
                 'name_one' => 'Письмо',
                 'controller' => 'cmsCommunication/admin-cms-comm-message',
             ];
+            // A chat of a bot ("Новое сообщение от …", "Вам передан диалог") opens in "Чаты".
+            $app->skeeks->modelsConfig[\skeeks\cms\communication\models\CmsCommConversation::class] = [
+                'name' => 'Чаты',
+                'name_one' => 'Чат',
+                'controller' => 'cmsCommunication/admin-cms-comm-chat',
+            ];
             // "Готов импорт №…", "Вам назначены лиды из импорта №…" open the import card.
             $app->skeeks->modelsConfig[\skeeks\cms\communication\models\CmsCommImport::class] = [
                 'name' => 'Импорт в лиды',
@@ -47,6 +53,9 @@ class CommunicationBootstrap implements BootstrapInterface
                 'controller' => 'cmsCommunication/admin-cms-comm-import',
             ];
         }
+
+        // A task asked for in a chat by "/task": the chat hears when it is accepted, done or cancelled.
+        Event::on(\skeeks\cms\models\CmsTask::class, \yii\db\ActiveRecord::EVENT_AFTER_UPDATE, [\skeeks\cms\communication\chat\ChatTasks::class, 'onTaskUpdate']);
 
         if ($app instanceof \yii\web\Application) {
             // Visits by links of letters (step F): fixed endpoints go before the CMS tree rule, whose fallback
@@ -108,6 +117,9 @@ class CommunicationBootstrap implements BootstrapInterface
                 }
                 $event->blocks['comm-mailing'] = MailingUi::cardBlock($event->owner);
                 $event->priority['comm-mailing'] = 150;
+                // "Мессенджеры": chats of bots linked to the record, "Пригласить в бота".
+                $event->blocks['comm-chats'] = \skeeks\cms\communication\helpers\ChatUi::cardBlock($event->owner);
+                $event->priority['comm-chats'] = 140;
                 // "Списки рассылок": the lists the record is in, "+ Добавить в список".
                 $event->blocks['comm-lists'] = \skeeks\cms\communication\helpers\ListUi::cardBlock($event->owner);
                 $event->priority['comm-lists'] = 155;

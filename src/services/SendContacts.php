@@ -7,6 +7,12 @@
 
 namespace skeeks\cms\communication\services;
 
+use skeeks\cms\communication\chat\ChatAccess;
+use skeeks\cms\communication\helpers\ChatUi;
+use skeeks\cms\communication\models\CmsCommConversation;
+use skeeks\cms\communication\models\CmsCommConversationLink;
+use skeeks\cms\communication\models\CmsCommIdentity;
+use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\helpers\PhoneHelper;
 use skeeks\cms\models\CmsCompany;
 use skeeks\cms\models\CmsDeal;
@@ -15,7 +21,7 @@ use skeeks\cms\models\User;
 use yii\db\ActiveRecord;
 
 /**
- * Contacts of a client for "Отправить клиенту": emails and phones of the
+ * Contacts of a client for "Отправить клиенту": emails, phones and bot chats of the
  * lead, its company and client, of a company and its people, of a deal's
  * company and client. Only records the employee sees in the CRM
  * (forManager() through CrmRecords).
@@ -24,6 +30,8 @@ class SendContacts
 {
     public const EMAIL = 'email';
     public const PHONE = 'phone';
+    /** A chat of a bot linked to the record (or the private chat of its person) the employee may write to. */
+    public const CHAT = 'chat';
 
     private User $user;
 
@@ -101,6 +109,7 @@ class SendContacts
             return;
         }
         $title = CrmRecords::name($record);
+        $this->chats($class, (int)$record->primaryKey, $title, $type);
 
         if ($record instanceof CmsLead) {
             foreach ($record->emails as $row) {
@@ -144,8 +153,36 @@ class SendContacts
         }
     }
 
-    private function add(string $kind, string $value, string $name, string $record, string $type): void
+    /**
+     * Chats of a record: chats linked to it as a whole, and for a client the
+     * private chats of the person linked to them; only those the employee may
+     * write to. Value — the chat id, display — "MAX: name of the chat".
+     */
+    private function chats(string $class, int $id, string $title, string $type): void
     {
+        $ids = CmsCommConversationLink::find()->select('cms_comm_conversation_id')->andWhere(['model_code' => $class, 'model_id' => $id])->column();
+        if (is_a($class, User::class, true)) {
+            $people = CmsCommIdentity::find()->select('id')->andWhere(['cms_user_id' => $id]);
+            $ids = array_merge($ids, CmsCommMessage::find()->select('cms_comm_conversation_id')->distinct()->andWhere(['cms_comm_identity_id' => $people])->column());
+        }
+        if (!$ids) {
+            return;
+        }
+        $access = new ChatAccess($this->user);
+        foreach (CmsCommConversation::find()->andWhere(['id' => array_unique($ids)])->andWhere(['not', ['chat_type' => null]])->all() as $chat) {
+            if ($chat->bot_status !== CmsCommConversation::BOT_LEFT && $access->canSend($chat)) {
+                $this->add(self::CHAT, (string)$chat->id, '', $title, $type, ChatUi::channelName($chat).': '.$chat->asText());
+            }
+        }
+    }
+
+    private function add(string $kind, string $value, string $name, string $record, string $type, ?string $display = null): void
+    {
+        if ($kind === self::CHAT) {
+            $key = $kind.':'.$value;
+            $this->found[$key] = $this->found[$key] ?? ['kind' => $kind, 'value' => $value, 'display' => (string)$display, 'name' => '', 'record' => $record, 'type' => $type];
+            return;
+        }
         $display = trim($value);
         if ($kind === self::EMAIL) {
             $value = mb_strtolower($display);

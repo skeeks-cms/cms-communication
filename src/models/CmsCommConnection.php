@@ -155,6 +155,12 @@ class CmsCommConnection extends ActiveRecord
         return is_array($secrets) ? $secrets : [];
     }
 
+    /** The account of a bot connection (created on first use): its access rows are the bot's rights. */
+    public function getBotAccountId(): ?int
+    {
+        return \skeeks\cms\communication\bot\Bots::isBot($this) ? (int)\skeeks\cms\communication\bot\Bots::account($this)->id : null;
+    }
+
     public function getAccounts()
     {
         return $this->hasMany(CmsCommAccount::class, ['cms_comm_connection_id' => 'id']);

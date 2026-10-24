@@ -67,7 +67,7 @@ $files = $send->sendable->getSendFiles();
                             data-value="<?= Html::encode($contact['kind'] === SendContacts::PHONE ? $contact['display'] : $contact['value']) ?>"
                             data-name="<?= Html::encode($contact['name']) ?>"
                             <?= $channel ? '' : 'disabled title="Нет канала, через который можно отправить на этот контакт"' ?>>
-                        <span class="sx-send__contact-icon"><?= MailUi::icon($contact['kind'] === SendContacts::PHONE ? 'phone' : 'mail', 15) ?></span>
+                        <span class="sx-send__contact-icon"><?= MailUi::icon(['phone' => 'phone', 'chat' => 'message'][$contact['kind']] ?? 'mail', 15) ?></span>
                         <span class="sx-send__contact-value"><?= Html::encode($contact['display']) ?></span>
                         <span class="sx-send__contact-who">
                             <?= Html::encode(trim(($contact['name'] !== '' && $contact['name'] !== $contact['record'] ? $contact['name'].' · ' : '')

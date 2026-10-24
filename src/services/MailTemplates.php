@@ -89,7 +89,7 @@ class MailTemplates
     /** Mailboxes whose shared templates the employee may change. */
     public function manageableAccounts(): array
     {
-        $query = CmsCommAccount::find()->andWhere(['cms_site_id' => $this->siteId])->orderBy(['address' => SORT_ASC]);
+        $query = CmsCommAccount::findMailboxes()->andWhere(['cms_site_id' => $this->siteId])->orderBy(['address' => SORT_ASC]);
         if (!$this->isAdmin) {
             $query->andWhere(['id' => CmsCommAccountAccess::find()->select('cms_comm_account_id')
                 ->andWhere(['cms_user_id' => (int)$this->user->id, 'can_manage' => 1])]);

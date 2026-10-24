@@ -320,6 +320,11 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
             return ['found' => false, 'sent' => false, 'state' => 'not_found',
                 'state_text' => 'Отправки с таким ключом у вас нет: письмо не отправлялось (или отправлено не через API). Можно проверить черновик и отправить с этим ключом.'];
         }
+        // A reply to a chat sent through the API (cms_comm_chat_reply_send) shares the keys: its own status.
+        if (!$row->cms_comm_draft_id && $row->cms_comm_message_id
+            && \skeeks\cms\communication\models\CmsCommMessage::find()->andWhere(['id' => (int)$row->cms_comm_message_id])->andWhere(['!=', 'channel', 'email'])->exists()) {
+            return ['found' => true] + (new ChatToolService($this->user(), self::clientName(), (int)\Yii::$app->skeeks->site->id))->sendStatus($row);
+        }
 
         return ['found' => true] + $sender->status($row);
     }

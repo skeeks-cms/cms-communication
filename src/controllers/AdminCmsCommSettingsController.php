@@ -199,7 +199,7 @@ class AdminCmsCommSettingsController extends BackendController
             'form' => $form,
             'preview' => $preview,
             'run' => $run,
-            'accounts' => CmsCommAccount::find()->andWhere(['cms_site_id' => $siteId])->orderBy(['address' => SORT_ASC])->all(),
+            'accounts' => CmsCommAccount::findMailboxes()->andWhere(['cms_site_id' => $siteId])->orderBy(['address' => SORT_ASC])->all(),
             'policy' => MailFilePolicy::forAccount(null, $siteId),
         ]);
     }
@@ -242,7 +242,7 @@ class AdminCmsCommSettingsController extends BackendController
 
         return $this->render('@skeeks/cms/communication/views/settings/files', [
             'component' => $component,
-            'overrides' => CmsCommAccount::find()->andWhere(['cms_site_id' => (int)\Yii::$app->skeeks->site->id])
+            'overrides' => CmsCommAccount::findMailboxes()->andWhere(['cms_site_id' => (int)\Yii::$app->skeeks->site->id])
                 ->andWhere(['not', ['file_settings' => null]])->all(),
         ]);
     }
@@ -278,7 +278,7 @@ class AdminCmsCommSettingsController extends BackendController
             'form' => $form,
             'preview' => $preview,
             'run' => $run,
-            'accounts' => CmsCommAccount::find()->andWhere(['cms_site_id' => $siteId])->orderBy(['address' => SORT_ASC])->all(),
+            'accounts' => CmsCommAccount::findMailboxes()->andWhere(['cms_site_id' => $siteId])->orderBy(['address' => SORT_ASC])->all(),
         ]);
     }
 }

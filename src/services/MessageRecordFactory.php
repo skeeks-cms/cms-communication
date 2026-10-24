@@ -8,8 +8,13 @@
 namespace skeeks\cms\communication\services;
 
 use skeeks\cms\behaviors\RichTextBehavior;
+use skeeks\cms\communication\chat\ChatFeed;
+use skeeks\cms\communication\chat\ChatIdentities;
+use skeeks\cms\communication\helpers\ChatUi;
 use skeeks\cms\communication\helpers\MailText;
 use skeeks\cms\communication\models\CmsCommLink;
+use skeeks\cms\communication\models\CmsCommConversation;
+use skeeks\cms\communication\models\CmsCommIdentity;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\helpers\RichTextHtml;
 use skeeks\cms\models\CmsCompany;
@@ -91,6 +96,10 @@ class MessageRecordFactory
 
     public function prefill(CmsCommMessage $message, ActiveRecord $model): void
     {
+        if ($this->isChat($message)) {
+            $this->prefillChat($message, $model);
+            return;
+        }
         $subject = trim((string)$message->subject);
         $text = MailText::withoutQuotes($message);
         $related = $this->related($message);
@@ -127,6 +136,22 @@ class MessageRecordFactory
             return;
         }
         $related = $this->related($message);
+        if ($this->isChat($message)) {
+            $model->cms_site_id = (int)$message->cms_site_id;
+            $model->source_type = $this->chatLeadSource($message);
+            $model->source_data = [
+                'message_id' => (int)$message->id,
+                'external_id' => (string)$message->external_id,
+                'chat' => (string)$message->conversation->asText(),
+                'from' => ChatUi::author($message),
+            ];
+            foreach (['company' => 'cms_company_id', 'client' => 'cms_user_id'] as $key => $attribute) {
+                if ($related[$key]) {
+                    $model->{$attribute} = (int)$related[$key]->id;
+                }
+            }
+            return;
+        }
         $model->cms_site_id = (int)$message->cms_site_id;
         $model->source_type = CmsLead::SOURCE_EMAIL;
         $model->source_data = [
@@ -147,6 +172,10 @@ class MessageRecordFactory
     {
         $actorId = $this->actor ? (int)$this->actor->id : null;
         $this->linker->link($message, [$model], CmsCommLink::TYPE_CREATED, $actorId);
+        if ($this->isChat($message)) {
+            $this->createdFromChat($message, $model, $actorId);
+            return;
+        }
         foreach (CmsCommMessage::find()
                      ->andWhere(['cms_comm_conversation_id' => (int)$message->cms_comm_conversation_id])
                      ->andWhere(['!=', 'id', (int)$message->id])
@@ -171,6 +200,11 @@ class MessageRecordFactory
     /** Plain text above the create form. */
     public function describe(CmsCommMessage $message): string
     {
+        if ($this->isChat($message)) {
+            return 'Из сообщения '.$this->chatPlace($message).' от '.ChatUi::author($message).', '
+                .\Yii::$app->formatter->asDatetime((int)$message->message_at, 'php:d.m.Y H:i')
+                .'. После сохранения сообщение будет привязано к записи.';
+        }
         $subject = trim((string)$message->subject);
 
         return 'Из письма'.($subject !== '' ? ' «'.$subject.'»' : '').' '
@@ -191,6 +225,14 @@ class MessageRecordFactory
         $order = [CrmRecords::LEAD => 'lead', CrmRecords::COMPANY => 'company', CrmRecords::CLIENT => 'client'];
         $links = CmsCommLink::find()->andWhere(['cms_comm_message_id' => (int)$message->id])
             ->orderBy(['id' => SORT_ASC])->all();
+        if ($this->isChat($message)) {
+            // A chat belongs to records as a whole; the person of a chat may be a client.
+            $links = array_merge(ChatFeed::links($message->conversation), $links);
+            $identity = $message->identity;
+            if ($identity && $identity->cms_user_id && !$identity->isWorker()) {
+                $links[] = new CmsCommLink(['model_code' => CmsUser::class, 'model_id' => (int)$identity->cms_user_id]);
+            }
+        }
         foreach ($links as $link) {
             $type = CrmRecords::typeOfCode((string)$link->model_code);
             if (!isset($order[$type]) || $result[$order[$type]]) {
@@ -198,7 +240,7 @@ class MessageRecordFactory
             }
             $record = $this->actor
                 ? CrmRecords::find($type, (int)$link->model_id, $this->actor)
-                : $link->getLinkedModel();
+                : ChatFeed::record((string)$link->model_code, (int)$link->model_id);
             if ($record) {
                 $result[$order[$type]] = $record;
             }
@@ -213,6 +255,94 @@ class MessageRecordFactory
         }
 
         return $result;
+    }
+
+    public function isChat(CmsCommMessage $message): bool
+    {
+        return $message->conversation && $message->conversation->isChat();
+    }
+
+    /** A task, lead or deal from a chat message: its text, its author, the chat. */
+    private function prefillChat(CmsCommMessage $message, ActiveRecord $model): void
+    {
+        $text = trim(ChatUi::body($message));
+        $line = trim((string)strtok($text, "\n"));
+        $related = $this->related($message);
+        $author = ChatUi::author($message);
+        if ($model instanceof CmsTask) {
+            $model->name = mb_substr($line !== '' ? $line : 'Сообщение от '.$author, 0, 255);
+            $model->description = $this->chatDescription($message, $text, RichTextBehavior::covers($model, 'description'));
+            if ($related['lead']) {
+                $model->cms_lead_id = (int)$related['lead']->id;
+            }
+            if ($related['company']) {
+                $model->cms_company_id = (int)$related['company']->id;
+            } elseif ($related['client']) {
+                $model->cms_user_id = (int)$related['client']->id;
+            }
+        } elseif ($model instanceof CmsLead) {
+            $model->name = mb_substr('Сообщение в '.ChatUi::channelName($message->conversation).': '.$author, 0, 255);
+            $model->description = $this->chatDescription($message, $text, false);
+            $model->source_type = $this->chatLeadSource($message);
+            $model->source_name = mb_substr((string)$message->conversation->asText(), 0, 255);
+        } elseif ($model instanceof CmsDeal) {
+            $model->name = mb_substr('Сделка из чата «'.$message->conversation->asText().'»', 0, 255);
+            if ($related['company']) {
+                $model->cms_company_id = (int)$related['company']->id;
+            } elseif ($related['client']) {
+                $model->cms_user_id = (int)$related['client']->id;
+            }
+        }
+    }
+
+    /**
+     * Created from a chat message: in a group the message goes into the feed
+     * of the chat's records on its own (the day summary does not say which
+     * message became a task); a lead from a private chat gets the person.
+     */
+    private function createdFromChat(CmsCommMessage $message, ActiveRecord $model, ?int $actorId): void
+    {
+        $conversation = $message->conversation;
+        if ($conversation->chat_type !== CmsCommConversation::CHAT_PRIVATE) {
+            $records = array_values(array_filter($this->related($message)));
+            if ($records) {
+                $this->linker->link($message, $records, CmsCommLink::TYPE_MANUAL, $actorId);
+            }
+        }
+        if ($model instanceof CmsLead && $conversation->chat_type === CmsCommConversation::CHAT_PRIVATE
+            && $message->identity && !$message->identity->cms_user_id && !$message->identity->isWorker()) {
+            ChatIdentities::linkTo($message->identity, CrmRecords::LEAD, (int)$model->id, CmsCommIdentity::LINK_MANUAL, $actorId, $conversation);
+        }
+    }
+
+    /** "в MAX, чат «Компания / сайт.ru»" or "в личном диалоге MAX". */
+    private function chatPlace(CmsCommMessage $message): string
+    {
+        $conversation = $message->conversation;
+        $channel = ChatUi::channelName($conversation);
+
+        return $conversation->chat_type === CmsCommConversation::CHAT_PRIVATE
+            ? 'в личном диалоге '.$channel
+            : 'в '.$channel.', чат «'.$conversation->asText().'»';
+    }
+
+    private function chatDescription(CmsCommMessage $message, string $text, bool $html): string
+    {
+        $head = 'Сообщение '.$this->chatPlace($message).' от '.ChatUi::author($message).', '
+            .\Yii::$app->formatter->asDatetime((int)$message->message_at, 'php:d.m.Y H:i');
+        if (!$html) {
+            return $head."\n\n".$text;
+        }
+
+        return '<div><i>'.htmlspecialchars($head, ENT_QUOTES, 'UTF-8').'</i></div><div><br></div><div>'.RichTextHtml::fromText($text).'</div>';
+    }
+
+    private function chatLeadSource(CmsCommMessage $message): string
+    {
+        return [
+            'max' => CmsLead::SOURCE_MAX,
+            'telegram' => CmsLead::SOURCE_TELEGRAM,
+        ][(string)$message->channel] ?? CmsLead::SOURCE_MANUAL;
     }
 
     private function description(CmsCommMessage $message, string $text, bool $html): string

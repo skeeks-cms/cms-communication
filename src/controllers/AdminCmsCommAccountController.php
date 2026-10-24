@@ -68,6 +68,8 @@ class AdminCmsCommAccountController extends BackendModelStandartController
                     'on init' => static function (Event $event) {
                         $query = $event->sender->dataProvider->query;
                         $query->cmsSite();
+                        // Bots are accounts too, but they live in their own section.
+                        $query->andWhere([CmsCommAccount::tableName().'.channel' => CmsCommAccount::CHANNEL_EMAIL]);
                         $query->with('connection');
                         $query->addSelect([
                             CmsCommAccount::tableName().'.*',

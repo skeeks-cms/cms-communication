@@ -112,7 +112,7 @@ class MailboxCampaignChannel implements CampaignChannelInterface
         $a = CmsCommAccount::tableName();
         $access = CmsCommAccountAccess::tableName();
 
-        return CmsCommAccount::find()
+        return CmsCommAccount::findMailboxes()
             ->innerJoin($access, $access.'.cms_comm_account_id = '.$a.'.id')
             ->andWhere([$a.'.cms_site_id' => $siteId, $a.'.is_active' => 1])
             ->andWhere(['not', [$a.'.cms_comm_connection_id' => null]])

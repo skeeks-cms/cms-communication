@@ -269,7 +269,7 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $accesses = \skeeks\cms\communication\models\CmsCommAccountAccess::find()
             ->andWhere(['cms_user_id' => (int)$user->id])
             ->andWhere(['!=', 'read_level', \skeeks\cms\communication\models\CmsCommAccountAccess::READ_NONE])
-            ->andWhere(['cms_comm_account_id' => \skeeks\cms\communication\models\CmsCommAccount::find()->select('id')->andWhere(['cms_site_id' => $siteId])])
+            ->andWhere(['cms_comm_account_id' => \skeeks\cms\communication\models\CmsCommAccount::findMailboxes()->select('id')->andWhere(['cms_site_id' => $siteId])])
             ->with('account')->all();
 
         if ($request->isPost) {

@@ -138,7 +138,7 @@ class CmsCommAccountAccess extends ActiveRecord
     }
 
     /**
-     * Only one default mailbox per employee within the mailbox's site.
+     * Only one default account per employee within the site and channel (a mailbox, a bot).
      */
     public function afterSave($insert, $changedAttributes)
     {
@@ -147,7 +147,7 @@ class CmsCommAccountAccess extends ActiveRecord
         if ($this->is_default && ($insert || array_key_exists('is_default', $changedAttributes))) {
             $siteAccountIds = CmsCommAccount::find()
                 ->select('id')
-                ->andWhere(['cms_site_id' => $this->account->cms_site_id]);
+                ->andWhere(['cms_site_id' => $this->account->cms_site_id, 'channel' => (string)$this->account->channel]);
             foreach (static::find()
                 ->andWhere(['cms_user_id' => $this->cms_user_id, 'is_default' => 1])
                 ->andWhere(['cms_comm_account_id' => $siteAccountIds])

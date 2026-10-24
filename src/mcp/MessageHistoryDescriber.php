@@ -7,6 +7,7 @@
 
 namespace skeeks\cms\communication\mcp;
 
+use skeeks\cms\communication\helpers\ChatUi;
 use skeeks\cms\communication\models\CmsCommLink;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\mcp\crm\CrmActor;
@@ -36,9 +37,16 @@ class MessageHistoryDescriber implements HistoryLogDescriberInterface
     {
         $id = (int)ArrayHelper::getValue((array)$log->data, 'id');
         if (!array_key_exists($id, $this->messages)) {
-            $this->messages[$id] = CmsCommMessage::find()->forManager()->andWhere([CmsCommMessage::tableName().'.id' => $id])->one() ?: false;
+            // A letter by the mailbox rights, a chat message by the rights to its chat ("Чаты").
+            $this->messages[$id] = \skeeks\cms\communication\source\MessageRecordSource::visible($id) ?: false;
         }
         $m = $this->messages[$id];
+        if ($m && $m->conversation && $m->conversation->isChat()) {
+            return $this->chatMessage($m, $log, $context);
+        }
+        if (!$m && CmsCommMessage::find()->andWhere(['id' => $id])->andWhere(['not', ['channel' => ['email', 'sms', 'site']]])->exists()) {
+            return ['title' => 'Сообщение в чате', 'summary' => 'Сообщение чата, к которому у сотрудника нет доступа.', 'access' => false, 'dedup_key' => 'message:'.$id];
+        }
         if (!$m) {
             $exists = CmsCommMessage::find()->andWhere(['id' => $id])->exists();
             return [
@@ -84,6 +92,44 @@ class MessageHistoryDescriber implements HistoryLogDescriberInterface
             'actor' => $actor,
             'details' => $details,
             'ref' => ['tool' => 'cms_comm_message_get', 'id' => (int)$m->id],
+            'dedup_key' => 'message:'.(int)$m->id,
+        ];
+    }
+
+    /** A message of a messenger chat: who wrote what, the chat; read the chat with cms_comm_chat_get. */
+    private function chatMessage(CmsCommMessage $m, CmsLog $log, CrmReadContext $context): array
+    {
+        $chat = $m->conversation;
+        $channel = ChatUi::channelName($chat);
+        $ours = $m->direction === CmsCommMessage::DIRECTION_OUT || ($m->identity && $m->identity->isWorker());
+        $link = $log->id ? CmsCommLink::find()->andWhere(['cms_log_id' => (int)$log->id])->one() : null;
+        $title = ($ours ? 'Ответ в ' : 'Сообщение в ').$channel;
+        if ($link && $link->link_type === CmsCommLink::TYPE_CREATED) {
+            $title = 'Создано из сообщения в '.$channel;
+        }
+        $author = ChatUi::author($m);
+        if (!$ours) {
+            $actor = CrmActor::client($author, $context);
+        } else {
+            $userId = $m->sent_by_user_id ?: ($m->identity && $m->identity->isWorker() ? (int)$m->identity->cms_user_id : null);
+            $actor = $userId ? CrmActor::user((int)$userId, $context) : ['kind' => CrmActor::SYSTEM];
+        }
+
+        return [
+            'subtype' => 'chat_'.($ours ? 'out' : 'in'),
+            'title' => $title,
+            'summary' => $context->text($author.': '.trim(ChatUi::body($m))),
+            'direction' => $ours ? 'out' : 'in',
+            'channel' => (string)$m->channel,
+            'actor' => $actor,
+            'details' => array_filter([
+                'chat' => $context->text($chat->asText(), 300),
+                'cms_comm_conversation_id' => (int)$chat->id,
+                'files_count' => count($m->files) ?: null,
+                'status' => $m->direction === CmsCommMessage::DIRECTION_OUT ? (string)$m->status : null,
+                'prepared' => \skeeks\cms\communication\services\AiMark::forApi(\skeeks\cms\communication\services\AiMark::of($m)),
+            ], static fn($v) => $v !== null && $v !== ''),
+            'ref' => ['tool' => 'cms_comm_chat_get', 'id' => (int)$chat->id],
             'dedup_key' => 'message:'.(int)$m->id,
         ];
     }

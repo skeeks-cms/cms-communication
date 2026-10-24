@@ -52,9 +52,14 @@ use yii\helpers\Json;
  * @property int|null                $prepared_user_id the CRM user AI worked for
  * @property int|null                $prepared_at
  * @property int|null                $prepared_edited an employee changed the AI subject or text before sending
+ * @property int|null                $cms_comm_identity_id the author of a chat message (bots)
+ * @property int|null                $reply_to_message_id the chat message this one answers
+ * @property int|null                $edited_at changed in the messenger
+ * @property int|null                $removed_at removed in the messenger
  * @property string|null             $delivery_status by events of a mailing service (services\DeliveryEvents): DELIVERY_*
  * @property int|null                $delivery_at
  *
+ * @property CmsCommIdentity|null    $identity
  * @property CmsCommConversation     $conversation
  * @property CmsCommAccount|null     $account
  * @property CmsCommMessageMailbox[] $mailboxCopies
@@ -233,6 +238,11 @@ class CmsCommMessage extends ActiveRecord
     public function getAccount()
     {
         return $this->hasOne(CmsCommAccount::class, ['id' => 'cms_comm_account_id']);
+    }
+
+    public function getIdentity()
+    {
+        return $this->hasOne(CmsCommIdentity::class, ['id' => 'cms_comm_identity_id']);
     }
 
     public function getMailboxCopies()

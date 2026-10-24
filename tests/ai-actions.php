@@ -94,8 +94,12 @@ try {
     }
     check(Yii::$app->cmsMcp->getTool('cms_comm_draft_send')->getRequiredScope() === 'cms.communication.mail_send', 'Sending needs its own scope');
     check(mb_strpos(Yii::$app->cmsMcp->getTool('cms_comm_campaign_create')->getDescription(), 'ЗАПУСТИТЬ КАМПАНИЮ ЭТИМ ИЛИ ДРУГИМ ИНСТРУМЕНТОМ НЕЛЬЗЯ') !== false, 'The campaign tool says it cannot launch');
+    // A reply to one chat (stage 5.6) sends too, with the client-messaging scope, never the preparing one.
+    $senders = ['cms_comm_draft_send' => 'cms.communication.mail_send', 'cms_comm_chat_reply_send' => 'cms.communication.send'];
     foreach (array_keys(Yii::$app->cmsMcp->getTools()) as $name) {
-        check(!preg_match('/^cms_comm_.*(launch|start|run|send$)/', $name) || $name === 'cms_comm_draft_send', 'No tool launches a campaign; only cms_comm_draft_send sends: '.$name);
+        check(!preg_match('/^cms_comm_.*(launch|start|run|send$)/', $name)
+            || (isset($senders[$name]) && Yii::$app->cmsMcp->getTool($name)->getRequiredScope() === $senders[$name]),
+            'No tool launches a campaign; only cms_comm_draft_send and cms_comm_chat_reply_send send, each with its own scope: '.$name);
     }
 
     $lead1 = testLead('test-ai-unit-1@skeeks.com', (int)$admin->id);

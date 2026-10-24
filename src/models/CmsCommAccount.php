@@ -48,9 +48,10 @@ class CmsCommAccount extends ActiveRecord
 
     public static function channels(): array
     {
-        return [
+        // Bots: the channel of every installed messenger driver (telegram, max).
+        return array_merge([
             self::CHANNEL_EMAIL => 'Электронная почта',
-        ];
+        ], \skeeks\cms\communication\bot\Bots::channels());
     }
 
     public function rules()
@@ -138,5 +139,21 @@ class CmsCommAccount extends ActiveRecord
     public static function find()
     {
         return new CmsActiveQuery(static::class);
+    }
+
+    /**
+     * Mailboxes only: a bot is an account of its own channel (telegram, max)
+     * with the same access rows, but it is not a mailbox of "Почта".
+     *
+     * @return CmsActiveQuery
+     */
+    public static function findMailboxes()
+    {
+        return static::find()->andWhere([static::tableName().'.channel' => self::CHANNEL_EMAIL]);
+    }
+
+    public function isMailbox(): bool
+    {
+        return in_array((string)$this->channel, ['', self::CHANNEL_EMAIL], true);
     }
 }

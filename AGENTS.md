@@ -144,6 +144,41 @@ site's `communication.aiTestRecipients` (exact record–address pairs,
 administrators) and skips only the repetition checks. Mailing topics by API are
 `services\MailingTopics` (administrator only); a send never creates a topic.
 
+Bots (stage 5): a messenger driver extends `bot\MessengerDriver` and only
+speaks the protocol (update key, `parseUpdate()` into `bot\BotEvent`, one
+`send()`, file download, webhook, poll); an API refusal is `bot\BotException`,
+anything else is an unknown outcome. A bot is a `cms_comm_account` of its
+channel (`bot\Bots::account()`), so mail code asks
+`CmsCommAccount::findMailboxes()`. The webhook (`controllers\BotWebhookController`,
+`/~comm-bot/<id>`) and the poll only store raw updates (`bot\BotUpdates`, one
+row per update key, the poll cursor in the same transaction); the job
+`comm.bot.apply` applies them in order (`bot\BotIngest`), then
+`communication.botHandlers`. Whatever the bot says goes through
+`bot\BotSend::queue()` (the bot gets no updates about its own messages).
+A stand works with production bots: `communication.botReceive = false`
+(never subscribe or poll) and `communication.allowedChats`.
+"Чаты" (stage 5.3): who sees and writes to a chat is `chat\ChatAccess` (access
+rows on the bot account, the employee leads or wrote to it, whole-chat links
+to records visible through `forManager()`); dialog operations are
+`chat\ChatDialogs` (take — the conversation's responsible person, transfer
+with a notification, close, reopen, read marks in
+`cms_comm_conversation_read`); folders `chat\ChatFolders`; notifications
+`chat\ChatNotifier` (a bot handler). The dialog state (`waiting_since`,
+`closed_at`) is written by `BotIngest::dialogState()` on every live message
+and by `BotSend::queue()`. Controllers: `AdminCmsCommChatController`
+(`beforeAction` hides unreadable chats), `AdminCmsCommBotController`.
+Whose a chat is (stage 5.4): a whole chat is linked to records by
+`chat\ChatLinks` (`cms_comm_conversation_link`; `attach()` without checks for
+identity flows and imports); the feed is `chat\ChatFeed` (a dialog — every
+message through `MessageLinker`, a group — one `chat_digest` log per chat and
+CRM day, recomputed by every message; called by `BotIngest` and
+`BotSend::queue()` for every new message, history included). A person is
+linked by `chat\ChatIdentities` (by hand, an invitation key
+`cms_comm_link_token`, their own verified phone through `CrmDuplicates`); a
+client is `cms_comm_identity.cms_user_id`, records reach the person's private
+chats (pass the event's chat: a chat opened with "Начать" has no messages of
+the person yet). `chat\ChatIdentityHandler` runs before `ChatNotifier`.
+
 Visits by links of letters (step F): links are marked only in
 `MailComposeService::queue()` by `services\LinkMarks` (the text written now,
 before quotes, sendable links and the opt-out link; never a link that has

@@ -17,29 +17,42 @@ return [
         'communication' => [
             'class' => \skeeks\cms\communication\CommunicationComponent::class,
             'secretKey' => $secretKey,
-            // "Отправить клиенту": messenger drivers add their channels here.
+            // "Отправить клиенту": one channel for chats of every messenger bot (drivers add none).
             'channels' => [
                 'email' => \skeeks\cms\communication\send\EmailSendChannel::class,
                 'sms' => \skeeks\cms\communication\send\SmsSendChannel::class,
+                'chat' => \skeeks\cms\communication\send\ChatSendChannel::class,
             ],
             // Mailing campaigns: mailing service drivers add their channels here.
             'campaignChannels' => [
                 'mailbox' => \skeeks\cms\communication\campaign\MailboxCampaignChannel::class,
             ],
+            // Bot events after they are stored, in this order: who the person is (invitations,
+            // their own phone, chats of a linked person), tasks asked for by "/task", then notifications
+            // about new messages.
+            'botHandlers' => [
+                'identity' => \skeeks\cms\communication\chat\ChatIdentityHandler::class,
+                'tasks' => \skeeks\cms\communication\chat\ChatTasks::class,
+                'notify' => \skeeks\cms\communication\chat\ChatNotifier::class,
+            ],
         ],
 
         // Letters in the activity feeds of leads, companies and clients.
         'skeeks' => [
+            // Group chats of bots: one summary per chat and day (chat\ChatFeed).
             'logTypes' => [
                 \skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => 'Письмо',
+                \skeeks\cms\communication\chat\ChatFeed::LOG_DIGEST => 'Сводка чата',
                 // Visits of our sites by links of letters, with the pages of the visit (services\LinkVisits).
                 \skeeks\cms\communication\services\LinkVisits::LOG_TYPE => 'Переход на сайт из письма',
             ],
             'logRenderers' => [
                 \skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => \skeeks\cms\communication\log\MessageLogRenderer::class,
+                \skeeks\cms\communication\chat\ChatFeed::LOG_DIGEST => \skeeks\cms\communication\log\ChatDigestLogRenderer::class,
                 \skeeks\cms\communication\services\LinkVisits::LOG_TYPE => \skeeks\cms\communication\log\VisitLogRenderer::class,
             ],
-            'activityLogTypes' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE, \skeeks\cms\communication\services\LinkVisits::LOG_TYPE],
+            'activityLogTypes' => [\skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE, \skeeks\cms\communication\chat\ChatFeed::LOG_DIGEST,
+                \skeeks\cms\communication\services\LinkVisits::LOG_TYPE],
             // "Создать задачу / лид / сделку" from a letter: ?source=message:ID in the standard create window.
             'recordSources' => [\skeeks\cms\communication\source\MessageRecordSource::TYPE => \skeeks\cms\communication\source\MessageRecordSource::class],
         ],
@@ -252,6 +265,108 @@ return [
                 'overlapPolicy' => 'skip',
                 'dedupKey' => static fn() => 'comm.mail.cleanup-files',
             ],
+
+            // Bots (bot\*). Updates stored by the webhook or a poll are applied in order, one bot at a time.
+            'comm.bot.apply' => [
+                'type' => 'comm.bot.apply',
+                'title' => 'Бот: обработка сообщений',
+                'handler' => \skeeks\cms\communication\jobs\BotApplyJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'transient',
+                'timeout' => 120,
+                'leaseSeconds' => 120,
+                'maxAttempts' => 1,
+                // An applied update is not applied again; a message is unique per chat.
+                'idempotent' => true,
+                'overlapPolicy' => 'coalesce',
+                'resourceKey' => static fn($payload) => 'comm-bot:'.(int)($payload['connectionId'] ?? 0),
+                'dedupKey' => static fn($payload) => 'comm.bot.apply:'.(int)($payload['connectionId'] ?? 0),
+            ],
+            'comm.bot.poll-all' => [
+                'type' => 'comm.bot.poll-all',
+                'title' => 'Боты: опрос мессенджеров',
+                'handler' => \skeeks\cms\communication\jobs\BotPollAllJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'transient',
+                'timeout' => 60,
+                'leaseSeconds' => 60,
+                'maxAttempts' => 1,
+                'idempotent' => true,
+                'overlapPolicy' => 'skip',
+                'dedupKey' => static fn() => 'comm.bot.poll-all',
+            ],
+            // Poll mode only (a site without public HTTPS). Its own lock: applying goes on beside it.
+            'comm.bot.poll' => [
+                'type' => 'comm.bot.poll',
+                'title' => 'Бот: получение сообщений опросом',
+                'handler' => \skeeks\cms\communication\jobs\BotPollJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'transient',
+                'timeout' => 120,
+                'leaseSeconds' => 120,
+                'maxAttempts' => 1,
+                'idempotent' => true,
+                'overlapPolicy' => 'skip',
+                'resourceKey' => static fn($payload) => 'comm-bot-poll:'.(int)($payload['connectionId'] ?? 0),
+                'dedupKey' => static fn($payload) => 'comm.bot.poll:'.(int)($payload['connectionId'] ?? 0),
+            ],
+            'comm.bot.send' => [
+                'type' => 'comm.bot.send',
+                'title' => 'Бот: отправка сообщения',
+                'handler' => \skeeks\cms\communication\jobs\BotSendJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'visible',
+                'retentionDays' => 30,
+                'timeout' => 300,
+                'leaseSeconds' => 360,
+                // An external send with an unknown outcome is never retried; a wait asked by the messenger is a requeue.
+                'maxAttempts' => 1,
+                'idempotent' => false,
+                'overlapPolicy' => 'skip',
+                // Messages of one bot leave one after another: the messenger's pace per chat holds.
+                'resourceKey' => static fn($payload) => 'comm-bot-send:'.(int)($payload['connectionId'] ?? 0),
+                'dedupKey' => static fn($payload) => 'comm.bot.send:'.(int)($payload['messageId'] ?? 0),
+            ],
+            'comm.bot.fetch-file' => [
+                'type' => 'comm.bot.fetch-file',
+                'title' => 'Бот: загрузка файлов сообщения',
+                'handler' => \skeeks\cms\communication\jobs\BotFetchFileJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'transient',
+                'timeout' => 300,
+                'leaseSeconds' => 120,
+                'maxAttempts' => 3,
+                'idempotent' => true,
+                'overlapPolicy' => 'skip',
+                'dedupKey' => static fn($payload) => 'comm.bot.fetch-file:'.(int)($payload['messageId'] ?? 0),
+            ],
+            // The title and the picture of a chat (a group icon, the person's photo), for a new chat and weekly.
+            'comm.bot.chat-info' => [
+                'type' => 'comm.bot.chat-info',
+                'title' => 'Бот: фото и название чата',
+                'handler' => \skeeks\cms\communication\jobs\BotChatInfoJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'transient',
+                'timeout' => 120,
+                'leaseSeconds' => 120,
+                'maxAttempts' => 2,
+                'idempotent' => true,
+                'overlapPolicy' => 'skip',
+                'dedupKey' => static fn($payload) => 'comm.bot.chat-info:'.(int)($payload['conversationId'] ?? 0),
+            ],
+            'comm.bot.maintain' => [
+                'type' => 'comm.bot.maintain',
+                'title' => 'Боты: проверка подписки и журнала',
+                'handler' => \skeeks\cms\communication\jobs\BotMaintainJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'transient',
+                'timeout' => 300,
+                'leaseSeconds' => 120,
+                'maxAttempts' => 1,
+                'idempotent' => true,
+                'overlapPolicy' => 'skip',
+                'dedupKey' => static fn() => 'comm.bot.maintain',
+            ],
         ]],
 
         // "Рассылки": creating and launching campaigns is a right of its own; so is managing mail
@@ -301,6 +416,17 @@ return [
                     'name' => 'Очистка старых файлов писем по настройкам хранения',
                     'interval' => 86400,
                 ],
+                // Bots in the poll mode; nothing to do for bots with a webhook.
+                'comm.bot.poll-all' => [
+                    'jobType' => 'comm.bot.poll-all',
+                    'name' => 'Боты: опрос мессенджеров (для сайтов без HTTPS)',
+                    'interval' => 60,
+                ],
+                'comm.bot.maintain' => [
+                    'jobType' => 'comm.bot.maintain',
+                    'name' => 'Боты: проверка подписки на сообщения и очистка журнала',
+                    'interval' => 3600,
+                ],
             ],
         ],
     ],
@@ -311,10 +437,13 @@ return [
             'communication' => \skeeks\cms\communication\mcp\CommunicationReadToolProvider::class,
             // AI actions: drafts and campaign letters prepared for people to send (never sent or launched here).
             'communication-actions' => \skeeks\cms\communication\mcp\CommunicationActionToolProvider::class,
+            // Chats of messenger bots: reading, a reply checked then sent after a person agreed, a task from a message.
+            'communication-chats' => \skeeks\cms\communication\mcp\ChatToolProvider::class,
         ],
         'historyLogDescribers' => [
             \skeeks\cms\communication\models\CmsCommMessage::LOG_TYPE => \skeeks\cms\communication\mcp\MessageHistoryDescriber::class,
             \skeeks\cms\communication\services\LinkVisits::LOG_TYPE => \skeeks\cms\communication\mcp\VisitHistoryDescriber::class,
+            \skeeks\cms\communication\chat\ChatFeed::LOG_DIGEST => \skeeks\cms\communication\mcp\ChatDigestHistoryDescriber::class,
         ],
         'historySources' => ['mailing' => \skeeks\cms\communication\mcp\MailingHistorySource::class],
         'overviewContributors' => ['mailing' => \skeeks\cms\communication\mcp\MailingOverviewContributor::class],

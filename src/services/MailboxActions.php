@@ -73,7 +73,7 @@ class MailboxActions
     public function manageableAccountIds(): array
     {
         if ($this->manageable === null) {
-            $query = CmsCommAccount::find()->select('id')->andWhere(['cms_site_id' => $this->siteId])
+            $query = CmsCommAccount::findMailboxes()->select('id')->andWhere(['cms_site_id' => $this->siteId])
                 ->andWhere(['id' => CmsCommAccountAccess::find()->select('cms_comm_account_id')
                     ->andWhere(['cms_user_id' => (int)$this->user->id, 'can_manage_messages' => 1])]);
             $this->manageable = array_map('intval', $query->column());
