@@ -166,6 +166,22 @@ botExpect(BotSubscriptions::ensure($connection)['state'] === BotSubscriptions::O
 FakeMessengerDriver::$webhook['url'] = 'https://elsewhere.test/hook';
 botExpect(BotSubscriptions::ensure($connection)['state'] === BotSubscriptions::SUBSCRIBED && FakeMessengerDriver::$webhook['url'] === Bots::webhookUrl($connection),
     'A lost or foreign subscription is restored.');
+// A relay (a messenger that cannot reach the site): the same path on the relay, then back to the site.
+$relayed = Bots::driver($connection);
+$relayed->webhookBaseUrl = 'https://relay.test:8443/';
+botExpect($relayed->validate(['webhookBaseUrl']), 'A relay address is a valid setting.');
+$connection->applyDriver($relayed);
+$connection->save(false);
+botExpect(BotSubscriptions::ensure($connection)['state'] === BotSubscriptions::SUBSCRIBED
+    && FakeMessengerDriver::$webhook['url'] === 'https://relay.test:8443/~comm-bot/'.(int)$connection->id, 'The webhook goes to the relay with the same path.');
+botExpect(BotSubscriptions::ensure($connection)['state'] === BotSubscriptions::OK, 'The hourly check keeps the relay.');
+$relayed->webhookBaseUrl = 'http://relay.test';
+botExpect(!$relayed->validate(['webhookBaseUrl']), 'A relay must be HTTPS.');
+$relayed->webhookBaseUrl = null;
+$connection->applyDriver($relayed);
+$connection->save(false);
+botExpect(BotSubscriptions::ensure($connection)['state'] === BotSubscriptions::SUBSCRIBED
+    && FakeMessengerDriver::$webhook['url'] === 'https://site.test/~comm-bot/'.(int)$connection->id, 'An empty relay is the site again.');
 
 // Durable receipt: one row per update key, repeats are not written, unknown updates are ignored.
 $group = ['id' => '-100', 'type' => 'group', 'title' => 'Компания / site.ru'];

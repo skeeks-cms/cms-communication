@@ -40,6 +40,12 @@ abstract class MessengerDriver extends ConnectionDriver
     public $apiUrl;
     /** @var string|null proxy for API requests, for example http://user:pass@host:3128 */
     public $proxy;
+    /**
+     * @var string|null address the messenger delivers the webhook to instead of
+     * the site: a relay that passes /~comm-bot/<id> to the site unchanged, with
+     * the secret header (Telegram cannot reach Russian servers)
+     */
+    public $webhookBaseUrl;
     /** @var bool first line of a reply from the CRM is the employee's name */
     public $signManager = true;
     /** @var string|null added to the employee's name: "Имя (SkeekS):" */
@@ -52,7 +58,8 @@ abstract class MessengerDriver extends ConnectionDriver
     public function rules()
     {
         return [
-            [['token', 'webhookSecret', 'apiUrl', 'proxy', 'signName', 'botId', 'botUsername'], 'filter', 'filter' => static fn($value) => $value === null ? null : trim((string)$value)],
+            [['token', 'webhookSecret', 'apiUrl', 'proxy', 'webhookBaseUrl', 'signName', 'botId', 'botUsername'], 'filter', 'filter' => static fn($value) => $value === null ? null : trim((string)$value)],
+            [['webhookBaseUrl'], 'url', 'validSchemes' => ['https'], 'skipOnEmpty' => true],
             [['token'], 'required', 'when' => fn() => $this->requireSecrets],
             [['mode'], 'in', 'range' => [self::MODE_WEBHOOK, self::MODE_POLL]],
             [['apiUrl'], 'url', 'validSchemes' => ['http', 'https', 'socks5'], 'skipOnEmpty' => true],
@@ -73,6 +80,7 @@ abstract class MessengerDriver extends ConnectionDriver
             'mode' => 'Как получать сообщения',
             'apiUrl' => 'Адрес API',
             'proxy' => 'Прокси для запросов к API',
+            'webhookBaseUrl' => 'Адрес приёма вебхука',
             'signManager' => 'Подписывать ответы именем сотрудника',
             'signName' => 'Подпись после имени',
             'botUsername' => 'Имя бота',
@@ -86,6 +94,7 @@ abstract class MessengerDriver extends ConnectionDriver
             'mode' => 'Вебхук — сообщения приходят сразу (нужен сайт по HTTPS). Опрос — для сайтов без HTTPS, с задержкой до минуты.',
             'apiUrl' => 'Пусто — адрес по умолчанию.',
             'proxy' => 'Если сервер не видит API мессенджера напрямую.',
+            'webhookBaseUrl' => 'Пусто — адрес сайта. Если мессенджер не достаёт до сайта напрямую, укажите узел-посредник по HTTPS, например https://узел:8443: он пересылает /~comm-bot/<номер бота> на сайт без изменений, вместе с заголовком секрета.',
             'signName' => 'Например, название компании: «Анна (SkeekS):».',
         ];
     }
@@ -105,6 +114,7 @@ abstract class MessengerDriver extends ConnectionDriver
             'signName',
             'apiUrl',
             'proxy',
+            'webhookBaseUrl',
         ];
     }
 

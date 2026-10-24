@@ -95,10 +95,18 @@ class Bots
         return $account;
     }
 
-    /** The address messengers deliver updates of this bot to. */
+    /**
+     * The address messengers deliver updates of this bot to: the site, or the
+     * relay of the bot setting `webhookBaseUrl` with the same path.
+     */
     public static function webhookUrl(CmsCommConnection $connection): string
     {
-        return rtrim(self::component()->siteUrl((int)$connection->cms_site_id), '/').'/~comm-bot/'.(int)$connection->id;
+        $base = trim((string)($connection->getPublicConfig()['webhookBaseUrl'] ?? ''));
+        if ($base === '') {
+            $base = self::component()->siteUrl((int)$connection->cms_site_id);
+        }
+
+        return rtrim($base, '/').'/~comm-bot/'.(int)$connection->id;
     }
 
     /**
