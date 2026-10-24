@@ -721,8 +721,7 @@ MCP, без пакета `cms-ai`). См. раздел «ИИ: разбор ба
   REST под OAuth-входом, см. «ИИ: разбор базы и личные предложения».
 - ИИ-2б. Полный цикл личного письма через API: Презентации и темы через
   REST, проверка черновика, отправка с `idempotency_key`, статус без
-  смешения очереди и доставки, отдельное право на отправку. **Сделано на
-  стенде 24.10.2026, не закоммичено и не выпущено** (`services\AiSend`,
+  смешения очереди и доставки, отдельное право на отправку. **Выпущено 24.10.2026 (`cms-communication` 1.7.0, `cms-proposal` 1.2.0, `cms-mcp` 1.0.16) и выложено на skeeks.com** (коммит проекта `bac2b329`; ИИ-клиенту нужен повторный вход с новыми правами, на проде пока нет тем рассылок) (`services\AiSend`,
   `MailingTopics`, миграция `m261101_100000`, `send\SendRefusalInterface`;
   `cms-proposal` — `services\Presentations`, `ProposalActionToolProvider`;
   `cms-mcp` — права `cms.communication.write`, `cms.communication.mail_send`,
