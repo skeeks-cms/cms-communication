@@ -58,6 +58,19 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
             .'письмо ему за последние '.$limits['recentDays'].' дней, это предложение ему за '.$limits['recentDays'].' дней, черновик ИИ или кампания, уже ждущие этого клиента. '
             .'Отказ — status=refused с reason и message, остальные строки выполняются. Не больше '.$limits['perCall'].' писем за вызов и '.$limits['perDay'].' черновиков и получателей в день на сотрудника. '
             .'Всё сделанное отмечено «Подготовлено ИИ» с названием OAuth-клиента — снять отметку нельзя.';
+        $purpose = ['purpose' => ['type' => 'string', 'enum' => array_keys(\skeeks\cms\communication\services\LetterPurpose::names()),
+            'description' => 'Назначение письма. advertising — предложение без запроса клиента: нужна тема cms_comm_topic_id, проверяется отписка, в письме будет «Отписаться». '
+                .'personal — рабочая переписка: клиент писал нам за последние 90 дней (или ответ на его письмо); без темы и блока отписки, жалоба и недоставка запрещают. '
+                .'service — служебное письмо: у клиента действующая сделка или оплаченный счёт за год. Индивидуальный текст и приложенная Презентация назначение не меняют: '
+                .'без переписки и сотрудничества письмо — advertising. Без purpose и с темой — advertising.']];
+        $testMode = ['test_mode' => ['type' => 'boolean', 'description' => 'Тестовый режим: только администратор и только для тестовых получателей из настройки сайта '
+            .'(клиент + точный адрес, сейчас company:712 + asdasd@skeeks.com). Снимает только проверки повторного письма и повторного предложения; права, адрес, отписка, '
+            .'вложения, лимиты, check_token, idempotency_key и подтверждение остаются. Передавайте одинаково в черновик, проверку и отправку.']];
+        $attachments = ['attachments' => ['type' => 'array', 'maxItems' => \skeeks\cms\communication\services\AiDraftFiles::MAX_FILES,
+            'description' => 'Файлы, загруженные вами через cms_storage_file_upload: [{"cms_storage_file_id":N,"inline":false}] — вложение; inline=true — картинка в тексте на месте «{Картинка}» (или в конце). '
+                .'PNG, JPEG, GIF, WEBP, PDF по содержимому файла, до '.(\skeeks\cms\communication\services\AiDraftFiles::MAX_FILE_SIZE / 1048576).' МБ каждый, до '
+                .(\skeeks\cms\communication\services\AiDraftFiles::MAX_TOTAL / 1048576).' МБ вместе. В письмо идёт копия: ваш файл не меняется и не удаляется.',
+            'items' => ['type' => ['object', 'integer'], 'properties' => ['cms_storage_file_id' => ['type' => 'integer'], 'inline' => ['type' => 'boolean']]]]];
         $topicFields = [
             'name' => ['type' => 'string', 'maxLength' => 255, 'description' => 'Название темы: его видит клиент на странице отписки.'],
             'description' => ['type' => ['string', 'null'], 'maxLength' => 2000, 'description' => 'Описание для клиента на странице отписки.'],
@@ -67,35 +80,63 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
 
         return [
             $this->tool('cms_comm_draft_create',
-                'Черновики личных писем клиентам с приложенным предложением. Черновик появляется в «Черновиках» почты у ответственного за клиента сотрудника '
+                'Черновики личных писем клиентам: своя тема и текст каждому, предложение, файлы. Черновик появляется в «Черновиках» почты у ответственного за клиента сотрудника '
                 .'(его ящик по умолчанию) или в вашем ящике cms_comm_account_id, если вам можно с него отправлять. Сам черновик ничего не отправляет: его отправляет сотрудник в «Почте», '
                 .'а через API — только черновик в вашем ящике после cms_comm_draft_check и cms_comm_draft_send (отдельное право). '
-                .'Письмо уйдёт как рассылка темы cms_comm_topic_id (cms_comm_topic_list) одному получателю со ссылкой «Отписаться». '
-                .'offer — предложение «proposal:<id>»: общая Презентация или КП этого клиента (cms_proposal_library_get, cms_proposal_list); личная ссылка создаётся при отправке, открытие видно в ленте и ставит задачу по правилам предложения.'
-                .$rules.' Пример: {"cms_comm_topic_id":1,"offer":"proposal:10","cms_comm_account_id":1,"items":[{"record_type":"company","record_id":712,"address":"asdasd@skeeks.com","subject":"…","body_html":"<p>Здравствуйте!</p><p>…</p><p>{Ссылка}</p>"}],"confirm":true}.',
-                'cms.communication.write', [$this, 'draftCreate'], $this->object([
-                    'cms_comm_topic_id' => ['type' => 'integer'],
+                .'purpose — назначение: advertising (тема рассылки, «Отписаться»), personal (рабочая переписка), service (служебное). '
+                .'offer — предложение «proposal:<id>»: общая Презентация или КП этого клиента (cms_proposal_library_get, cms_proposal_list); личная ссылка создаётся при отправке, открытие видно в ленте и ставит задачу по правилам предложения. '
+                .'attachments — ваши загруженные файлы: вложения или картинки в тексте.'
+                .$rules.' Пример: {"purpose":"advertising","cms_comm_topic_id":1,"offer":"proposal:1","cms_comm_account_id":1,"items":[{"record_type":"company","record_id":712,"address":"asdasd@skeeks.com",'
+                .'"subject":"…","body_html":"<p>Здравствуйте!</p><p>…</p><p>{Картинка}</p><p>{Ссылка}</p>","attachments":[{"cms_storage_file_id":501,"inline":true}]}],"confirm":true}.',
+                'cms.communication.write', [$this, 'draftCreate'], $this->object($purpose + [
+                    'cms_comm_topic_id' => ['type' => 'integer', 'description' => 'Тема рассылки — только для purpose=advertising.'],
                     'offer' => ['type' => 'string', 'description' => 'Предложение для всех писем вызова: proposal:<id>. У строки может быть своё offer.'],
                     'cms_comm_account_id' => ['type' => 'integer', 'description' => 'Ваш ящик (cms_comm_account_list с правом отправки). Без него — ящик ответственного за клиента.'],
                     'items' => ['type' => 'array', 'minItems' => 1, 'maxItems' => $limits['perCall'], 'items' => $this->object($record + [
                         'offer' => ['type' => 'string'],
-                    ], ['record_type', 'record_id', 'subject', 'body_html'])],
-                ] + $confirm, ['cms_comm_topic_id', 'items'])),
+                    ] + $attachments, ['record_type', 'record_id', 'subject', 'body_html'])],
+                ] + $testMode + $confirm, ['items'])),
+            $this->tool('cms_comm_draft_get',
+                'Ваш черновик (в ваших «Черновиках»): получатель, клиент, ящик, назначение, тема рассылки, тема и начало текста, предложение, фактический состав файлов '
+                .'(id, имя, MIME, размер, картинка в тексте или вложение, итог и лимиты), отметка ИИ. Пример: {"draft_id":43}.',
+                'cms.communication.read', [$this, 'draftGet'], $this->object(['draft_id' => ['type' => 'integer']], ['draft_id'])),
+            $this->tool('cms_comm_draft_update',
+                'Изменить ваш черновик ИИ: только переданные поля — subject, body_html, address (другой адрес из карточки клиента), purpose, cms_comm_topic_id, offer. '
+                .'Файлы остаются (новый текст получает картинки на местах «{Картинка}» или в конце). Те же проверки, что при создании. После изменения нужна новая cms_comm_draft_check. '
+                .'Без confirm=true — только проверка. Пример: {"draft_id":43,"subject":"Новая тема","confirm":true}.',
+                'cms.communication.write', [$this, 'draftUpdate'], $this->object(['draft_id' => ['type' => 'integer'], 'subject' => ['type' => 'string'], 'body_html' => ['type' => 'string'],
+                    'address' => ['type' => 'string'], 'cms_comm_topic_id' => ['type' => ['integer', 'null']], 'offer' => ['type' => 'string']] + $purpose + $testMode + $confirm, ['draft_id'])),
+            $this->tool('cms_comm_draft_attachment_add',
+                'Добавить к вашему черновику файл, загруженный вами через cms_storage_file_upload: вложение или (inline=true) картинку в тексте на месте «{Картинка}» или в конце. '
+                .'Проверяется владелец файла, фактический тип по содержимому (PNG, JPEG, GIF, WEBP, PDF; SVG, HTML, архивы и программы — нет), размер и количество. '
+                .'Тот же файл повторно не добавляется (вернётся уже добавленный). В письмо идёт копия, ваш файл в хранилище не меняется. '
+                .'После добавления нужна новая cms_comm_draft_check. Пример: {"draft_id":43,"cms_storage_file_id":501,"inline":true}.',
+                'cms.communication.write', [$this, 'attachmentAdd'], $this->object(['draft_id' => ['type' => 'integer'], 'cms_storage_file_id' => ['type' => 'integer'],
+                    'inline' => ['type' => 'boolean']], ['draft_id', 'cms_storage_file_id'])),
+            $this->tool('cms_comm_draft_attachment_remove',
+                'Убрать файл из вашего черновика по id из cms_comm_draft_get (картинка уходит и из текста). Загруженный вами файл в хранилище остаётся. '
+                .'Пример: {"draft_id":43,"attachment_id":7}.',
+                'cms.communication.write', [$this, 'attachmentRemove'], $this->object(['draft_id' => ['type' => 'integer'], 'attachment_id' => ['type' => 'integer']],
+                    ['draft_id', 'attachment_id'])),
             $this->tool('cms_comm_draft_check',
                 'Проверка вашего черновика перед отправкой через API. Ничего не отправляет, не создаёт личную ссылку и не засчитывает открытие. '
                 .'Проверяет то же, что форма письма в «Почте» (ящик и право отправки с него, адреса, «только свои клиенты», MailingPolicy темы, документ), и правила ИИ: '
                 .'одному адресу из карточки клиента CRM, без копий, нет письма клиенту и отправки этого предложения за '.$limits['recentDays'].' дней, предложение можно отправить (срок, адрес страницы), '
                 .'дневной лимит отправок ('.$limits['sendPerDay'].'). Возвращает получателя, отправителя, тему, предложение, предпросмотр (тема, текст, HTML с неработающей кнопкой) и problems. '
-                .'Пройденная проверка даёт check_token — отпечаток получателя, отправителя, темы, текста и предложения; он нужен для cms_comm_draft_send. Пример: {"draft_id":43}.',
+                .'Назначение письма — по правилам purpose (у personal и service нет темы и блока отписки, у advertising — тема и «Отписаться»); attachments — фактические файлы '
+                .'(id, имя, MIME, размер, итог, лимиты); warnings — предупреждения (например, адрес отписан от рекламы). '
+                .'Пройденная проверка даёт check_token — отпечаток получателя, отправителя, назначения, темы, текста, предложения, файлов (по содержимому) и тестового режима; '
+                .'он нужен для cms_comm_draft_send. Пример: {"draft_id":43}.',
                 'cms.communication.write', [$this, 'draftCheck'], $this->object([
                     'draft_id' => ['type' => 'integer', 'description' => 'Черновик в ваших «Черновиках» (cms_comm_draft_create возвращает draft_id).'],
-                ], ['draft_id'])),
+                ] + $testMode, ['draft_id'])),
             $this->tool('cms_comm_draft_send',
                 'Отправить проверенный черновик клиенту: только после cms_comm_draft_check и явного согласия человека на этого получателя, отправителя, текст и предложение. '
                 .'Нужны draft_id, check_token из проверки, idempotency_key и confirm=true. Если черновик изменился после проверки — отказ changed_after_check, ничего не отправлено. '
                 .'idempotency_key — новый уникальный ключ на каждое письмо (8–128 символов): повтор с тем же ключом и теми же данными вернёт прежний результат без второго письма, '
                 .'с другими данными — отказ idempotency_key_reused. Если ответ потерян (тайм-аут), не отправляйте заново, а узнайте результат по ключу: cms_comm_send_status. '
-                .'Письмо уходит штатно: личная ссылка на предложение, «Отписаться», лента клиента, отметка «Отправлено ИИ через API». '
+                .'Письмо уходит штатно: файлы вложениями (картинки в тексте — внутри письма), личная ссылка на предложение, «Отписаться» только у advertising, лента клиента, '
+                .'отметка «Отправлено ИИ через API». test_mode — как в проверке. '
                 .'Результат: state — queued (в очереди), sending, sent (принято почтовым сервером отправителя, это не доставка), failed, unknown (неизвестно, повторно не отправляется); '
                 .'delivery — not_confirmed или bounced; id письма и отправки предложения. Без confirm=true — только проверка. '
                 .'Пример: {"draft_id":43,"check_token":"…","idempotency_key":"offer-712-20261024-1","confirm":true}.',
@@ -104,7 +145,7 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                     'check_token' => ['type' => 'string'],
                     'idempotency_key' => ['type' => 'string', 'minLength' => 8, 'maxLength' => 128],
                     'confirm' => ['type' => 'boolean'],
-                ], ['draft_id', 'check_token', 'idempotency_key'])),
+                ] + $testMode, ['draft_id', 'check_token', 'idempotency_key'])),
             $this->tool('cms_comm_send_status',
                 'Результат отправки через API по idempotency_key (или cms_comm_message_id вашей отправки): state (queued, sending, sent — принято сервером отправителя, failed, unknown), '
                 .'ошибка, delivery (not_confirmed — почта доставку не подтверждает; bounced — пришло сообщение о недоставке или адрес отмечен недоставляемым), '
@@ -168,19 +209,23 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
 
     public function draftCheck(array $arguments): array
     {
-        $result = $this->sender()->check((int)($arguments['draft_id'] ?? 0));
-        $this->log('draft_check', ['draft_id' => (int)($arguments['draft_id'] ?? 0), 'ok' => $result['ok'],
-            'reasons' => array_column($result['problems'], 'reason')]);
+        $testMode = !empty($arguments['test_mode']);
+        $result = $this->sender()->check((int)($arguments['draft_id'] ?? 0), $testMode);
+        $this->log('draft_check', ['draft_id' => (int)($arguments['draft_id'] ?? 0), 'ok' => $result['ok'], 'test_mode' => $testMode,
+            'purpose' => $result['purpose']['code'] ?? null, 'reasons' => array_column($result['problems'], 'reason')]);
 
         return $result;
     }
 
     public function draftSend(array $arguments): array
     {
+        $testMode = !empty($arguments['test_mode']);
         $result = $this->sender()->send((int)($arguments['draft_id'] ?? 0), (string)($arguments['check_token'] ?? ''),
-            (string)($arguments['idempotency_key'] ?? ''), self::confirmed($arguments));
+            (string)($arguments['idempotency_key'] ?? ''), self::confirmed($arguments), $testMode);
         $this->log('draft_send', [
             'draft_id' => (int)($arguments['draft_id'] ?? 0),
+            'test_mode' => $testMode,
+            'purpose' => $result['message']['purpose'] ?? null,
             'state' => $result['state'] ?? null,
             'repeated' => $result['repeated'] ?? null,
             'cms_comm_message_id' => $result['message']['id'] ?? null,
@@ -188,6 +233,63 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
         ]);
 
         return $result;
+    }
+
+    public function draftGet(array $arguments): array
+    {
+        $draft = (new AiActions($this->user(), self::clientName()))->ownDraft((int)($arguments['draft_id'] ?? 0));
+        $account = $draft->account;
+        $record = $draft->context_model_code && $draft->context_model_id
+            ? (new \skeeks\cms\communication\services\MailComposeService($this->user()))->contextRecord((string)$draft->context_model_code, (int)$draft->context_model_id) : null;
+        $purpose = \skeeks\cms\communication\services\LetterPurpose::of($draft->purpose, $draft->cms_comm_topic_id ? (int)$draft->cms_comm_topic_id : null);
+        $topic = $draft->cms_comm_topic_id ? \skeeks\cms\communication\models\CmsCommTopic::findOne((int)$draft->cms_comm_topic_id) : null;
+
+        return [
+            'id' => (int)$draft->id,
+            'to' => $draft->getToAddresses(),
+            'client' => $record ? ['type' => \skeeks\cms\communication\services\CrmRecords::typeOfCode(get_class($record)), 'id' => (int)$record->primaryKey,
+                'name' => \skeeks\cms\communication\services\CrmRecords::name($record)] : null,
+            'sender' => $account ? ['cms_comm_account_id' => (int)$account->id, 'address' => (string)$account->address] : null,
+            'purpose' => $purpose,
+            'topic' => $topic ? ['id' => (int)$topic->id, 'name' => (string)$topic->name] : null,
+            'subject' => (string)$draft->subject,
+            'snippet' => $draft->getSnippet(500),
+            'offers' => $draft->getSendableRefs(),
+            'attachments' => \skeeks\cms\communication\services\AiDraftFiles::describe($draft),
+            'prepared' => \skeeks\cms\communication\services\AiMark::forApi(\skeeks\cms\communication\services\AiMark::of($draft)),
+            'updated_at' => $draft->updated_at ? date('c', (int)$draft->updated_at) : null,
+        ];
+    }
+
+    public function draftUpdate(array $arguments): array
+    {
+        return $this->run('draft_update', $arguments, static fn(AiActions $ai, bool $apply) => $ai->updateDraft($arguments, $apply));
+    }
+
+    public function attachmentAdd(array $arguments): array
+    {
+        $user = $this->user();
+        $draft = (new AiActions($user, self::clientName()))->ownDraft((int)($arguments['draft_id'] ?? 0));
+        $files = new \skeeks\cms\communication\services\AiDraftFiles($user, (int)\Yii::$app->skeeks->site->id);
+        try {
+            $file = $files->add($draft, (int)($arguments['cms_storage_file_id'] ?? 0), !empty($arguments['inline']));
+        } catch (\skeeks\cms\communication\services\AiRefusal $e) {
+            return ['success' => false, 'reason' => $e->reason, 'message' => $e->getMessage()];
+        }
+        $this->log('draft_attachment_add', ['draft_id' => (int)$draft->id, 'attachment_id' => (int)$file->id, 'inline' => (bool)$file->is_inline]);
+
+        return ['success' => true, 'attachment_id' => (int)$file->id, 'attachments' => \skeeks\cms\communication\services\AiDraftFiles::describe($draft),
+            'note' => 'Перед отправкой снова cms_comm_draft_check.'];
+    }
+
+    public function attachmentRemove(array $arguments): array
+    {
+        $user = $this->user();
+        $draft = (new AiActions($user, self::clientName()))->ownDraft((int)($arguments['draft_id'] ?? 0));
+        $removed = (new \skeeks\cms\communication\services\AiDraftFiles($user, (int)\Yii::$app->skeeks->site->id))->remove($draft, (int)($arguments['attachment_id'] ?? 0));
+        $this->log('draft_attachment_remove', ['draft_id' => (int)$draft->id, 'attachment_id' => (int)($arguments['attachment_id'] ?? 0), 'removed' => $removed]);
+
+        return ['success' => $removed, 'message' => $removed ? null : 'Такого файла в черновике нет.', 'attachments' => \skeeks\cms\communication\services\AiDraftFiles::describe($draft)];
     }
 
     public function sendStatus(array $arguments): array

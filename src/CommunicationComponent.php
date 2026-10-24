@@ -132,6 +132,17 @@ class CommunicationComponent extends Component
      */
     public $aiLimits = [];
 
+    /**
+     * Test recipients of letters through the API (test_mode=true of
+     * cms_comm_draft_create/check/send): "<record type>:<id>" => addresses,
+     * e.g. ['company:712' => ['test@example.com']]. Only these pairs, only for
+     * administrators; a test send skips the repetition checks only. Set in the
+     * site config: no tool changes it. Empty — no test mode.
+     *
+     * @var array
+     */
+    public $aiTestRecipients = [];
+
     /** @var SendableSourceInterface[] */
     private $_sendableSources = [];
 

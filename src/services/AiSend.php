@@ -75,14 +75,15 @@ class AiSend
     /**
      * @return array ok, check_token (when ok), problems [reason, message], draft, recipient, sender, topic, offers, preview, prepared
      */
-    public function check(int $draftId): array
+    public function check(int $draftId, bool $testMode = false): array
     {
-        $prepared = $this->prepare($draftId);
+        $prepared = $this->prepare($draftId, $testMode);
         $form = $prepared['form'];
         $problems = $prepared['problems'];
         $result = [
             'ok' => !$problems,
             'draft' => ['id' => $draftId, 'owner' => ['id' => (int)$this->user->id, 'name' => (string)$this->user->shortDisplayName]],
+            'test_mode' => $testMode,
         ];
         if ($form) {
             $result += $this->describe($form, $prepared);
@@ -104,7 +105,7 @@ class AiSend
      *
      * @return array form (ComposeForm|null), draft, record, problems, token, sendables
      */
-    private function prepare(int $draftId): array
+    private function prepare(int $draftId, bool $testMode = false): array
     {
         $problem = static fn(string $reason, string $message) => ['reason' => $reason, 'message' => $message];
         $drafts = new MailDrafts($this->user, $this->siteId);
@@ -126,15 +127,14 @@ class AiSend
         $form->cms_comm_account_id = $form->cms_comm_account_id ?: $service->defaultAccountId();
         $drafts->applyAiDraft($form);
         $problems = [];
+        $warnings = [];
 
-        if (!$draft->cms_comm_topic_id) {
-            $problems[] = $problem(self::REASON_NO_TOPIC, 'У черновика нет темы рассылки: через API отправляются только предложения с темой и ссылкой «Отписаться». '
-                .'Создайте черновик через cms_comm_draft_create с cms_comm_topic_id.');
-        } else {
-            $topic = CmsCommTopic::findOne((int)$draft->cms_comm_topic_id);
-            if (!$topic || !$topic->is_active) {
-                $problems[] = $problem(AiActions::REASON_INVALID, 'Тема рассылки черновика выключена или удалена: включите её или создайте черновик с другой темой.');
-            }
+        // The purpose decides what the letter needs: a topic and the opt-out link, or a dialog, or cooperation.
+        $purpose = LetterPurpose::of($draft->purpose, $draft->cms_comm_topic_id ? (int)$draft->cms_comm_topic_id : null);
+        $form->purpose = $purpose;
+        if (!$purpose) {
+            $problems[] = $problem(self::REASON_NO_TOPIC, 'У черновика не задано назначение: через API отправляются письма ИИ с purpose (advertising с темой, personal, service). '
+                .'Задайте его: cms_comm_draft_update с purpose.');
         }
         if (!$form->validate()) {
             foreach ($form->getFirstErrors() as $error) {
@@ -153,7 +153,24 @@ class AiSend
         if ($form->getCcAddresses() || $form->getBccAddresses()) {
             $problems[] = $problem(AiActions::REASON_INVALID, 'Через API письмо уходит одному получателю, без копий.');
         }
-        if ($record) {
+        if ($purpose && $record) {
+            $warnings = LetterPurpose::check($purpose, $form->cms_comm_topic_id ? (int)$form->cms_comm_topic_id : null, $record,
+                (string)($to[0] ?? ''), $this->siteId, $form->reply_to_message_id ? (int)$form->reply_to_message_id : null)['warnings'];
+        }
+
+        // Test mode: an administrator, a server-listed record and address; it skips only the repetition checks.
+        if ($testMode) {
+            $type = $record ? CrmRecords::typeOfCode(method_exists($record, 'getSkeeksModelCode') ? (string)$record->getSkeeksModelCode() : get_class($record)) : '';
+            if (!\Yii::$app->authManager || !\Yii::$app->authManager->checkAccess((int)$this->user->id, \skeeks\cms\rbac\CmsManager::PERMISSION_ROLE_ADMIN_ACCESS)) {
+                $problems[] = $problem('test_mode_not_allowed', 'Тестовый режим доступен только администратору.');
+            } elseif (!$record || count($to) !== 1 || !AiActions::isTestRecipient((string)$type, (int)$record->primaryKey, (string)$to[0])) {
+                $problems[] = $problem('test_mode_not_allowed', 'Тестовый режим только для разрешённых тестовых получателей (communication.aiTestRecipients): '
+                    .($record ? $type.':'.$record->primaryKey : 'без клиента').' + '.implode(', ', $to).' среди них нет.');
+            }
+        }
+        // A repetition is a mailing concern: personal and service letters continue a dialog.
+        $repetition = $purpose === LetterPurpose::ADVERTISING && !$testMode;
+        if ($record && $repetition) {
             $days = AiActions::limits()['recentDays'];
             if ($days > 0 && ($at = AiActions::lastLetterAt($record, time() - $days * 86400))) {
                 $problems[] = $problem(AiActions::REASON_RECENT_LETTER, 'Клиенту писали '.\Yii::$app->formatter->asDate($at, 'php:d.m.Y').' (меньше '.$days.' дней назад).');
@@ -171,9 +188,15 @@ class AiSend
             }
             $source = \Yii::$app->communication->getSendableSource($item['type']);
             $days = AiActions::limits()['recentDays'];
-            if ($record && $days > 0 && $source instanceof SendHistoryInterface && ($at = $source->lastSentAt((int)$item['id'], $record)) && $at >= time() - $days * 86400) {
+            if ($record && $repetition && $days > 0 && $source instanceof SendHistoryInterface && ($at = $source->lastSentAt((int)$item['id'], $record)) && $at >= time() - $days * 86400) {
                 $problems[] = $problem(AiActions::REASON_RECENT_OFFER, 'Это предложение отправляли клиенту '.\Yii::$app->formatter->asDate($at, 'php:d.m.Y').'.');
             }
+        }
+
+        // Files: what the draft holds now, within the limits.
+        $files = AiDraftFiles::describe($draft);
+        if ($files['count'] > AiDraftFiles::MAX_FILES || $files['total_size'] > AiDraftFiles::MAX_TOTAL) {
+            $problems[] = $problem('attachment', 'Не больше '.AiDraftFiles::MAX_FILES.' файлов и '.(AiDraftFiles::MAX_TOTAL / 1048576).' МБ на письмо.');
         }
 
         $limit = AiActions::limits()['sendPerDay'];
@@ -181,20 +204,29 @@ class AiSend
             $problems[] = $problem(self::REASON_SEND_LIMIT, 'Дневной лимит отправок через API исчерпан: не больше '.$limit.' писем в день на сотрудника.');
         }
 
-        return ['form' => $form, 'draft' => $draft, 'record' => $record, 'problems' => $problems, 'token' => $this->token($draft, $form), 'sendables' => $sendables];
+        return ['form' => $form, 'draft' => $draft, 'record' => $record, 'problems' => $problems, 'warnings' => $warnings, 'purpose' => $purpose,
+            'files' => $files, 'token' => $this->token($draft, $form, $purpose, $testMode), 'sendables' => $sendables];
     }
 
-    /** Fingerprint of what would leave: draft, sender, recipients, subject, text, offers, topic, client. */
-    private function token(CmsCommDraft $draft, ComposeForm $form): string
+    /**
+     * Fingerprint of what would leave: draft, sender, recipients, subject, text, offers, purpose and topic,
+     * client, files (by content) and the test mode. Upload tokens of pictures change with every request:
+     * the text is taken without them, the pictures count by their content.
+     */
+    private function token(CmsCommDraft $draft, ComposeForm $form, ?string $purpose, bool $testMode): string
     {
         $sendables = array_map('strval', (array)$form->sendables);
         sort($sendables);
+        $html = RichTextHtml::clean($form->getHtml(), ComposeForm::EDITOR_PRESET);
+        $html = (string)preg_replace('~<img[^>]*data-sx-upload="[^"]*"[^>]*>~i', '<img data-sx-upload>', $html);
+        $files = array_map(static fn($f) => [(string)$f->content_hash, (int)$f->is_inline, (string)$f->name], $draft->getFiles()->all());
 
         return hash('sha256', json_encode([
             (int)$draft->id, (int)$form->cms_comm_account_id,
             $form->getToAddresses(), $form->getCcAddresses(), $form->getBccAddresses(),
-            trim((string)$form->subject), preg_replace('/\s+/u', ' ', trim(RichTextHtml::clean($form->getHtml(), ComposeForm::EDITOR_PRESET))),
-            $sendables, (int)$form->cms_comm_topic_id, (string)$form->context_model_code, (int)$form->context_model_id,
+            trim((string)$form->subject), preg_replace('/\s+/u', ' ', trim($html)),
+            $sendables, (string)$purpose, (int)$form->cms_comm_topic_id, (string)$form->context_model_code, (int)$form->context_model_id,
+            $files, $testMode,
         ], JSON_UNESCAPED_UNICODE));
     }
 
@@ -219,13 +251,19 @@ class AiSend
                 'client' => $record ? ['type' => CrmRecords::typeOfCode(get_class($record)), 'id' => (int)$record->primaryKey, 'name' => CrmRecords::name($record)] : null,
             ],
             'sender' => $account ? ['cms_comm_account_id' => (int)$account->id, 'address' => (string)$account->address, 'name' => (string)$account->name] : null,
+            'purpose' => $prepared['purpose'] ? ['code' => $prepared['purpose'], 'name' => LetterPurpose::names()[$prepared['purpose']],
+                'opt_out' => $prepared['purpose'] === LetterPurpose::ADVERTISING] : null,
             'topic' => $topic ? ['id' => (int)$topic->id, 'name' => (string)$topic->name] : null,
             'offers' => $offers,
+            'attachments' => $prepared['files'] ?? null,
+            'warnings' => $prepared['warnings'] ?? [],
             'preview' => [
                 'subject' => (string)$form->subject,
                 'text' => $text,
                 'html' => $html,
-                'note' => 'Предпросмотр: кнопка предложения не ведёт на личную ссылку, ссылка «Отписаться» добавится при отправке. Ничего не отправлено.',
+                'note' => 'Предпросмотр: кнопка предложения не ведёт на личную ссылку'
+                    .($prepared['purpose'] === LetterPurpose::ADVERTISING ? ', ссылка «Отписаться» добавится при отправке' : ', блока отписки нет — это не рассылка')
+                    .'; картинки и вложения — из attachments. Ничего не отправлено.',
             ],
             'prepared' => AiMark::forApi(is_array($form->aiMark) ? $form->aiMark : null),
         ];
@@ -236,7 +274,7 @@ class AiSend
     /**
      * @return array state (see status()), repeated, problems when refused
      */
-    public function send(int $draftId, string $checkToken, string $key, bool $confirm): array
+    public function send(int $draftId, string $checkToken, string $key, bool $confirm, bool $testMode = false): array
     {
         $key = trim($key);
         if (!preg_match('/^[A-Za-z0-9._:\-]{8,128}$/', $key)) {
@@ -255,7 +293,7 @@ class AiSend
             return ['repeated' => true] + $this->status($existing);
         }
 
-        $prepared = $this->prepare($draftId);
+        $prepared = $this->prepare($draftId, $testMode);
         if ($prepared['problems']) {
             return ['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => $prepared['problems'],
                 'next' => 'Ничего не отправлено. Исправьте причины и повторите cms_comm_draft_check.'];
@@ -273,7 +311,7 @@ class AiSend
 
         $row = null;
         try {
-            CmsCommApiSend::getDb()->transaction(function () use ($prepared, $key, $hash, $draftId, &$row) {
+            CmsCommApiSend::getDb()->transaction(function () use ($prepared, $key, $hash, $draftId, $testMode, &$row) {
                 $row = new CmsCommApiSend([
                     'cms_site_id' => $this->siteId,
                     'cms_user_id' => (int)$this->user->id,
@@ -281,6 +319,8 @@ class AiSend
                     'idempotency_key' => $key,
                     'request_hash' => $hash,
                     'cms_comm_draft_id' => $draftId,
+                    'purpose' => $prepared['purpose'],
+                    'test_mode' => (int)$testMode,
                 ]);
                 $row->save(false);
                 // The send of the offer learns that AI sent it (its feed entry says so); the letter's own mark stays as prepared.
@@ -372,6 +412,13 @@ class AiSend
                 'to' => array_keys($message->getTo()),
                 'sent_by' => $message->sent_by_user_id ? (int)$message->sent_by_user_id : null,
                 'message_at' => self::date((int)$message->message_at),
+                'purpose' => $row->purpose,
+                'test_mode' => (bool)$row->test_mode,
+                'opt_out' => (bool)$message->unsubscribe_url,
+                // The files the letter carries as MIME parts (pictures inside the text by cid:).
+                'attachments' => array_map(static fn($f) => ['name' => (string)$f->name, 'mime' => $f->mime_type, 'size' => $f->size !== null ? (int)$f->size : null,
+                    'inline' => (bool)$f->is_inline], \skeeks\cms\communication\models\CmsCommMessageFile::find()->andWhere(['cms_comm_message_id' => (int)$message->id])
+                    ->orderBy(['id' => SORT_ASC])->all()),
             ],
             'delivery' => $this->delivery($message),
             'offers' => $this->offers((int)$message->id),

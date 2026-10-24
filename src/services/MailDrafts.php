@@ -89,7 +89,10 @@ class MailDrafts
         }
         $mark['edited'] = AiMark::hash((string)$form->subject, $form->getHtml()) !== (string)$draft->prepared_hash;
         $form->aiMark = $mark;
-        if ($draft->cms_comm_topic_id) {
+        // The purpose decides: only an advertising letter goes with its topic and the opt-out link.
+        $purpose = LetterPurpose::of($draft->purpose, $draft->cms_comm_topic_id ? (int)$draft->cms_comm_topic_id : null);
+        $form->purpose = $purpose;
+        if ($purpose === LetterPurpose::ADVERTISING && $draft->cms_comm_topic_id) {
             $form->cms_comm_topic_id = (int)$draft->cms_comm_topic_id;
         }
 

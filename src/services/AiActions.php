@@ -114,14 +114,17 @@ class AiActions
     /**
      * Drafts of personal letters, one per client.
      *
-     * @param array $args cms_comm_topic_id (required), offer ("proposal:10", optional), cms_comm_account_id (optional),
-     *                    items: record_type, record_id, address, subject, body_html, offer
+     * @param array $args purpose (LetterPurpose; advertising when a topic is given), cms_comm_topic_id (advertising),
+     *                    offer ("proposal:10", optional), cms_comm_account_id (optional), test_mode,
+     *                    items: record_type, record_id, address, subject, body_html, offer, attachments
      * @return array created, refused, items (status created|ready|refused, reason, message, draft …), limits
      */
     public function createDrafts(array $args, bool $apply): array
     {
         $items = $this->items($args);
-        $topic = $this->topic($args);
+        $purpose = $this->purpose($args);
+        $topic = $purpose === LetterPurpose::ADVERTISING ? $this->topic($args) : null;
+        $testMode = $this->testMode($args);
         $accountId = (int)($args['cms_comm_account_id'] ?? 0);
         if ($accountId && !(new MailComposeService($this->user, $this->siteId))->canSendFrom($accountId)) {
             throw new \DomainException('С ящика '.$accountId.' вам нельзя отправлять письма: черновик в нём сделать нельзя. Без cms_comm_account_id черновик ляжет в ящик ответственного за клиента.');
@@ -135,7 +138,7 @@ class AiActions
             $row = ['index' => $i, 'record' => ['type' => (string)($item['record_type'] ?? ''), 'id' => (int)($item['record_id'] ?? 0)]];
             try {
                 $this->once($seen, $item);
-                $plan = $this->planDraft($item, $topic, $accountId, (string)($item['offer'] ?? $args['offer'] ?? ''));
+                $plan = $this->planDraft($item, $purpose, $topic, $accountId, (string)($item['offer'] ?? $args['offer'] ?? ''), $testMode);
                 if ($left <= 0) {
                     throw new AiRefusal(self::REASON_DAY_LIMIT, 'Дневной лимит ИИ исчерпан: не больше '.$limits['perDay'].' черновиков и получателей в день на сотрудника.');
                 }
@@ -155,16 +158,21 @@ class AiActions
         }
 
         return $this->summary($result, $apply, [
+            'purpose' => $purpose,
+            'test_mode' => $testMode,
             'note' => 'Черновики лежат в «Черновиках» почты у сотрудника owner: он проверяет текст и отправляет сам. Личная ссылка на предложение создаётся при отправке.',
             'drafts_url' => self::url('/cmsCommunication/admin-cms-comm-message/mail', ['folder' => MailFolders::DRAFTS]),
         ]);
     }
 
     /** Checks one draft and prepares what to save. @throws AiRefusal */
-    private function planDraft(array $item, CmsCommTopic $topic, int $accountId, string $offer): array
+    private function planDraft(array $item, string $purpose, ?CmsCommTopic $topic, int $accountId, string $offer, bool $testMode, ?CmsCommDraft $draft = null): array
     {
         [$record, $type] = $this->record($item);
         $address = $this->address($record, (string)($item['address'] ?? ''));
+        if ($testMode) {
+            $this->checkTestRecipient($record, $type, $address);
+        }
 
         if ($accountId) {
             $owner = $this->user;
@@ -177,10 +185,12 @@ class AiActions
                 throw new AiRefusal(self::REASON_NO_MAILBOX, 'У ответственного '.$owner->shortDisplayName.' нет ящика, с которого он может отправлять письма. Укажите cms_comm_account_id своего ящика.');
             }
         }
-        $this->checkContact($record, $type, $address, $topic);
-        $this->checkNoDraft($record);
+        $this->checkPurpose($purpose, $topic, $record, $type, $address, $testMode);
+        $this->checkNoDraft($record, $draft ? (int)$draft->id : null);
         $this->checkNotInCampaign($record, null);
-        $sendable = $offer !== '' ? $this->offer($offer, $record, $owner) : null;
+        // A repeated offer is a mailing concern: personal and service letters may answer with an offer sent before.
+        $sendable = $offer !== '' ? $this->offer($offer, $record, $owner, $purpose === LetterPurpose::ADVERTISING && !$testMode) : null;
+        $attachments = $this->attachmentSources($item);
 
         $subject = trim((string)($item['subject'] ?? ''));
         $html = (string)($item['body_html'] ?? '');
@@ -201,37 +211,247 @@ class AiActions
         $form->context_model_code = CrmRecords::codeOf($type);
         $form->context_model_id = (int)$record->primaryKey;
         $form->sendables = $sendable ? [$sendable[0].':'.$sendable[1]] : [];
-        $form->cms_comm_topic_id = (int)$topic->id;
+        $form->cms_comm_topic_id = $topic ? (int)$topic->id : null;
+        $form->purpose = $purpose;
+        // Editing keeps the files of the draft: its uploads (fresh tokens of this request) go with the form;
+        // a new text gets the draft's pictures at its "{Картинка}" places (or at the end).
+        if ($draft) {
+            $current = new ComposeForm();
+            (new MailDrafts($owner, $this->siteId))->fill($current, $draft);
+            $form->uploads = $current->uploads;
+            if (!empty($item['body_changed'])) {
+                foreach (\skeeks\cms\helpers\RichTextHtml::uploadTokens((string)$current->body_html) as $token) {
+                    $form->body_html = AiDraftFiles::placeImage((string)$form->body_html, $token);
+                }
+            } else {
+                $form->body_html = (string)$current->body_html;
+            }
+            // The button of a replaced offer moves to the new one.
+            foreach ($draft->getSendableRefs() as $old) {
+                $parsed = SendService::parseRef((string)$old);
+                if ($parsed && $sendable && ($parsed[0] !== $sendable[0] || $parsed[1] !== $sendable[1])) {
+                    $form->body_html = str_replace(SendService::placeholder($parsed[0], $parsed[1]), SendService::placeholder($sendable[0], $sendable[1]), (string)$form->body_html);
+                }
+            }
+        }
         // The letter form of the owner checks it as the mail screen will when they send it.
         if (!$form->validate()) {
             throw new AiRefusal(self::REASON_INVALID, implode(' ', $form->getFirstErrors()));
         }
 
         return [
-            'form' => $form, 'owner' => $owner, 'service' => $service, 'topic' => $topic,
+            'form' => $form, 'owner' => $owner, 'service' => $service, 'topic' => $topic, 'purpose' => $purpose, 'attachments' => $attachments,
             'info' => [
                 'record' => ['type' => $type, 'id' => (int)$record->primaryKey, 'name' => CrmRecords::name($record)],
                 'address' => $address,
                 'owner' => ['id' => (int)$owner->id, 'name' => (string)$owner->shortDisplayName],
                 'cms_comm_account_id' => $accountId,
+                'purpose' => $purpose,
+                'topic' => $topic ? ['id' => (int)$topic->id, 'name' => (string)$topic->name] : null,
                 'offer' => $sendable ? ['ref' => $sendable[0].':'.$sendable[1], 'title' => $sendable[2]->getSendTitle()] : null,
+                'attachments' => array_map(static fn($a) => ['cms_storage_file_id' => $a['id'], 'name' => $a['name'], 'mime' => $a['mime'],
+                    'size' => $a['size'], 'inline' => $a['inline']], $attachments),
+                'test_mode' => $testMode,
             ],
         ];
     }
 
-    private function saveDraft(array $plan): CmsCommDraft
+    private function saveDraft(array $plan, ?CmsCommDraft $existing = null): CmsCommDraft
     {
         /** @var ComposeForm $form */
         $form = $plan['form'];
-        return CmsCommDraft::getDb()->transaction(function () use ($plan, $form) {
-            $draft = (new MailDrafts($plan['owner'], $this->siteId))->save($form, $plan['service']);
+        return CmsCommDraft::getDb()->transaction(function () use ($plan, $form, $existing) {
+            $draft = (new MailDrafts($plan['owner'], $this->siteId))->save($form, $plan['service'], $existing);
             AiMark::apply($draft, $this->mark);
             $draft->prepared_hash = AiMark::hash((string)$draft->subject, (string)$draft->body_html);
-            $draft->cms_comm_topic_id = (int)$plan['topic']->id;
-            $draft->save(false, ['prepared_by', 'prepared_client', 'prepared_user_id', 'prepared_at', 'prepared_hash', 'cms_comm_topic_id']);
+            $draft->cms_comm_topic_id = $plan['topic'] ? (int)$plan['topic']->id : null;
+            $draft->purpose = $plan['purpose'];
+            $draft->save(false, ['prepared_by', 'prepared_client', 'prepared_user_id', 'prepared_at', 'prepared_hash', 'cms_comm_topic_id', 'purpose']);
+            $files = new AiDraftFiles($this->user, $this->siteId);
+            foreach ($plan['attachments'] as $attachment) {
+                $files->add($draft, $attachment['id'], $attachment['inline']);
+            }
+            if ($plan['attachments']) {
+                // "{Картинка}" became a picture: the text AI wrote is the text with it.
+                $draft->prepared_hash = AiMark::hash((string)$draft->subject, (string)$draft->body_html);
+                $draft->save(false, ['prepared_hash']);
+            }
 
             return $draft;
         });
+    }
+
+    /**
+     * Changes a draft AI made in the user's own "Черновики": only the given fields (subject, body_html, address,
+     * purpose, cms_comm_topic_id, offer); its files stay ("{Картинка}" places its pictures in a new text). The same
+     * checks as a new draft; the draft must be checked again before sending.
+     *
+     * @throws \DomainException
+     */
+    public function updateDraft(array $args, bool $apply): array
+    {
+        $draft = (new MailDrafts($this->user, $this->siteId))->find((int)($args['draft_id'] ?? 0));
+        if (!$draft) {
+            throw new \DomainException('Черновик не найден в ваших «Черновиках».');
+        }
+        $record = $draft->context_model_code && $draft->context_model_id
+            ? (new MailComposeService($this->user, $this->siteId))->contextRecord((string)$draft->context_model_code, (int)$draft->context_model_id) : null;
+        if (!$record) {
+            throw new \DomainException('Черновик не привязан к клиенту CRM, которого вы видите: такой черновик правят в «Почте».');
+        }
+        $refs = $draft->getSendableRefs();
+        $item = [
+            'record_type' => CrmRecords::typeOfCode(method_exists($record, 'getSkeeksModelCode') ? (string)$record->getSkeeksModelCode() : get_class($record)),
+            'record_id' => (int)$record->primaryKey,
+            'address' => array_key_exists('address', $args) ? (string)$args['address'] : (string)($draft->getToAddresses()[0] ?? ''),
+            'subject' => array_key_exists('subject', $args) ? (string)$args['subject'] : (string)$draft->subject,
+            'body_html' => array_key_exists('body_html', $args) ? (string)$args['body_html'] : (string)$draft->body_html,
+            'body_changed' => array_key_exists('body_html', $args),
+        ];
+        $purpose = isset($args['purpose']) ? $this->purpose($args) : (LetterPurpose::of($draft->purpose, $draft->cms_comm_topic_id) ?? $this->purpose($args));
+        $topicArgs = ['cms_comm_topic_id' => $args['cms_comm_topic_id'] ?? $draft->cms_comm_topic_id];
+        $topic = $purpose === LetterPurpose::ADVERTISING ? $this->topic($topicArgs) : null;
+        $offer = array_key_exists('offer', $args) ? (string)$args['offer'] : (string)($refs[0] ?? '');
+        $testMode = $this->testMode($args);
+        try {
+            $plan = $this->planDraft($item, $purpose, $topic, (int)$draft->cms_comm_account_id, $offer, $testMode, $draft);
+        } catch (AiRefusal $e) {
+            return ['success' => false, 'saved' => false, 'reason' => $e->reason, 'message' => $e->getMessage()];
+        }
+        if ($apply) {
+            $draft = $this->saveDraft($plan, $draft);
+        }
+
+        return ['success' => true, 'saved' => $apply, 'requires_confirmation' => !$apply, 'draft_id' => (int)$draft->id] + $plan['info']
+            + ['note' => 'Черновик изменён: перед отправкой снова cms_comm_draft_check.'];
+    }
+
+    /* Files of drafts */
+
+    /** @return array[] id, inline, name, mime, size of the item's files, checked @throws AiRefusal */
+    private function attachmentSources(array $item): array
+    {
+        $result = [];
+        $files = new AiDraftFiles($this->user, $this->siteId);
+        foreach (array_values((array)($item['attachments'] ?? [])) as $attachment) {
+            $id = (int)(is_array($attachment) ? ($attachment['cms_storage_file_id'] ?? 0) : $attachment);
+            $inline = is_array($attachment) && !empty($attachment['inline']);
+            $source = $files->source($id);
+            if ($inline && !in_array($source['mime'], MailFiles::INLINE_TYPES, true)) {
+                throw new AiRefusal('attachment', 'В текст письма можно вставить только картинку: файл '.$id.' — '.$source['mime'].'.');
+            }
+            $result[$source['hash'].'|'.(int)$inline] = ['id' => $id, 'inline' => $inline, 'name' => $source['name'], 'mime' => $source['mime'], 'size' => $source['size']];
+        }
+        if (count($result) > AiDraftFiles::MAX_FILES || array_sum(array_column($result, 'size')) > AiDraftFiles::MAX_TOTAL) {
+            throw new AiRefusal('attachment', 'Не больше '.AiDraftFiles::MAX_FILES.' файлов и '.(AiDraftFiles::MAX_TOTAL / 1048576).' МБ на письмо.');
+        }
+
+        return array_values($result);
+    }
+
+    /** An own draft of AI with its files. @throws \DomainException */
+    public function draftFiles(int $draftId): array
+    {
+        return ['draft' => $this->ownDraft($draftId)];
+    }
+
+    public function ownDraft(int $draftId): CmsCommDraft
+    {
+        $draft = (new MailDrafts($this->user, $this->siteId))->find($draftId);
+        if (!$draft) {
+            throw new \DomainException('Черновик не найден в ваших «Черновиках».');
+        }
+
+        return $draft;
+    }
+
+    /* Purpose and test mode */
+
+    /** The purpose of the letter: given, or advertising when a topic is given. @throws \DomainException */
+    private function purpose(array $args): string
+    {
+        $purpose = trim((string)($args['purpose'] ?? ''));
+        if ($purpose === '') {
+            if (!empty($args['cms_comm_topic_id'])) {
+                return LetterPurpose::ADVERTISING;
+            }
+            throw new \DomainException('Укажите purpose — назначение письма: advertising (предложение, нужна тема рассылки), personal (рабочая переписка: клиент недавно писал), '
+                .'service (служебное: действующая сделка или оплаченный счёт).');
+        }
+        if (!isset(LetterPurpose::names()[$purpose])) {
+            throw new \DomainException('purpose — advertising, personal или service.');
+        }
+        if ($purpose !== LetterPurpose::ADVERTISING && !empty($args['cms_comm_topic_id'])) {
+            throw new \DomainException('У личного и служебного письма нет темы рассылки: уберите cms_comm_topic_id или выберите purpose=advertising.');
+        }
+
+        return $purpose;
+    }
+
+    /** What the purpose needs; the mailing checks of advertising. @throws AiRefusal */
+    private function checkPurpose(string $purpose, ?CmsCommTopic $topic, ActiveRecord $record, string $type, string $address, bool $testMode): void
+    {
+        $check = LetterPurpose::check($purpose, $topic ? (int)$topic->id : null, $record, $address, $this->siteId);
+        if ($check['problems']) {
+            throw new AiRefusal((string)$check['problems'][0]['reason'], (string)$check['problems'][0]['message']);
+        }
+        if ($purpose === LetterPurpose::ADVERTISING) {
+            $this->checkContact($record, $type, $address, $topic, $testMode);
+        } elseif (!\Yii::$app->communication->isRecipientAllowed($address)) {
+            throw new AiRefusal(self::REASON_NOT_ALLOWED, 'Отправка на этот адрес запрещена настройкой allowedRecipients.');
+        }
+    }
+
+    /**
+     * The server list of test recipients: "company:712" => ["asdasd@skeeks.com"] — a record and its exact
+     * addresses, never a domain. Set in the site config (`communication.aiTestRecipients`), never by a tool.
+     */
+    public static function testRecipients(): array
+    {
+        $list = \Yii::$app->has('communication') ? (array)(\Yii::$app->communication->aiTestRecipients ?? []) : [];
+        $result = [];
+        foreach ($list as $key => $addresses) {
+            $result[strtolower(trim((string)$key))] = array_values(array_unique(array_map(static fn($a) => mb_strtolower(trim((string)$a)), (array)$addresses)));
+        }
+
+        return $result;
+    }
+
+    /**
+     * Test mode is asked explicitly (test_mode=true), only by an administrator, only for the server list.
+     *
+     * @throws \DomainException
+     */
+    private function testMode(array $args): bool
+    {
+        if (empty($args['test_mode'])) {
+            return false;
+        }
+        if (!\Yii::$app->authManager || !\Yii::$app->authManager->checkAccess((int)$this->user->id, \skeeks\cms\rbac\CmsManager::PERMISSION_ROLE_ADMIN_ACCESS)) {
+            throw new \DomainException('Тестовый режим доступен только администратору.');
+        }
+        if (!self::testRecipients()) {
+            throw new \DomainException('Тестовых получателей на сайте нет (настройка communication.aiTestRecipients): тестовый режим не работает.');
+        }
+
+        return true;
+    }
+
+    /** @throws AiRefusal */
+    private function checkTestRecipient(ActiveRecord $record, string $type, string $address): void
+    {
+        if (!self::isTestRecipient($type, (int)$record->primaryKey, $address)) {
+            throw new AiRefusal('test_mode_not_allowed', 'Тестовый режим только для разрешённых тестовых получателей ('
+                .implode('; ', array_map(static fn($k, $v) => $k.' → '.implode(', ', $v), array_keys(self::testRecipients()), self::testRecipients()))
+                .'): '.$type.':'.(int)$record->primaryKey.' + '.$address.' среди них нет.');
+        }
+    }
+
+    public static function isTestRecipient(string $type, int $id, string $address): bool
+    {
+        $list = self::testRecipients();
+
+        return in_array(mb_strtolower(trim($address)), $list[$type.':'.$id] ?? [], true);
     }
 
     /* Campaigns */
@@ -475,8 +695,13 @@ class AiActions
         return $address;
     }
 
-    /** The stand allowlist, the mailing policy of the topic, a recent letter. @throws AiRefusal */
-    private function checkContact(ActiveRecord $record, string $type, string $address, CmsCommTopic $topic): void
+    /**
+     * The stand allowlist, the mailing policy of the topic, a recent letter. Test mode (a server-listed test
+     * recipient) skips only the recent letter: the policy still decides.
+     *
+     * @throws AiRefusal
+     */
+    private function checkContact(ActiveRecord $record, string $type, string $address, CmsCommTopic $topic, bool $testMode = false): void
     {
         if (!\Yii::$app->communication->isRecipientAllowed($address)) {
             throw new AiRefusal(self::REASON_NOT_ALLOWED, 'Отправка на этот адрес запрещена настройкой allowedRecipients.');
@@ -486,7 +711,7 @@ class AiActions
             throw new AiRefusal((string)$check['reason'], 'Писать нельзя: '.mb_strtolower((string)$check['message']).'.');
         }
         $days = self::limits()['recentDays'];
-        if ($days > 0 && ($at = self::lastLetterAt($record, time() - $days * 86400))) {
+        if (!$testMode && $days > 0 && ($at = self::lastLetterAt($record, time() - $days * 86400))) {
             throw new AiRefusal(self::REASON_RECENT_LETTER, 'Клиенту уже писали '.\Yii::$app->formatter->asDate($at, 'php:d.m.Y')
                 .' (меньше '.$days.' дней назад): повторное предложение не готовится.');
         }
@@ -509,11 +734,12 @@ class AiActions
     }
 
     /** An AI draft for the client waiting in anybody's "Черновики". @throws AiRefusal */
-    private function checkNoDraft(ActiveRecord $record): void
+    private function checkNoDraft(ActiveRecord $record, ?int $exceptDraftId = null): void
     {
         $code = method_exists($record, 'getSkeeksModelCode') ? (string)$record->getSkeeksModelCode() : get_class($record);
         $draft = CmsCommDraft::find()->andWhere(['cms_site_id' => $this->siteId, 'prepared_by' => AiMark::BY_AI,
-            'context_model_code' => $code, 'context_model_id' => (int)$record->primaryKey])->one();
+            'context_model_code' => $code, 'context_model_id' => (int)$record->primaryKey])
+            ->andFilterWhere(['!=', 'id', $exceptDraftId])->one();
         if ($draft) {
             $owner = CmsUser::findOne((int)$draft->cms_user_id);
             throw new AiRefusal(self::REASON_DRAFT_EXISTS, 'Черновик ИИ этому клиенту уже ждёт отправки'.($owner ? ' у '.$owner->shortDisplayName : '').' (черновик '.$draft->id.').');
@@ -543,7 +769,7 @@ class AiActions
      *
      * @return array [type, id, SendableInterface] @throws AiRefusal
      */
-    private function offer(string $ref, ActiveRecord $record, User $owner): array
+    private function offer(string $ref, ActiveRecord $record, User $owner, bool $checkHistory = true): array
     {
         $parsed = SendService::parseRef($ref);
         $sendable = $parsed ? (new SendService($owner, $this->siteId))->find($parsed[0], $parsed[1]) : null;
@@ -555,7 +781,7 @@ class AiActions
             throw new AiRefusal(self::REASON_OFFER, 'Предложение «'.$ref.'» сделано для другого клиента.');
         }
         $source = \Yii::$app->communication->getSendableSource($parsed[0]);
-        if ($source instanceof SendHistoryInterface) {
+        if ($checkHistory && $source instanceof SendHistoryInterface) {
             $this->checkOfferHistory($source, $parsed[1], $record);
         }
 

@@ -152,7 +152,7 @@ try {
         'items' => [['record_type' => 'lead', 'record_id' => (int)$lead3->id, 'subject' => 'А', 'body_html' => '<p>А</p>']]]);
     check(row($limited)['reason'] === AiActions::REASON_DAY_LIMIT, 'The day limit refuses more drafts');
     Yii::$app->communication->aiLimits = [];
-    rejects(fn() => run('cms_comm_draft_create', ['items' => [['record_type' => 'lead', 'record_id' => (int)$lead3->id]]]), 'тему рассылки', 'A draft needs a mailing topic');
+    rejects(fn() => run('cms_comm_draft_create', ['items' => [['record_type' => 'lead', 'record_id' => (int)$lead3->id]]]), 'purpose', 'A draft needs a purpose or a mailing topic');
 
     // 5. The employee sends the draft as in the mail screen: the letter carries the mark, the topic, the opt-out link, the send of the offer.
     $form = new ComposeForm(['service' => new MailComposeService($admin, $siteId)]);

@@ -99,7 +99,14 @@ check with no side effects (the letter form plus the API rules) whose
 `check_token` the send recomputes, an idempotency key stored in
 `cms_comm_api_send` inside the transaction of `MailComposeService::queue()`.
 Never send around it (no direct SMTP, no own tracking) and never report a
-queued or sent letter as delivered. Mailing topics by API are
+queued or sent letter as delivered. Every API letter has an explicit
+purpose (`services\LetterPurpose`: advertising with a topic and opt-out,
+personal — the client wrote, service — cooperation), checked by the server
+and by `ComposeForm::$purpose` alike; never infer it from the text or how
+the letter is sent. Files are `services\AiDraftFiles` (own storage files,
+type by content, copies in mail storage, `cid:` pictures). Test mode is the
+site's `communication.aiTestRecipients` (exact record–address pairs,
+administrators) and skips only the repetition checks. Mailing topics by API are
 `services\MailingTopics` (administrator only); a send never creates a topic.
 
 Run isolated tests and PHP syntax checks. No external sends, release,

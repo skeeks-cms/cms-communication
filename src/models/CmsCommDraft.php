@@ -41,6 +41,7 @@ use yii\helpers\Json;
  * @property int|null            $prepared_at
  * @property string|null         $prepared_hash AiMark::hash() of the subject and text AI wrote
  * @property int|null            $cms_comm_topic_id mailing topic of an AI draft: the letter goes with the opt-out link
+ * @property string|null         $purpose services\LetterPurpose of an AI draft (advertising, personal, service); empty — by the topic
  * @property string|null         $file_ids JSON: storage file ids kept from the forwarded letter
  * @property string|null         $sendables JSON: "type:id" put in with "Прикрепить из…"
  *

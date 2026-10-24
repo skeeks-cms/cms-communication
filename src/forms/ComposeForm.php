@@ -110,6 +110,17 @@ class ComposeForm extends Model
      */
     public $aiMark;
 
+    /**
+     * The purpose of a letter AI prepared (services\LetterPurpose: advertising,
+     * personal, service), from its draft (MailDrafts::applyAiDraft()); null for
+     * a letter an employee writes. Its rules are checked here, so the mail
+     * screen and the API send it under the same conditions. Set in code, never
+     * loaded from a request.
+     *
+     * @var string|null
+     */
+    public $purpose;
+
     /** @var MailComposeService|null set by the controller for validation */
     public $service;
 
@@ -132,7 +143,22 @@ class ComposeForm extends Model
             [['to', 'cc', 'bcc'], 'validateAddresses'],
             [['cms_comm_account_id'], 'validateAccount'],
             [['body'], 'validateText', 'skipOnEmpty' => false],
+            [['purpose'], 'validatePurpose', 'skipOnEmpty' => true],
         ];
+    }
+
+    /** A letter AI prepared: what its purpose needs (a topic, a dialog, cooperation; no complaint or dead address). */
+    public function validatePurpose($attribute)
+    {
+        $record = $this->record instanceof \yii\db\ActiveRecord ? $this->record
+            : ($this->service && $this->context_model_code && $this->context_model_id
+                ? $this->service->contextRecord((string)$this->context_model_code, (int)$this->context_model_id) : null);
+        $siteId = (int)\Yii::$app->skeeks->site->id;
+        $check = \skeeks\cms\communication\services\LetterPurpose::check((string)$this->purpose, $this->cms_comm_topic_id ? (int)$this->cms_comm_topic_id : null,
+            $record, (string)($this->getToAddresses()[0] ?? ''), $siteId, $this->reply_to_message_id ? (int)$this->reply_to_message_id : null);
+        foreach ($check['problems'] as $problem) {
+            $this->addError($attribute, (string)$problem['message']);
+        }
     }
 
     public function attributeLabels()
