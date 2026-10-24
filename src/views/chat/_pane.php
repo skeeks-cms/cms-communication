@@ -63,7 +63,7 @@ $participants = $conversation->chat_type !== CmsCommConversation::CHAT_PRIVATE
             <?= $linksHtml ?>
         </div>
         <div class="sx-chat__messages" data-sx-chat-messages>
-            <?php if ($more): ?><div class="sx-chat__older">Показаны последние сообщения</div><?php endif; ?>
+            <?php if ($more): ?><button type="button" class="sx-chat__older" data-sx-chat-older>Показать более ранние сообщения</button><?php endif; ?>
             <?php if (!$messages): ?><div class="sx-chats__none">Сообщений пока нет</div><?php endif; ?>
             <?= $this->render('_messages', ['messages' => $messages, 'conversation' => $conversation]) ?>
         </div>

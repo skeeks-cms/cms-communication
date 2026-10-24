@@ -302,6 +302,20 @@ class AdminCmsCommChatController extends BackendModelStandartController
         \Yii::$app->response->format = Response::FORMAT_JSON;
         /** @var CmsCommConversation $conversation */
         $conversation = $this->model;
+        if ($before = (int)\Yii::$app->request->get('before')) {
+            // Older messages, when the employee scrolls up to the top of the chat.
+            $older = array_reverse(CmsCommMessage::find()->andWhere(['cms_comm_conversation_id' => (int)$conversation->id])->andWhere(['<', 'id', $before])
+                ->with(['identity', 'files', 'sentBy'])->orderBy(['id' => SORT_DESC])->limit(self::MESSAGES + 1)->all());
+            $more = count($older) > self::MESSAGES;
+            if ($more) {
+                array_shift($older);
+            }
+
+            return [
+                'html' => $older ? $this->renderPartial('@skeeks/cms/communication/views/chat/_messages', ['messages' => $older, 'conversation' => $conversation]) : '',
+                'more' => $more,
+            ];
+        }
         $after = (int)\Yii::$app->request->get('after');
         $messages = CmsCommMessage::find()->andWhere(['cms_comm_conversation_id' => (int)$conversation->id])->andWhere(['>', 'id', $after])
             ->with(['identity', 'files', 'sentBy'])->orderBy(['id' => SORT_ASC])->limit(self::MESSAGES)->all();

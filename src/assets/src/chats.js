@@ -31,6 +31,13 @@
         if (box) {
             box.addEventListener('scroll', function () {
                 self.stick = self.atBottom();
+                // Near the top: the earlier messages come by themselves.
+                if (box.scrollTop < 150) {
+                    self.older();
+                }
+            });
+            $el.on('click', '[data-sx-chat-older]', function () {
+                self.older();
             });
             var keep = function () {
                 if (self.stick) {
@@ -214,6 +221,32 @@
                     alert(r.message || 'Не получилось.');
                 }
             });
+        });
+    };
+
+    /** Earlier messages above the first one shown; the chat keeps its place on the screen. */
+    Pane.prototype.older = function () {
+        var self = this, $box = this.$el.find('[data-sx-chat-messages]'), $button = $box.find('[data-sx-chat-older]');
+        var first = $box.find('[data-sx-msg]').first().data('sx-msg');
+        if (!$button.length || this.loadingOlder || !first) {
+            return;
+        }
+        this.loadingOlder = true;
+        $button.prop('disabled', true).text('Загружаем…');
+        $.getJSON(this.cfg.messagesUrl, {before: first}).done(function (r) {
+            var box = $box[0], height = box.scrollHeight, top = box.scrollTop;
+            $button.after(r.html || '');
+            if (!r.more) {
+                $button.remove();
+            } else {
+                $button.prop('disabled', false).text('Показать более ранние сообщения');
+            }
+            self.decorate();
+            box.scrollTop = top + (box.scrollHeight - height);
+        }).fail(function () {
+            $button.prop('disabled', false).text('Не получилось загрузить — повторить');
+        }).always(function () {
+            self.loadingOlder = false;
         });
     };
 

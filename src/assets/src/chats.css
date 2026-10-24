@@ -9,6 +9,8 @@
     display: grid;
     /* Folders as in messengers: a narrow column of icons, then the chats, then the open chat. */
     grid-template-columns: 76px minmax(260px, 340px) 1fr;
+    /* One row of the window height: a long chat scrolls inside, it never stretches the screen. */
+    grid-template-rows: minmax(0, 1fr);
     height: var(--sx-chats-height);
     min-height: 420px;
     border: 1px solid var(--sx-color-border);
@@ -131,7 +133,12 @@ html[data-sx-theme="dark"] .sx-chat, html[data-sx-theme="dark"] .sx-chats { --sx
     flex: 1; min-height: 0; overflow-y: auto; padding: 8px 16px 12px; display: flex; flex-direction: column; gap: 2px;
     background: var(--sx-chat-wall);
 }
-.sx-chat__older { text-align: center; font-size: 12px; color: var(--sx-color-text-muted); padding: 4px; }
+.sx-chat__older {
+    align-self: center; margin: 4px 0; padding: 4px 12px; border: 0; border-radius: 12px; font-size: 13px; cursor: pointer;
+    background: color-mix(in srgb, var(--sx-color-surface) 85%, transparent); color: var(--sx-color-text-muted);
+}
+.sx-chat__older:hover { color: var(--sx-color-accent); }
+.sx-chat__older[disabled] { cursor: default; opacity: .7; }
 .sx-chat__day { position: sticky; top: 0; z-index: 2; display: flex; justify-content: center; margin: 10px 0 6px; pointer-events: none; }
 .sx-chat__day span {
     padding: 3px 10px; border-radius: 12px; font-size: 13px; font-weight: 500;
@@ -335,7 +342,7 @@ html[data-sx-theme="dark"] .sx-chat, html[data-sx-theme="dark"] .sx-chats { --sx
 
 @media (max-width: 767px) {
     /* The folders become a row above the chats. */
-    .sx-chats { grid-template-columns: 1fr; grid-template-rows: auto 1fr; --sx-chats-height: calc(100vh - var(--sx-shell-top-offset, 56px) - 16px); border-radius: 0; }
+    .sx-chats { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); --sx-chats-height: calc(100vh - var(--sx-shell-top-offset, 56px) - 16px); border-radius: 0; }
     .sx-chats__folders { flex-direction: row; padding: 6px; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--sx-color-border); }
     .sx-chats__folder { flex: 0 0 auto; min-width: 64px; margin: 0; }
     .sx-chats--open .sx-chats__folders, .sx-chats--open .sx-chats__side { display: none; }
