@@ -8,6 +8,7 @@
 namespace skeeks\cms\communication\campaign;
 
 use skeeks\cms\communication\forms\ComposeForm;
+use skeeks\cms\communication\mail\MailingServices;
 use skeeks\cms\communication\models\CmsCommAccount;
 use skeeks\cms\communication\models\CmsCommAccountAccess;
 use skeeks\cms\communication\models\CmsCommCampaign;
@@ -63,6 +64,10 @@ class MailboxCampaignChannel implements CampaignChannelInterface
             if (!$account || !$account->is_active || !$account->cms_comm_connection_id) {
                 return 'Выбранный ящик не подключён или выключен.';
             }
+            // Cold contacts are allowed here, and a mailing service bans them.
+            if (MailingServices::isService($account)) {
+                return 'Выбранный ящик отправляет через сервис рассылок: выберите канал «Сервис рассылок» — он пишет только тем, кто дал согласие.';
+            }
             if (!(new MailComposeService($user, (int)$campaign->cms_site_id))->canSendFrom((int)$account->id)) {
                 return 'Вам нельзя отправлять письма с выбранного ящика: выберите свой ящик или «Ящик ответственного за лида».';
             }
@@ -111,6 +116,8 @@ class MailboxCampaignChannel implements CampaignChannelInterface
             ->innerJoin($access, $access.'.cms_comm_account_id = '.$a.'.id')
             ->andWhere([$a.'.cms_site_id' => $siteId, $a.'.is_active' => 1])
             ->andWhere(['not', [$a.'.cms_comm_connection_id' => null]])
+            // A working mailbox: never the sender address of a mailing service.
+            ->andWhere(MailingServices::notServiceCondition())
             ->andWhere([$access.'.cms_user_id' => $userId])
             ->andWhere(['!=', $access.'.send_level', CmsCommAccountAccess::SEND_NONE])
             ->orderBy([$access.'.is_default' => SORT_DESC, $a.'.id' => SORT_ASC])

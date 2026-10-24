@@ -585,6 +585,15 @@
     color: var(--sx-color-danger, #bd4348);
 }
 
+/* Delivery by the events of a mailing service: the state, the events under it. */
+.sx-letter__delivery > summary {
+    cursor: pointer;
+    width: fit-content;
+}
+.sx-letter__delivery > div {
+    margin-top: 2px;
+}
+
 /*
  * CRM records in the letter header: compact chips in one line — a 20px logo
  * or icon, the type in small letters and the name cut with an ellipsis.

@@ -169,9 +169,15 @@ if ($campaign->offer_id && $source) {
             <?php
             $toSend = (int)$stats['total'] - (int)$stats['excluded'];
             $pct = static fn(string $key) => $stats['sent'] ? ' · '.Html::encode(str_replace('.', ',', (string)$stats['percent'][$key])).'%' : '';
+            // A mailing service reports delivery; managers' mailboxes know only that the letter left.
+            $reportsDelivery = !empty($stats['delivered']) || !empty($stats['bounced']) || $campaign->channel !== \skeeks\cms\communication\campaign\MailboxCampaignChannel::ID;
             ?>
             <div class="sx-campaign__stats">
                 <div class="sx-campaign__stat sx-campaign__stat--ok"><strong><?= (int)$stats['sent'] ?> из <?= $toSend ?></strong><span>отправлено</span></div>
+                <?php if ($reportsDelivery) : ?>
+                    <div class="sx-campaign__stat"><strong><?= (int)$stats['delivered'] ?><?= $pct('delivered') ?></strong><span>доставлено</span></div>
+                    <div class="sx-campaign__stat<?= $stats['bounced'] ? ' sx-campaign__stat--bad' : '' ?>"><strong><?= (int)$stats['bounced'] ?><?= $pct('bounced') ?></strong><span>не доставлено</span></div>
+                <?php endif; ?>
                 <div class="sx-campaign__stat"><strong><?= (int)$stats['opened'] ?><?= $pct('opened') ?></strong><span>открыли предложение</span></div>
                 <div class="sx-campaign__stat"><strong><?= (int)$stats['visited'] ?><?= $pct('visited') ?></strong><span>перешли на сайт</span></div>
                 <div class="sx-campaign__stat"><strong><?= (int)$stats['replied'] ?><?= $pct('replied') ?></strong><span>ответили</span></div>
@@ -181,7 +187,8 @@ if ($campaign->offer_id && $source) {
                 <div class="sx-campaign__stat<?= $stats['failed'] ? ' sx-campaign__stat--bad' : '' ?>"><strong><?= (int)$stats['failed'] ?></strong><span>ошибки</span></div>
                 <div class="sx-campaign__stat"><strong><?= (int)$stats['excluded'] ?></strong><span>исключены</span></div>
             </div>
-            <p class="sx-import__muted">Проценты — от отправленных писем. «Открыли» и «перешли на сайт» — только настоящие переходы людей по ссылкам из письма (не проверки ссылок почтовыми службами).</p>
+            <p class="sx-import__muted">Проценты — от отправленных писем. «Открыли» и «перешли на сайт» — только настоящие переходы людей по ссылкам из письма (не проверки ссылок почтовыми службами).<?=
+                $reportsDelivery ? ' «Доставлено» — только по подтверждению сервиса рассылок.' : '' ?></p>
             <?php if ($campaign->status === CmsCommCampaign::STATUS_RUNNING && $stats['pending']) :
                 $this->registerJs('setTimeout(function () { if (!document.hidden) { window.location.reload(); } }, 30000);');
                 ?>
@@ -256,7 +263,7 @@ if ($campaign->offer_id && $source) {
             <div class="sx-import__counts">
                 <?= Html::a('Все: '.(int)$stats['total'], Url::current(['state' => null, 'page' => null]), ['class' => 'sx-import__filter'.($filter === '' ? ' is-active' : ''), 'data-pjax' => 0]) ?>
                 <?php foreach (AdminCmsCommCampaignController::reportFilters() as $key => $item) :
-                    $count = ['sent' => $stats['sent'], 'pending' => $stats['pending'], 'failed' => $stats['failed'], 'opened' => $stats['opened'], 'visited' => $stats['visited'],
+                    $count = ['sent' => $stats['sent'], 'delivered' => $stats['delivered'] ?? 0, 'bounced' => $stats['bounced'] ?? 0, 'pending' => $stats['pending'], 'failed' => $stats['failed'], 'opened' => $stats['opened'], 'visited' => $stats['visited'],
                         'replied' => $stats['replied'], 'accepted' => $stats['accepted'], 'unsubscribed' => $stats['unsubscribed'],
                         'excluded' => $stats['excluded'], 'cancelled' => $stats['cancelled'], 'personal' => $stats['personal']][$key];
                     if (!$count && $filter !== $key) {
@@ -288,6 +295,12 @@ if ($campaign->offer_id && $source) {
                                 <?php endif; ?>
                             </td>
                             <td class="sx-campaign__events">
+                                <?php foreach (['delivered_at' => 'Доставлено', 'bounced_at' => 'Не доставлено'] as $field => $label) : ?>
+                                    <?php if ($r->hasAttribute($field) && $r->$field) : ?>
+                                        <span class="sx-campaign__event sx-campaign__event--<?= Html::encode(substr($field, 0, -3)) ?>"><?= Html::encode($label) ?>
+                                            <span class="sx-import__muted"><?= Html::encode($date($r->$field)) ?></span></span>
+                                    <?php endif; ?>
+                                <?php endforeach; ?>
                                 <?php foreach (['opened_at' => 'Открыл предложение', 'visited_at' => 'Перешёл на сайт', 'replied_at' => 'Ответил', 'accepted_at' => 'Принял КП', 'unsubscribed_at' => 'Отписался'] as $field => $label) : ?>
                                     <?php if ($r->$field) : ?>
                                         <span class="sx-campaign__event sx-campaign__event--<?= Html::encode(substr($field, 0, -3)) ?>"><?= Html::encode($label) ?>

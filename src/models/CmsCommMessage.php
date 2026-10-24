@@ -52,6 +52,8 @@ use yii\helpers\Json;
  * @property int|null                $prepared_user_id the CRM user AI worked for
  * @property int|null                $prepared_at
  * @property int|null                $prepared_edited an employee changed the AI subject or text before sending
+ * @property string|null             $delivery_status by events of a mailing service (services\DeliveryEvents): DELIVERY_*
+ * @property int|null                $delivery_at
  *
  * @property CmsCommConversation     $conversation
  * @property CmsCommAccount|null     $account
@@ -73,6 +75,13 @@ class CmsCommMessage extends ActiveRecord
     public const STATUS_FAILED = 'failed';
     /** The server may or may not have accepted it: never resent automatically. */
     public const STATUS_UNKNOWN = 'unknown';
+
+    /* Delivery reported by a mailing service (stage 4C): "sent" means only that the service took the letter. */
+    public const DELIVERY_DELIVERED = 'delivered';
+    /** Not delivered yet, the service keeps trying. */
+    public const DELIVERY_DEFERRED = 'deferred';
+    public const DELIVERY_BOUNCED = 'bounced';
+    public const DELIVERY_COMPLAINED = 'complained';
 
     /** Type of the activity feed entries (cms_log.log_type). */
     public const LOG_TYPE = 'message';
@@ -194,6 +203,26 @@ class CmsCommMessage extends ActiveRecord
     public function getStatusName(): string
     {
         return self::statuses()[$this->status] ?? (string)$this->status;
+    }
+
+    public static function deliveryStatuses(): array
+    {
+        return [
+            self::DELIVERY_DELIVERED => 'Доставлено',
+            self::DELIVERY_DEFERRED => 'Пока не доставлено: сервис пробует ещё',
+            self::DELIVERY_BOUNCED => 'Не доставлено',
+            self::DELIVERY_COMPLAINED => 'Доставлено, получатель пожаловался на спам',
+        ];
+    }
+
+    /** "Доставлено" by the mailing service's confirmation, or null when no service reported it. */
+    public function getDeliveryName(): ?string
+    {
+        if (!$this->hasAttribute('delivery_status') || !$this->delivery_status) {
+            return null;
+        }
+
+        return self::deliveryStatuses()[$this->delivery_status] ?? (string)$this->delivery_status;
     }
 
     public function getConversation()

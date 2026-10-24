@@ -170,6 +170,18 @@ if ($canManage) {
                     <?= Html::encode($model->getStatusName()) ?><?= $model->sentBy ? ' · отправил '.Html::encode($model->sentBy->shortDisplayName) : '' ?>
                     <?php if ($model->error) : ?><div class="sx-letter__error"><?= Html::encode($model->error) ?></div><?php endif; ?>
                 </div>
+                <?php // Delivery by the events of a mailing service: "Отправлено" alone only means the service took the letter.
+                $deliveryEvents = $model->id ? \skeeks\cms\communication\services\DeliveryEvents::ofMessage((int)$model->id) : [];
+                if ($model->getDeliveryName() || $deliveryEvents) : ?>
+                    <details class="sx-letter__muted sx-letter__delivery">
+                        <summary><?= Html::encode($model->getDeliveryName() ?: 'События доставки') ?><?= $model->hasAttribute('delivery_at') && $model->delivery_at
+                                ?' · '.Html::encode(\Yii::$app->formatter->asDatetime((int)$model->delivery_at, 'php:d.m.Y H:i')) : '' ?></summary>
+                        <?php foreach ($deliveryEvents as $deliveryEvent) : ?>
+                            <div><?= Html::encode(\Yii::$app->formatter->asDatetime((int)$deliveryEvent->event_at, 'php:d.m.Y H:i')) ?> —
+                                <?= Html::encode($deliveryEvent->getEventName()) ?><?= $deliveryEvent->detail ? ': '.Html::encode($deliveryEvent->detail) : '' ?></div>
+                        <?php endforeach; ?>
+                    </details>
+                <?php endif; ?>
                 <?php if ($aiMark = \skeeks\cms\communication\services\AiMark::of($model)) : ?>
                     <div class="sx-letter__muted"><?= \skeeks\cms\communication\services\AiMark::badge($aiMark, null) ?>
                         <?= Html::encode(\skeeks\cms\communication\services\AiMark::text($aiMark)) ?></div>

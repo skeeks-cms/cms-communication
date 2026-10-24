@@ -158,5 +158,15 @@ domains of `components\LinkTrackingSettings`. One feed entry per visit
 (`log\VisitLogRenderer`), the call task once per code and never beside an
 open "Позвонить…" task of the executor on the record.
 
+Mailing services (4C): a driver with `mail\MailingServiceInterface` only
+sends (one API call per letter, in the driver package such as
+`cms-communication-unisender`); its mailbox is an ordinary mailbox
+(`MailboxConnectionForm` mode `service:<driver>`), skipped by receiving, by
+"Sent" copies and by `MailboxCampaignChannel` (cold contacts never go through
+a service). Delivery events are written only by `services\DeliveryEvents`
+(`cms_comm_message_event`, `delivery_status` of the letter by its first "To",
+the stop list and opt-outs as consequences); "sent" means the service took
+the letter. A 429 of a service is `MailSendException::retryLater()`.
+
 Run isolated tests and PHP syntax checks. No external sends, release,
 commit, push or production deployment are implied by a local code change.

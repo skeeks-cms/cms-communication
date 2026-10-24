@@ -9,6 +9,7 @@ namespace skeeks\cms\communication\jobs;
 
 use skeeks\cms\communication\mail\MailDriverInterface;
 use skeeks\cms\communication\mail\MailSendException;
+use skeeks\cms\communication\mail\MailingServiceInterface;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\services\Unsubscribe;
 use skeeks\cms\job\contracts\JobReporterInterface;
@@ -25,9 +26,15 @@ use Symfony\Component\Mime\Part\File;
  * in the Sent folder unless the server already did. The status moves
  * queued → sending before the network call; a broken connection after that
  * leaves it `unknown`, and such a letter is never resent automatically.
+ * A mailing service that refused for now (MailSendException::$retryAfter,
+ * nothing was taken) gets the letter again after its pause, for a few hours;
+ * such a driver keeps no "Sent" folder (mail\MailingServiceInterface).
  */
 class MailSendJobHandler extends AbstractJobHandler
 {
+    /** How long a letter refused "for now" by a mailing service keeps waiting. */
+    public const RETRY_HOURS = 6;
+
     public function run(JobContext $context, JobReporterInterface $reporter): void
     {
         $id = (int)$context->get('messageId');
@@ -76,18 +83,37 @@ class MailSendJobHandler extends AbstractJobHandler
         try {
             $driver->send($email);
         } catch (MailSendException $e) {
-            $status = $e->uncertain ? CmsCommMessage::STATUS_UNKNOWN : CmsCommMessage::STATUS_FAILED;
-            $this->finish($id, $status, $e->getMessage());
-            $reporter->countError();
-            throw new JobPermanentException('Письмо не отправлено: '.$e->getMessage());
+            if ($e->retryAfter && (int)$message->created_at > time() - self::RETRY_HOURS * 3600) {
+                // Nothing was taken: the letter waits in the queue, the same run comes back.
+                CmsCommMessage::updateAll(['status' => CmsCommMessage::STATUS_QUEUED, 'error' => mb_substr($e->getMessage(), 0, 1000), 'updated_at' => time()],
+                    ['id' => $id, 'status' => CmsCommMessage::STATUS_SENDING]);
+                $retry = $e->retryAfter;
+            } else {
+                $status = $e->uncertain ? CmsCommMessage::STATUS_UNKNOWN : CmsCommMessage::STATUS_FAILED;
+                $this->finish($id, $status, $e->getMessage());
+                $reporter->countError();
+                throw new JobPermanentException('Письмо не отправлено: '.$e->getMessage());
+            }
         } catch (\Throwable $e) {
             $this->finish($id, CmsCommMessage::STATUS_UNKNOWN, 'Неизвестно, отправлено ли письмо: '.mb_substr($e->getMessage(), 0, 300));
             throw new JobPermanentException('Неизвестно, отправлено ли письмо.');
         }
 
+        if (isset($retry)) {
+            $reporter->setStage('wait', 'Сервис просит подождать: повтор через '.$retry.' с');
+            // Outside the try: the status is committed already.
+            $context->requestRequeue($retry);
+        }
+
         $this->finish($id, CmsCommMessage::STATUS_SENT, null, time());
         $reporter->countSuccess();
         $reporter->advance();
+        if ($driver instanceof MailingServiceInterface) {
+            // No folders at a mailing service: the CRM row is the copy.
+            $reporter->setResult(['messageId' => $id, 'status' => CmsCommMessage::STATUS_SENT]);
+            $reporter->setStage('complete', 'Письмо передано сервису рассылок');
+            return;
+        }
 
         $reporter->setStage('sent-folder', 'Копия в «Отправленные»');
         // Some servers save letters sent over SMTP into "Sent" themselves, a moment later.

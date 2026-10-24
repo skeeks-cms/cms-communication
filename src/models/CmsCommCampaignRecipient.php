@@ -52,6 +52,8 @@ use yii\db\ActiveRecord;
  * @property int|null    $accepted_at
  * @property int|null    $unsubscribed_at
  * @property int|null    $visited_at first came to our site by a link of the letter (services\LinkVisits)
+ * @property int|null    $delivered_at a mailing service confirmed delivery (services\DeliveryEvents)
+ * @property int|null    $bounced_at a mailing service reported the letter undelivered
  *
  * @property CmsCommCampaign     $campaign
  * @property CmsCommAccount|null $account

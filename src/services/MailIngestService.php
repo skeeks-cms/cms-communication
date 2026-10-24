@@ -177,7 +177,54 @@ class MailIngestService
             ->orderBy(['id' => SORT_DESC])
             ->one();
 
-        return $parent ? $parent->conversation : null;
+        return $parent ? $parent->conversation : $this->serviceReplyConversation($siteId, $data);
+    }
+
+    /**
+     * A reply to a letter sent through a mailing service: the service gives
+     * the letter its own Message-ID, so the reply refers to an id we do not
+     * know. It joins the conversation of our latest letter to its author
+     * from a mailing service mailbox with the same subject (without "Re:")
+     * in the last 60 days.
+     */
+    private function serviceReplyConversation(int $siteId, array $data): ?CmsCommConversation
+    {
+        $drivers = \skeeks\cms\communication\mail\MailingServices::driverIds();
+        $from = mb_strtolower(trim((string)$data['from_address']));
+        $subject = self::baseSubject((string)$data['subject']);
+        if (!$drivers || $from === '' || $subject === '') {
+            return null;
+        }
+        $m = CmsCommMessage::tableName();
+        $a = CmsCommAccount::tableName();
+        $c = CmsCommConnection::tableName();
+        $candidates = CmsCommMessage::find()
+            ->innerJoin($a, $a.'.id = '.$m.'.cms_comm_account_id')
+            ->innerJoin($c, $c.'.id = '.$a.'.cms_comm_connection_id')
+            ->andWhere([$m.'.cms_site_id' => $siteId, $m.'.direction' => CmsCommMessage::DIRECTION_OUT, $c.'.driver' => $drivers])
+            ->andWhere(['>=', $m.'.message_at', time() - 60 * 86400])
+            ->andWhere(['like', $m.'.to_list', $from])
+            ->orderBy([$m.'.id' => SORT_DESC])->limit(20)->select($m.'.*')->all();
+        foreach ($candidates as $candidate) {
+            $to = array_map(static fn($address) => mb_strtolower(trim((string)$address)), array_keys($candidate->getTo()));
+            if (in_array($from, $to, true) && self::baseSubject((string)$candidate->subject) === $subject) {
+                return $candidate->conversation;
+            }
+        }
+
+        return null;
+    }
+
+    /** The subject without "Re:", "Fwd:", "Ответ:" in front, in lower case. */
+    public static function baseSubject(string $subject): string
+    {
+        $subject = trim($subject);
+        do {
+            $before = $subject;
+            $subject = trim((string)preg_replace('/^(re|fwd?|aw|отв|ответ|пересл)\s*(\[\d+\]|\(\d+\))?\s*:\s*/iu', '', $subject));
+        } while ($subject !== $before);
+
+        return mb_strtolower(preg_replace('/\s+/u', ' ', $subject));
     }
 
     private function createConversation(int $siteId, string $externalId, array $data): CmsCommConversation

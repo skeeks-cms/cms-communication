@@ -8,6 +8,7 @@
 namespace skeeks\cms\communication\jobs;
 
 use skeeks\cms\communication\mail\MailDriverInterface;
+use skeeks\cms\communication\mail\MailingServiceInterface;
 use skeeks\cms\communication\models\CmsCommConnection;
 use skeeks\cms\job\contracts\JobReporterInterface;
 use skeeks\cms\job\handlers\AbstractJobHandler;
@@ -32,7 +33,8 @@ class MailPollAllJobHandler extends AbstractJobHandler
         foreach ($connections as $connection) {
             $class = $drivers[$connection->driver] ?? null;
             $class = is_array($class) ? ($class['class'] ?? null) : $class;
-            if (!is_string($class) || !is_subclass_of($class, MailDriverInterface::class)) {
+            // A mailing service only sends: there is nothing to receive.
+            if (!is_string($class) || !is_subclass_of($class, MailDriverInterface::class) || is_subclass_of($class, MailingServiceInterface::class)) {
                 continue;
             }
             if (\Yii::$app->jobs->pushChild($context->getRun(), 'comm.mail.poll', ['connectionId' => (int)$connection->id], ['siteId' => (int)$connection->cms_site_id])) {

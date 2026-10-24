@@ -614,6 +614,8 @@ p.sx-import__muted {
 .sx-campaign__event--replied,
 .sx-campaign__event--accepted { color: var(--sx-color-success, #1f8a4c); }
 .sx-campaign__event--unsubscribed { color: var(--sx-color-danger, #d64545); }
+.sx-campaign__event--delivered { color: var(--sx-color-success, #1f8a4c); }
+.sx-campaign__event--bounced { color: var(--sx-color-danger, #d64545); }
 
 .sx-campaign__error {
     color: var(--sx-color-danger, #d64545);

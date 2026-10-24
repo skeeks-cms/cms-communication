@@ -556,9 +556,15 @@ JS);
     public static function reportFilters(): array
     {
         $r = CmsCommCampaignRecipient::class;
+        // Delivery by a mailing service's events (stage 4C), when the columns are there.
+        $delivery = (new CmsCommCampaignRecipient())->hasAttribute('delivered_at') ? [
+            'delivered' => ['label' => 'Доставлено', 'where' => ['not', ['delivered_at' => null]]],
+            'bounced' => ['label' => 'Не доставлено', 'where' => ['not', ['bounced_at' => null]]],
+        ] : [];
 
         return [
             'sent' => ['label' => 'Отправлено', 'where' => ['status' => $r::STATUS_SENT]],
+        ] + $delivery + [
             'pending' => ['label' => 'Ждут отправки', 'where' => ['status' => [$r::STATUS_PENDING, $r::STATUS_SENDING]]],
             'failed' => ['label' => 'Ошибка', 'where' => ['status' => $r::STATUS_FAILED]],
             'opened' => ['label' => 'Открыли предложение', 'where' => ['not', ['opened_at' => null]]],

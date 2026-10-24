@@ -60,6 +60,10 @@ class ConnectionDiagnostics
         if (!$connection) {
             return self::surface('Получить письма', Html::tag('div', 'У ящика не настроено подключение к серверу.', ['class' => 'alert alert-warning']));
         }
+        if (\skeeks\cms\communication\mail\MailingServices::isServiceDriver((string)$connection->driver)) {
+            return self::surface('Получить письма', Html::tag('div', 'Через сервис рассылок письма только отправляются: ответы клиентов приходят в рабочий ящик, '
+                .'указанный в «Ответы направлять на» (Reply-To).', ['class' => 'alert alert-info']));
+        }
         $run = \Yii::$app->jobs->push('comm.mail.poll', ['connectionId' => (int)$connection->id], ['siteId' => (int)$connection->cms_site_id]);
         $text = $run
             ? 'Приём писем запущен. Через несколько секунд письма появятся в разделе «Почта» и в лентах лидов, компаний и клиентов.'

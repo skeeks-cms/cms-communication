@@ -56,6 +56,8 @@ class CmsCommContactTopic extends ActiveRecord
     public const SOURCE_MANAGER = 'manager';
     public const SOURCE_IMPORT = 'import';
     public const SOURCE_API = 'api';
+    /** The opt-out link of a mailing service (its webhook, services\DeliveryEvents). */
+    public const SOURCE_PROVIDER = 'provider';
 
     public static function tableName()
     {
@@ -92,6 +94,7 @@ class CmsCommContactTopic extends ActiveRecord
             self::SOURCE_MANAGER => 'отметил сотрудник',
             self::SOURCE_IMPORT => 'при импорте',
             self::SOURCE_API => 'через API',
+            self::SOURCE_PROVIDER => 'по ссылке сервиса рассылок',
         ];
     }
 

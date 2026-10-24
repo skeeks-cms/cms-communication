@@ -15,6 +15,8 @@ use skeeks\cms\communication\forms\MailboxConnectionForm;
 use skeeks\cms\communication\forms\MailHistoryForm;
 use skeeks\cms\communication\helpers\ConnectionDiagnostics;
 use skeeks\cms\communication\mail\MailDriverInterface;
+use skeeks\cms\communication\mail\MailingServiceInterface;
+use skeeks\cms\communication\mail\MailingServices;
 use skeeks\cms\communication\models\CmsCommAccount;
 use skeeks\cms\communication\models\CmsCommAccountAccess;
 use skeeks\cms\communication\models\CmsCommConnection;
@@ -251,6 +253,8 @@ class AdminCmsCommAccountController extends BackendModelStandartController
         if ($account->cms_comm_connection_id && !$own) {
             $conn->mode = MailboxConnectionForm::MODE_SHARED;
             $conn->shared_connection_id = (int)$account->cms_comm_connection_id;
+        } elseif ($own && MailingServices::isServiceDriver((string)$own->driver)) {
+            $conn->mode = MailboxConnectionForm::MODE_SERVICE.$own->driver;
         }
         $post = \Yii::$app->request->post($conn->formName());
         if (is_array($post) && isset($post['mode'])) {
@@ -259,9 +263,11 @@ class AdminCmsCommAccountController extends BackendModelStandartController
         $action->formModels['conn'] = $conn;
         $action->formModels['files'] = \skeeks\cms\communication\forms\MailboxFileSettingsForm::fromAccount($account);
 
-        if ($conn->mode === MailboxConnectionForm::MODE_OWN) {
-            $driver = $own ? $own->createDriver(false) : CmsCommConnection::component()->createDriver($this->mailDriverId());
-            $driver->requireSecrets = !($own && $own->hasSecret());
+        if ($conn->mode === MailboxConnectionForm::MODE_OWN || $conn->serviceDriver()) {
+            $driverId = $this->mailDriverId($conn);
+            $same = $own && (string)$own->driver === $driverId;
+            $driver = $same ? $own->createDriver(false) : CmsCommConnection::component()->createDriver($driverId);
+            $driver->requireSecrets = !($same && $own->hasSecret());
             $action->formModels['driver'] = $driver;
         }
     }
@@ -286,11 +292,17 @@ class AdminCmsCommAccountController extends BackendModelStandartController
 
         $transaction = \Yii::$app->db->beginTransaction();
         try {
-            if ($conn->mode === MailboxConnectionForm::MODE_OWN) {
+            if ($conn->mode === MailboxConnectionForm::MODE_OWN || $conn->serviceDriver()) {
+                $driverId = $this->mailDriverId($conn);
                 $connection = $own ?? new CmsCommConnection([
                     'cms_site_id' => $account->cms_site_id ?: (\Yii::$app->skeeks->site ? \Yii::$app->skeeks->site->id : null),
-                    'driver' => $this->mailDriverId(),
+                    'driver' => $driverId,
                 ]);
+                if ((string)$connection->driver !== $driverId) {
+                    // Another kind of connection: the secrets of the old one mean nothing to it.
+                    $connection->driver = $driverId;
+                    $connection->secret = null;
+                }
                 $connection->name = (string)$account->address;
                 $connection->is_active = 1;
                 $connection->applyDriver($action->formModels['driver']);
@@ -378,7 +390,10 @@ class AdminCmsCommAccountController extends BackendModelStandartController
             ];
         }
 
-        return [
+        // A mailing service only sends: no files to keep, and "Ответы направлять на" matters.
+        $service = (bool)$conn->serviceDriver();
+
+        return array_filter([
             'main' => [
                 'class' => FieldSet::class,
                 'name' => 'Ящик',
@@ -390,10 +405,10 @@ class AdminCmsCommAccountController extends BackendModelStandartController
             ],
             'connection' => [
                 'class' => FieldSet::class,
-                'name' => 'Вход на почтовый сервер',
+                'name' => $service ? 'Сервис рассылок' : 'Вход на почтовый сервер',
                 'fields' => $connectionFields,
             ],
-            'files' => [
+            'files' => $service ? null : [
                 'class' => FieldSet::class,
                 'name' => 'Хранение файлов',
                 'elementOptions' => ['isOpen' => false],
@@ -406,13 +421,14 @@ class AdminCmsCommAccountController extends BackendModelStandartController
             'more' => [
                 'class' => FieldSet::class,
                 'name' => 'Дополнительно',
-                'elementOptions' => ['isOpen' => false],
+                'elementOptions' => ['isOpen' => $service],
                 'fields' => [
-                    'reply_to',
+                    'reply_to' => $service ? ['hint' => 'Общий рабочий ящик для ответов клиентов, например info@skeeks.com. Если в настройках сервиса выбран '
+                        .'ящик сотрудника, сюда уходят ответы на письма тех, у кого своего ящика нет.'] : [],
                     'is_expose_linked' => ['class' => BoolField::class, 'allowNull' => false],
                 ],
             ],
-        ];
+        ]);
     }
 
     /** "Яндекс", "Mail.ru", "Gmail"…: buttons that fill the server, port and encryption fields of the driver form. */
@@ -480,11 +496,15 @@ class AdminCmsCommAccountController extends BackendModelStandartController
         return $shared ? null : $connection;
     }
 
-    private function mailDriverId(): string
+    /** The driver of the mailbox's own connection: the mailing service of the mode, otherwise the mail server driver. */
+    private function mailDriverId(?MailboxConnectionForm $conn = null): string
     {
+        if ($conn && ($service = $conn->serviceDriver()) && MailingServices::isServiceDriver($service)) {
+            return $service;
+        }
         foreach (CmsCommConnection::component()->drivers as $id => $config) {
             $class = is_array($config) ? ($config['class'] ?? null) : $config;
-            if (is_string($class) && is_subclass_of($class, MailDriverInterface::class)) {
+            if (is_string($class) && is_subclass_of($class, MailDriverInterface::class) && !is_subclass_of($class, MailingServiceInterface::class)) {
                 return (string)$id;
             }
         }

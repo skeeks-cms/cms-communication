@@ -7,17 +7,22 @@
 
 namespace skeeks\cms\communication\forms;
 
+use skeeks\cms\communication\mail\MailingServices;
 use skeeks\cms\communication\models\CmsCommConnection;
 use yii\base\Model;
 
 /**
- * How a mailbox reaches its server: its own login (the usual case) or the
- * login of another mailbox (several addresses delivered into one account).
+ * How a mailbox reaches its server: its own login (the usual case), the
+ * login of another mailbox (several addresses delivered into one account),
+ * or a mailing service that only sends (`service:<driver>`, for example
+ * Unisender Go: the address is the sender, replies go to Reply-To).
  */
 class MailboxConnectionForm extends Model
 {
     public const MODE_OWN = 'own';
     public const MODE_SHARED = 'shared';
+    /** Prefix of the mode of a mailing service driver: "service:unisender". */
+    public const MODE_SERVICE = 'service:';
 
     public $mode = self::MODE_OWN;
     public $shared_connection_id;
@@ -27,10 +32,21 @@ class MailboxConnectionForm extends Model
 
     public static function modes(): array
     {
-        return [
+        $modes = [
             self::MODE_OWN => 'Свой логин и пароль',
             self::MODE_SHARED => 'Письма приходят в другой ящик (алиас, пересылка)',
         ];
+        foreach (MailingServices::driverIds() as $id) {
+            $modes[self::MODE_SERVICE.$id] = 'Сервис рассылок '.CmsCommConnection::component()->getDriversForSelect()[$id].' — только отправка';
+        }
+
+        return $modes;
+    }
+
+    /** The mailing service driver of the chosen mode, or null. */
+    public function serviceDriver(): ?string
+    {
+        return strpos((string)$this->mode, self::MODE_SERVICE) === 0 ? substr((string)$this->mode, strlen(self::MODE_SERVICE)) : null;
     }
 
     public function rules()
