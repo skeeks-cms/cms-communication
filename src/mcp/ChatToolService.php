@@ -114,10 +114,11 @@ class ChatToolService
         $limit = max(1, min(200, (int)($a['limit'] ?? 50)));
         $length = max(200, min(10000, (int)($a['max_length'] ?? 2000)));
         $query = CmsCommMessage::find()->andWhere(['cms_comm_conversation_id' => (int)$chat->id])->with(['identity', 'identity.cmsUser', 'files', 'sentBy']);
-        if (!empty($a['before_id'])) {
-            $query->andWhere(['<', 'id', (int)$a['before_id']]);
+        // By the time of the messages: an imported history is not numbered in time order.
+        if (!empty($a['before_id']) && ($pivot = CmsCommMessage::find()->andWhere(['id' => (int)$a['before_id'], 'cms_comm_conversation_id' => (int)$chat->id])->one())) {
+            $query->andWhere(['or', ['<', 'message_at', (int)$pivot->message_at], ['and', ['message_at' => (int)$pivot->message_at], ['<', 'id', (int)$pivot->id]]]);
         }
-        $messages = array_reverse($query->orderBy(['id' => SORT_DESC])->limit($limit + 1)->all());
+        $messages = array_reverse($query->orderBy(['message_at' => SORT_DESC, 'id' => SORT_DESC])->limit($limit + 1)->all());
         $more = count($messages) > $limit;
         if ($more) {
             array_shift($messages);

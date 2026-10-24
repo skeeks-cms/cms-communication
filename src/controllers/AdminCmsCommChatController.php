@@ -304,8 +304,11 @@ class AdminCmsCommChatController extends BackendModelStandartController
         $conversation = $this->model;
         if ($before = (int)\Yii::$app->request->get('before')) {
             // Older messages, when the employee scrolls up to the top of the chat.
-            $older = array_reverse(CmsCommMessage::find()->andWhere(['cms_comm_conversation_id' => (int)$conversation->id])->andWhere(['<', 'id', $before])
-                ->with(['identity', 'files', 'sentBy'])->orderBy(['id' => SORT_DESC])->limit(self::MESSAGES + 1)->all());
+            // By the time of the messages: an imported history does not number them in time order.
+            $pivot = CmsCommMessage::find()->andWhere(['id' => $before, 'cms_comm_conversation_id' => (int)$conversation->id])->one();
+            $older = $pivot ? array_reverse(CmsCommMessage::find()->andWhere(['cms_comm_conversation_id' => (int)$conversation->id])
+                ->andWhere(['or', ['<', 'message_at', (int)$pivot->message_at], ['and', ['message_at' => (int)$pivot->message_at], ['<', 'id', (int)$pivot->id]]])
+                ->with(['identity', 'files', 'sentBy'])->orderBy(['message_at' => SORT_DESC, 'id' => SORT_DESC])->limit(self::MESSAGES + 1)->all()) : [];
             $more = count($older) > self::MESSAGES;
             if ($more) {
                 array_shift($older);
@@ -539,8 +542,9 @@ class AdminCmsCommChatController extends BackendModelStandartController
 
     public function renderPane(CmsCommConversation $conversation): string
     {
+        // The latest by time; ids of an imported history are not in time order.
         $messages = CmsCommMessage::find()->andWhere(['cms_comm_conversation_id' => (int)$conversation->id])
-            ->with(['identity', 'files', 'sentBy'])->orderBy(['id' => SORT_DESC])->limit(self::MESSAGES)->all();
+            ->with(['identity', 'files', 'sentBy'])->orderBy(['message_at' => SORT_DESC, 'id' => SORT_DESC])->limit(self::MESSAGES)->all();
         $messages = array_reverse($messages);
         $this->dialogs()->markRead($conversation);
 
@@ -561,8 +565,14 @@ class AdminCmsCommChatController extends BackendModelStandartController
         $ids = array_map(static fn($c) => (int)$c->id, $conversations);
         $last = [];
         if ($ids) {
-            $lastIds = CmsCommMessage::find()->select(['MAX(id)'])->andWhere(['cms_comm_conversation_id' => $ids])->groupBy('cms_comm_conversation_id')->column();
-            foreach (CmsCommMessage::find()->andWhere(['id' => $lastIds ?: [0]])->all() as $m) {
+            // The latest message of each chat by time (an imported history is not numbered in time order).
+            $latest = CmsCommMessage::find()->select(['cms_comm_conversation_id', 'at' => 'MAX(message_at)'])
+                ->andWhere(['cms_comm_conversation_id' => $ids])->groupBy('cms_comm_conversation_id')->asArray()->all();
+            $where = ['or'];
+            foreach ($latest as $row) {
+                $where[] = ['cms_comm_conversation_id' => (int)$row['cms_comm_conversation_id'], 'message_at' => (int)$row['at']];
+            }
+            foreach ($latest ? CmsCommMessage::find()->andWhere($where)->orderBy(['id' => SORT_ASC])->all() : [] as $m) {
                 $last[(int)$m->cms_comm_conversation_id] = $m;
             }
         }

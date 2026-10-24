@@ -53,19 +53,29 @@ class BotImport
             $since = time() - $days * 86400;
             // Pages go back in time: from the newest moment ($cursor) to the oldest one ($since).
             $cursor = null;
+            $all = [];
             for ($page = 0; $page < self::MAX_PAGES; $page++) {
                 $events = $this->driver->history($chatId, 100, $cursor, $since);
                 if (!$events) {
                     break;
                 }
                 usort($events, static fn(BotEvent $a, BotEvent $b) => $a->date <=> $b->date);
-                $result['messages'] += $this->ingest->applyHistory(array_values(array_filter($events, static fn(BotEvent $e) => $e->date >= $since)));
+                foreach ($events as $event) {
+                    if ($event->date >= $since) {
+                        $all[] = $event;
+                    }
+                }
                 $oldest = (int)$events[0]->date;
                 // A page may come shorter than asked: only an empty page or the period's start ends the chat.
                 if ($oldest <= $since || ($cursor !== null && $oldest >= $cursor)) {
                     break;
                 }
                 $cursor = $oldest - 1;
+            }
+            // Stored from the oldest to the newest: the messages are numbered in time order, as received ones are.
+            usort($all, static fn(BotEvent $a, BotEvent $b) => $a->date <=> $b->date);
+            foreach (array_chunk($all, 200) as $chunk) {
+                $result['messages'] += $this->ingest->applyHistory($chunk);
             }
             $conversation = CmsCommConversation::find()->andWhere(['cms_site_id' => (int)$this->connection->cms_site_id,
                 'thread_key' => (int)$this->connection->id.':'.$chatId])->one();

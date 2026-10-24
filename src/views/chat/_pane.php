@@ -17,7 +17,8 @@ use skeeks\cms\communication\models\CmsCommConversation;
 use yii\helpers\Html;
 use yii\helpers\Url;
 
-$last = $messages ? (int)end($messages)->id : 0;
+// Polling asks for messages written after this one: the largest id of the chat, not the last shown (an imported history is not numbered in time order).
+$last = (int)\skeeks\cms\communication\models\CmsCommMessage::find()->andWhere(['cms_comm_conversation_id' => (int)$conversation->id])->max('id');
 $config = [
     'id' => (int)$conversation->id,
     'last' => $last,
