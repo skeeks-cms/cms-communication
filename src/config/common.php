@@ -239,19 +239,24 @@ return [
             ],
         ]],
 
-        // "Рассылки": creating and launching campaigns is a right of its own.
+        // "Рассылки": creating and launching campaigns is a right of its own; so is managing mail
+        // (mailboxes and "Настройки почты", AI limits included), given to administrators.
         'authManager' => [
             'config' => [
                 'roles' => [
                     [
                         'name' => \skeeks\cms\rbac\CmsManager::ROLE_ADMIN,
-                        'child' => ['permissions' => ['cmsCommunication/admin-cms-comm-campaign']],
+                        'child' => ['permissions' => ['cmsCommunication/admin-cms-comm-campaign', 'cmsCommunication/admin-cms-comm-settings']],
                     ],
                 ],
                 'permissions' => [
                     [
                         'name' => 'cmsCommunication/admin-cms-comm-campaign',
                         'description' => 'Рассылки: создавать и запускать кампании',
+                    ],
+                    [
+                        'name' => 'cmsCommunication/admin-cms-comm-settings',
+                        'description' => 'Почта: управлять почтовыми ящиками и «Настройками почты» (в том числе работой ИИ через API)',
                     ],
                 ],
             ],

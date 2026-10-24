@@ -125,8 +125,10 @@ class CommunicationComponent extends Component
      * Limits of AI actions through MCP/REST (services\AiActions): perCall —
      * drafts or campaign recipients in one call; perDay — of them per CRM
      * user and day (CRM time zone); recentDays — no new offer to a client
-     * who got a letter or this offer within these days. Missing keys keep
-     * AiActions::LIMITS (20, 100, 30).
+     * who got a letter or this offer within these days; sendPerDay,
+     * personalDays, serviceDays. The fallback only: a value an administrator
+     * sets in "Настройки почты" → «Работа ИИ через API» (components\AiApiSettings)
+     * wins; missing keys keep AiActions::LIMITS and LetterPurpose::DAYS.
      *
      * @var array
      */

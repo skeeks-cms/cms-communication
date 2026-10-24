@@ -10,6 +10,7 @@ namespace skeeks\cms\communication\controllers;
 use skeeks\cms\backend\BackendAction;
 use skeeks\cms\backend\BackendController;
 use skeeks\cms\base\Component;
+use skeeks\cms\communication\components\AiApiSettings;
 use skeeks\cms\communication\components\LinkTrackingSettings;
 use skeeks\cms\communication\components\MailFileSettings;
 use skeeks\cms\communication\forms\MailFileCleanupForm;
@@ -25,16 +26,21 @@ use yii\widgets\ActiveForm;
 
 /**
  * "Настройки почты": how letter files are kept for the whole site (a mailbox
- * may override it in its own form) and a one-off cleanup of CRM copies that
- * an administrator starts as a job.
+ * may override it in its own form), a one-off cleanup of CRM copies started
+ * as a job, visits by links and the work of AI clients through the API.
+ * Open to whoever manages mail (PERMISSION, given to administrators; the
+ * same right opens "Почтовые ящики").
  */
 class AdminCmsCommSettingsController extends BackendController
 {
+    /** "Почта: управлять почтовыми ящиками и «Настройками почты»" (config/common.php authManager). */
+    public const PERMISSION = 'cmsCommunication/admin-cms-comm-settings';
+
     public function init()
     {
         $this->name = 'Настройки почты';
         $this->generateAccessActions = false;
-        $this->permissionName = CmsManager::PERMISSION_ROLE_ADMIN_ACCESS;
+        $this->permissionName = self::PERMISSION;
         $this->defaultAction = 'files';
 
         parent::init();
@@ -72,7 +78,55 @@ class AdminCmsCommSettingsController extends BackendController
                 'priority' => 30,
                 'callback' => [$this, 'links'],
             ],
+            // AI clients through MCP/REST: the send switch and the limits (AiApiSettings).
+            'ai' => [
+                'class' => BackendAction::class,
+                'name' => 'Работа ИИ через API',
+                'icon' => 'fas fa-robot',
+                'priority' => 40,
+                'callback' => [$this, 'ai'],
+            ],
         ];
+    }
+
+    /** The send switch and the limits of AI clients, at the level the administration edits (component-settings.md). */
+    public function ai()
+    {
+        $site = \Yii::$app->skeeks->site;
+        $component = new AiApiSettings();
+        if ($site->is_default) {
+            $component->overridePath = [Component::OVERRIDE_DEFAULT];
+        } else {
+            $component->overridePath = [Component::OVERRIDE_DEFAULT, Component::OVERRIDE_SITE];
+            $component->cmsSite = $site;
+        }
+        $component->refresh();
+
+        $request = \Yii::$app->request;
+        if ($request->isPost && !$request->post(RequestResponse::DYNAMIC_RELOAD_NOT_SUBMIT)) {
+            if ($component->load($request->post()) && $component->validate()) {
+                if ($site->is_default) {
+                    $component->override = Component::OVERRIDE_DEFAULT;
+                } else {
+                    $component->override = Component::OVERRIDE_SITE;
+                    $component->cmsSite = $site;
+                }
+                $saved = $component->save();
+                AiApiSettings::reset();
+                \Yii::$app->getSession()->setFlash($saved ? 'success' : 'error', $saved ? 'Сохранено' : 'Не удалось сохранить');
+            } else {
+                \Yii::$app->getSession()->setFlash('error', 'Не удалось сохранить: '.implode(' ', $component->getFirstErrors()));
+            }
+        } elseif ($request->isPost) {
+            $component->load($request->post());
+        }
+
+        return $this->render('@skeeks/cms/communication/views/settings/ai', [
+            'component' => $component,
+            'sendEnabled' => AiApiSettings::forSite((int)$site->id)['sendEnabled'],
+            'limits' => \skeeks\cms\communication\services\AiActions::limitSources(\skeeks\cms\communication\services\AiActions::LIMITS)
+                + \skeeks\cms\communication\services\AiActions::limitSources(\skeeks\cms\communication\services\LetterPurpose::DAYS),
+        ]);
     }
 
     /** Marks of links to our sites and visits by them, at the level the administration edits (component-settings.md). */

@@ -44,7 +44,8 @@ class AdminCmsCommAccountController extends BackendModelStandartController
         $this->name = 'Почтовые ящики';
         $this->modelShowAttribute = 'asText';
         $this->modelClassName = CmsCommAccount::class;
-        $this->permissionName = CmsManager::PERMISSION_ROLE_ADMIN_ACCESS;
+        // Whoever manages mail ("Почта: управлять почтовыми ящиками и «Настройками почты»").
+        $this->permissionName = AdminCmsCommSettingsController::PERMISSION;
         $this->generateAccessActions = false;
 
         parent::init();

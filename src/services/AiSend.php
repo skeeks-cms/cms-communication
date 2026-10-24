@@ -7,6 +7,7 @@
 
 namespace skeeks\cms\communication\services;
 
+use skeeks\cms\communication\components\AiApiSettings;
 use skeeks\cms\communication\forms\ComposeForm;
 use skeeks\cms\communication\models\CmsCommApiSend;
 use skeeks\cms\communication\models\CmsCommContact;
@@ -58,6 +59,7 @@ class AiSend
     public const REASON_CHANGED = 'changed_after_check';
     public const REASON_KEY_REUSED = 'idempotency_key_reused';
     public const REASON_SEND_LIMIT = 'send_day_limit';
+    public const REASON_SEND_DISABLED = 'api_send_disabled';
 
     private CmsUser $user;
     private int $siteId;
@@ -216,9 +218,16 @@ class AiSend
             $problems[] = $problem('attachment', 'Не больше '.AiDraftFiles::MAX_FILES.' файлов и '.(AiDraftFiles::MAX_TOTAL / 1048576).' МБ на письмо.');
         }
 
+        // The switch and limit of whoever manages mail ("Настройки почты" → «Работа ИИ через API»).
+        if (!AiApiSettings::forSite($this->siteId)['sendEnabled']) {
+            $problems[] = $problem(self::REASON_SEND_DISABLED, 'Отправка писем через API на этом сайте выключена. Включает сотрудник с правом управлять почтой (по умолчанию администратор): '
+                .'«Настройки» → «Настройки почты» → «Работа ИИ через API» → «Разрешить отправку писем через API». Черновик остаётся в «Черновиках»: его можно отправить из «Почты».');
+        }
         $limit = AiActions::limits()['sendPerDay'];
         if ($this->sentToday() >= $limit) {
-            $problems[] = $problem(self::REASON_SEND_LIMIT, 'Дневной лимит отправок через API исчерпан: не больше '.$limit.' писем в день на сотрудника.');
+            $problems[] = $problem(self::REASON_SEND_LIMIT, $limit > 0
+                ? 'Дневной лимит отправок через API исчерпан: не больше '.$limit.' писем в день на сотрудника («Настройки почты» → «Работа ИИ через API»).'
+                : 'Отправка через API ограничена нулём писем в день («Настройки почты» → «Работа ИИ через API»).');
         }
 
         return ['form' => $form, 'draft' => $draft, 'record' => $record, 'problems' => $problems, 'warnings' => $warnings, 'purpose' => $purpose,

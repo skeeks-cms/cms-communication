@@ -91,8 +91,14 @@ campaign; saving needs `confirm=true`. "Подготовлено ИИ" is `servi
 (prepared_* columns, recipient text_*), set only by the server from the
 OAuth client of the running tool, never from arguments or forms; a letter
 takes it only from the sender's own draft (`MailDrafts::applyAiDraft()`), an
-employee's change marks it edited instead of removing it. Limits are
-`communication.aiLimits`.
+employee's change marks it edited instead of removing it. Limits and the
+API send switch are `components\AiApiSettings` ("Настройки почты" → «Работа
+ИИ через API», site component settings) over `communication.aiLimits` over
+the defaults; read them only through `AiActions::limits()` /
+`LetterPurpose::days()` / `AiApiSettings::forSite()`. Mailboxes, their
+access and "Настройки почты" open by the right of mail management
+(`AdminCmsCommSettingsController::PERMISSION`, given to administrators),
+not by the administrator role.
 Sending through the API is `services\AiSend` only (scope
 `cms.communication.mail_send`, separate from preparing): an own draft, a
 check with no side effects (the letter form plus the API rules) whose

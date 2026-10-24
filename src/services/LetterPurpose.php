@@ -89,11 +89,10 @@ class LetterPurpose
         return $topicId ? self::ADVERTISING : null;
     }
 
+    /** personalDays, serviceDays: "Настройки почты" → «Работа ИИ через API», then communication.aiLimits, then DAYS. */
     public static function days(): array
     {
-        $own = \Yii::$app->has('communication') ? (array)(\Yii::$app->communication->aiLimits ?? []) : [];
-
-        return array_map('intval', array_merge(self::DAYS, array_intersect_key($own, self::DAYS)));
+        return array_map(static fn($row) => $row['value'], AiActions::limitSources(self::DAYS));
     }
 
     /**

@@ -34,7 +34,8 @@ class AdminCmsCommAccountAccessController extends BackendModelStandartController
         $this->name = 'Доступ к почтовым ящикам';
         $this->modelShowAttribute = 'asText';
         $this->modelClassName = CmsCommAccountAccess::class;
-        $this->permissionName = CmsManager::PERMISSION_ROLE_ADMIN_ACCESS;
+        // Employees' access to a mailbox is part of managing mail (the mailbox card).
+        $this->permissionName = AdminCmsCommSettingsController::PERMISSION;
         $this->generateAccessActions = false;
 
         parent::init();

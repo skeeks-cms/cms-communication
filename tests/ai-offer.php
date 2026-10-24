@@ -257,7 +257,55 @@ try {
     $ss = run('cms_comm_draft_send', ['draft_id' => $sdId, 'check_token' => $sc['check_token'], 'idempotency_key' => 'offer-'.$suffix.'-sig', 'confirm' => true]);
     $sm = CmsCommMessage::findOne((int)$ss['message']['id']);
     check(mb_substr_count((string)$sm->body_html, 'Тестовый Менеджер') === 1 && mb_substr_count((string)$sm->body_text, 'Тестовый Менеджер') === 1, 'The letter has the same signature, once');
+
+    // 11. "Настройки почты" → «Работа ИИ через API»: the CRM value wins, then communication.aiLimits, then the defaults.
+    $config = Yii::$app->communication->aiLimits;
+    Yii::$app->communication->aiLimits = ['perCall' => 7, 'recentDays' => 12];
+    \skeeks\cms\communication\components\AiApiSettings::reset();
+    $sources = AiActions::limitSources(AiActions::LIMITS + LetterPurpose::DAYS);
+    check($sources['perCall'] === ['value' => 7, 'source' => 'config'] && $sources['sendPerDay'] === ['value' => 20, 'source' => 'default']
+        && $sources['personalDays'] === ['value' => 90, 'source' => 'default'], 'Without CRM values: the configuration, then the defaults');
+    $stored = new \skeeks\cms\communication\components\AiApiSettings();
+    $stored->override = \skeeks\cms\base\Component::OVERRIDE_DEFAULT;
+    $stored->overridePath = [\skeeks\cms\base\Component::OVERRIDE_DEFAULT];
+    $stored->refresh();
+    $stored->setAttributes(['sendEnabled' => 0, 'sendPerDay' => '3', 'perCall' => '', 'recentDays' => '0', 'personalDays' => '45'], false);
+    check($stored->validate() && $stored->save(), 'The settings are saved by the component settings of the site: '.json_encode($stored->getErrors(), JSON_UNESCAPED_UNICODE));
+    \skeeks\cms\communication\components\AiApiSettings::reset();
+    $read = \skeeks\cms\communication\components\AiApiSettings::forSite($siteId);
+    $limits = AiActions::limits();
+    check($read['sendEnabled'] === false && $limits['sendPerDay'] === 3 && $limits['perCall'] === 7 && $limits['recentDays'] === 0 && LetterPurpose::days()['personalDays'] === 45,
+        'Set in the CRM wins; an empty field keeps the configuration; 0 is a value: '.json_encode($read + ['limits_now' => $limits], JSON_UNESCAPED_UNICODE));
+    $bad = new \skeeks\cms\communication\components\AiApiSettings();
+    $bad->setAttributes(['perDay' => '-1', 'personalDays' => '0'], false);
+    check(!$bad->validate() && $bad->hasErrors('perDay') && $bad->hasErrors('personalDays'), 'Negative limits and zero days of correspondence are refused');
+    // The switch off: the check and the send say why and where it is turned on; preparing still works.
+    $offLead = lead($address('off'), (int)$admin->id);
+    $off = run('cms_comm_draft_create', $offerArgs + ['confirm' => true, 'items' => [$item($offLead)]]);
+    check($off['items'][0]['status'] === 'created', 'With sending off, drafts are still prepared');
+    $offCheck = run('cms_comm_draft_check', ['draft_id' => (int)$off['items'][0]['draft_id']]);
+    check(!$offCheck['ok'] && in_array(AiSend::REASON_SEND_DISABLED, array_column($offCheck['problems'], 'reason'), true)
+        && mb_strpos(json_encode($offCheck['problems'], JSON_UNESCAPED_UNICODE), 'Работа ИИ через API') !== false, 'The check refuses: sending through the API is off, and tells where to turn it on');
+    $offSend = run('cms_comm_draft_send', ['draft_id' => (int)$off['items'][0]['draft_id'], 'check_token' => str_repeat('a', 64), 'idempotency_key' => 'offer-'.$suffix.'-off', 'confirm' => true]);
+    check(in_array(AiSend::REASON_SEND_DISABLED, array_column($offSend['problems'] ?? [], 'reason'), true), 'The send refuses the same way');
+    // Zero letters a day: the day limit refuses.
+    \skeeks\cms\communication\components\AiApiSettings::reset($siteId, ['sendEnabled' => true, 'limits' => ['sendPerDay' => 0]]);
+    $zero = run('cms_comm_draft_check', ['draft_id' => (int)$off['items'][0]['draft_id']]);
+    check(in_array(AiSend::REASON_SEND_LIMIT, array_column($zero['problems'], 'reason'), true), 'sendPerDay = 0: nothing leaves through the API');
+    Yii::$app->communication->aiLimits = $config;
+    \skeeks\cms\communication\components\AiApiSettings::reset();
+    // Who changes them: the right of mail management (also mailboxes and their access), administrators by default.
+    $right = \skeeks\cms\communication\controllers\AdminCmsCommSettingsController::PERMISSION;
+    $am = Yii::$app->authManager;
+    check($am->getPermission($right) && $am->hasChild($am->getRole(\skeeks\cms\rbac\CmsManager::ROLE_ADMIN), $am->getPermission($right)),
+        'The right of mail management exists and administrators have it (rbac/init)');
+    foreach ([\skeeks\cms\communication\controllers\AdminCmsCommSettingsController::class, \skeeks\cms\communication\controllers\AdminCmsCommAccountController::class,
+        \skeeks\cms\communication\controllers\AdminCmsCommAccountAccessController::class] as $class) {
+        $controller = new $class('test', Yii::$app->getModule('cmsCommunication'));
+        check($controller->permissionName === $right, $class.' opens by the right of mail management');
+    }
 } finally {
     $tx->rollBack();
+    \skeeks\cms\communication\components\AiApiSettings::reset();
 }
 echo "OK: {$checks} checks\n";

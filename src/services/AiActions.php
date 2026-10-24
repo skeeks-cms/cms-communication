@@ -7,6 +7,7 @@
 
 namespace skeeks\cms\communication\services;
 
+use skeeks\cms\communication\components\AiApiSettings;
 use skeeks\cms\communication\controllers\AdminCmsCommCampaignController;
 use skeeks\cms\communication\forms\ComposeForm;
 use skeeks\cms\communication\models\CmsCommCampaign;
@@ -73,12 +74,38 @@ class AiActions
         $this->mark = AiMark::make($clientName, (int)$this->user->id);
     }
 
-    /** perCall — rows in one call; perDay — drafts and recipients per user and day; recentDays — no repeat within. */
+    /**
+     * perCall — rows in one call; perDay — drafts and recipients per user and day; recentDays — no repeat within;
+     * sendPerDay — letters sent through the API per user and day. The value set in "Настройки почты" → «Работа ИИ
+     * через API» wins, then communication.aiLimits of the site configuration, then LIMITS.
+     */
     public static function limits(): array
     {
-        $own = \Yii::$app->has('communication') ? (array)(\Yii::$app->communication->aiLimits ?? []) : [];
+        return array_map(static fn($row) => $row['value'], self::limitSources(self::LIMITS));
+    }
 
-        return array_map('intval', array_merge(self::LIMITS, array_intersect_key($own, self::LIMITS)));
+    /**
+     * Each limit with where it comes from: crm, config or default.
+     *
+     * @param array $defaults key => default value (LIMITS, LetterPurpose::DAYS)
+     * @return array key => [value, source]
+     */
+    public static function limitSources(array $defaults): array
+    {
+        $config = \Yii::$app->has('communication') ? (array)(\Yii::$app->communication->aiLimits ?? []) : [];
+        $crm = AiApiSettings::forSite()['limits'];
+        $result = [];
+        foreach ($defaults as $key => $default) {
+            if (array_key_exists($key, $crm)) {
+                $result[$key] = ['value' => (int)$crm[$key], 'source' => 'crm'];
+            } elseif (array_key_exists($key, $config) && $config[$key] !== null && $config[$key] !== '') {
+                $result[$key] = ['value' => (int)$config[$key], 'source' => 'config'];
+            } else {
+                $result[$key] = ['value' => (int)$default, 'source' => 'default'];
+            }
+        }
+
+        return $result;
     }
 
     /** The mark of this AI client and user: "mcp:<client>". */
