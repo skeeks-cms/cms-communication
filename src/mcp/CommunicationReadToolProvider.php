@@ -61,8 +61,18 @@ class CommunicationReadToolProvider extends Component implements McpToolProvider
                 'Почтовые ящики, к которым у сотрудника есть доступ: адрес, название, уровни чтения (all — все письма, linked — привязанные к клиентам) и отправки. Без подключений, серверов и паролей.',
                 'cms.communication.read', [$service, 'accountList'], $this->object()),
             $this->tool('cms_comm_topic_list',
-                'Темы рекламных рассылок сайта (на них клиент подписывается или отписывается): id, название, описание, активна ли. Нужны для cms_comm_mailing_check.',
-                'cms.communication.read', [$service, 'topicList'], $this->object(['active_only' => ['type' => 'boolean']])),
+                'Темы рекламных рассылок сайта (на них клиент подписывается или отписывается): id, название, описание, активна ли. Нужны для cms_comm_mailing_check, '
+                .'cms_comm_draft_create и кампаний. Пустой список — тем ещё нет: письмо с предложением создать нельзя, пока администратор не добавит тему (cms_comm_topic_create или «Настройки → Темы рассылок»). '
+                .'Не подставляйте выдуманный id.',
+                'cms.communication.read', static function (array $a) use ($service) {
+                    $result = $service->topicList($a);
+                    if (empty($result['items'])) {
+                        $result['setup_required'] = 'На сайте нет '.(!empty($a['active_only']) ? 'действующих ' : '').'тем рассылок. Письма с предложением и кампании требуют тему: '
+                            .'её добавляет администратор — cms_comm_topic_create (право cms.communication.write) или кнопка «Добавить начальные темы» в «Настройки → Темы рассылок».';
+                    }
+
+                    return $result;
+                }, $this->object(['active_only' => ['type' => 'boolean']])),
             $this->tool('cms_comm_mailing_check',
                 '«Можно ли писать»: проверка MailingPolicy перед рекламным письмом по теме — для всех email и телефонов клиента (record_type + record_id) или для списка values (до 200). '
                 .'По каждому контакту: allowed, reason (unsubscribed_all, complaint, bounce, unsubscribed — от этой темы, no_consent, invalid, topic) и message. '

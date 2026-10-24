@@ -61,17 +61,26 @@ class AiMark
     /** The mark of a draft, a letter or a campaign, or null when an employee prepared it. */
     public static function of(?ActiveRecord $model): ?array
     {
-        if (!$model || !$model->hasAttribute('prepared_by') || $model->prepared_by !== self::BY_AI) {
+        if (!$model || !$model->hasAttribute('prepared_by')) {
             return null;
         }
-
-        return [
+        $mark = $model->prepared_by === self::BY_AI ? [
             'by' => self::BY_AI,
             'client' => (string)$model->prepared_client,
             'user_id' => $model->prepared_user_id ? (int)$model->prepared_user_id : null,
             'at' => (int)$model->prepared_at,
             'edited' => $model->hasAttribute('prepared_edited') && (bool)$model->prepared_edited,
-        ];
+        ] : null;
+        // A letter an AI client sent through the API (AiSend): the client is named even when an employee wrote the draft.
+        if ($model instanceof \skeeks\cms\communication\models\CmsCommMessage && $model->id
+            && ($sent = \skeeks\cms\communication\models\CmsCommApiSend::find()->select(['client', 'cms_user_id'])
+                ->andWhere(['cms_comm_message_id' => (int)$model->id])->asArray()->one())) {
+            $mark = $mark ?? ['by' => self::BY_AI, 'client' => (string)$sent['client'], 'user_id' => (int)$sent['cms_user_id'],
+                'at' => (int)$model->message_at, 'edited' => false, 'prepared' => false];
+            $mark['sent_via'] = (string)$sent['client'];
+        }
+
+        return $mark;
     }
 
     /** The mark of a personal campaign letter written by AI, or null. */
@@ -111,7 +120,8 @@ class AiMark
      */
     public static function text(array $mark, ?int $sentBy = null): string
     {
-        $parts = ['Подготовлено ИИ'];
+        // Written by an employee, only sent by AI through the API.
+        $parts = [isset($mark['prepared']) && $mark['prepared'] === false ? 'Отправлено ИИ через API' : 'Подготовлено ИИ'];
         $client = self::clientName((string)$mark['client']);
         if ($client !== '' && $client !== 'клиент') {
             $parts[0] .= ' ('.$client.')';
@@ -122,7 +132,9 @@ class AiMark
         if (!empty($mark['edited'])) {
             $parts[] = 'текст изменён сотрудником';
         }
-        if ($sentBy && ($sender = CmsUser::findOne($sentBy))) {
+        if (!empty($mark['sent_via']) && !(isset($mark['prepared']) && $mark['prepared'] === false)) {
+            $parts[] = 'отправлено ИИ через API ('.self::clientName((string)$mark['sent_via']).')';
+        } elseif ($sentBy && ($sender = CmsUser::findOne($sentBy))) {
             $parts[] = 'отправил '.$sender->shortDisplayName;
         }
 
@@ -151,6 +163,8 @@ class AiMark
             'user_id' => $mark['user_id'],
             'at' => (int)$mark['at'],
             'edited' => (bool)$mark['edited'],
+            'prepared_by_ai' => !(isset($mark['prepared']) && $mark['prepared'] === false),
+            'sent_via_api' => !empty($mark['sent_via']) ? self::clientName((string)$mark['sent_via']) : null,
         ] : null;
     }
 }

@@ -87,14 +87,15 @@ try {
     check($accountId > 0, 'The administrator may send from a mailbox');
     $mcpClient = 'mcp:'.$client->name;
 
-    // 1. Registration: the send scope, no tool launches or sends.
+    // 1. Registration: preparing needs the write scope; only cms_comm_draft_send sends, with its own scope; nothing launches.
     foreach (['cms_comm_draft_create', 'cms_comm_campaign_create', 'cms_comm_campaign_recipient_add'] as $name) {
         $tool = Yii::$app->cmsMcp->getTool($name);
-        check($tool->getRequiredScope() === 'cms.communication.send', $name.' needs cms.communication.send');
+        check($tool->getRequiredScope() === 'cms.communication.write', $name.' needs cms.communication.write');
     }
+    check(Yii::$app->cmsMcp->getTool('cms_comm_draft_send')->getRequiredScope() === 'cms.communication.mail_send', 'Sending needs its own scope');
     check(mb_strpos(Yii::$app->cmsMcp->getTool('cms_comm_campaign_create')->getDescription(), 'ЗАПУСТИТЬ КАМПАНИЮ ЭТИМ ИЛИ ДРУГИМ ИНСТРУМЕНТОМ НЕЛЬЗЯ') !== false, 'The campaign tool says it cannot launch');
     foreach (array_keys(Yii::$app->cmsMcp->getTools()) as $name) {
-        check(!preg_match('/^cms_comm_.*(launch|start|run|send$)/', $name), 'No tool launches a campaign or sends a letter: '.$name);
+        check(!preg_match('/^cms_comm_.*(launch|start|run|send$)/', $name) || $name === 'cms_comm_draft_send', 'No tool launches a campaign; only cms_comm_draft_send sends: '.$name);
     }
 
     $lead1 = testLead('test-ai-unit-1@skeeks.com', (int)$admin->id);

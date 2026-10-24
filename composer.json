@@ -24,6 +24,9 @@
         "symfony/mime": "^6.4 || ^7.0",
         "zbateson/mail-mime-parser": "^3.0 || ^4.0"
     },
+    "conflict": {
+        "skeeks/cms-mcp": "<1.0.16"
+    },
     "suggest": {
         "skeeks/cms-agent": "periodic polling of mailboxes and bots",
         "skeeks/cms-communication-imap": "IMAP/SMTP mailboxes"

@@ -86,12 +86,21 @@ join any audience at launch and pass the same exclusions.
 AI actions through MCP/REST (AI-2) are `services\AiActions` behind
 `mcp\CommunicationActionToolProvider`: drafts saved by `MailDrafts` for the
 responsible employee and checked by their letter form, draft campaigns and
-their recipients. Nothing sends a letter or launches a campaign; saving
-needs `confirm=true`. "Подготовлено ИИ" is `services\AiMark` (prepared_*
-columns, recipient text_*), set only by the server from the OAuth client of
-the running tool, never from arguments or forms; a letter takes it only from
-the sender's own draft (`MailDrafts::applyAiDraft()`), an employee's change
-marks it edited instead of removing it. Limits are `communication.aiLimits`.
+their recipients (scope `cms.communication.write`). Nothing launches a
+campaign; saving needs `confirm=true`. "Подготовлено ИИ" is `services\AiMark`
+(prepared_* columns, recipient text_*), set only by the server from the
+OAuth client of the running tool, never from arguments or forms; a letter
+takes it only from the sender's own draft (`MailDrafts::applyAiDraft()`), an
+employee's change marks it edited instead of removing it. Limits are
+`communication.aiLimits`.
+Sending through the API is `services\AiSend` only (scope
+`cms.communication.mail_send`, separate from preparing): an own draft, a
+check with no side effects (the letter form plus the API rules) whose
+`check_token` the send recomputes, an idempotency key stored in
+`cms_comm_api_send` inside the transaction of `MailComposeService::queue()`.
+Never send around it (no direct SMTP, no own tracking) and never report a
+queued or sent letter as delivered. Mailing topics by API are
+`services\MailingTopics` (administrator only); a send never creates a topic.
 
 Run isolated tests and PHP syntax checks. No external sends, release,
 commit, push or production deployment are implied by a local code change.

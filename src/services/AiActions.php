@@ -56,8 +56,8 @@ class AiActions
     public const REASON_INVALID = 'invalid';
     public const REASON_DAY_LIMIT = 'day_limit';
 
-    /** Defaults of CommunicationComponent::$aiLimits. */
-    public const LIMITS = ['perCall' => 20, 'perDay' => 100, 'recentDays' => 30];
+    /** Defaults of CommunicationComponent::$aiLimits; sendPerDay — letters a user sends through the API a day (AiSend). */
+    public const LIMITS = ['perCall' => 20, 'perDay' => 100, 'recentDays' => 30, 'sendPerDay' => 20];
 
     private CmsUser $user;
     private int $siteId;
