@@ -55,7 +55,10 @@ abstract class MessengerDriver extends ConnectionDriver
             [['token', 'webhookSecret', 'apiUrl', 'proxy', 'signName', 'botId', 'botUsername'], 'filter', 'filter' => static fn($value) => $value === null ? null : trim((string)$value)],
             [['token'], 'required', 'when' => fn() => $this->requireSecrets],
             [['mode'], 'in', 'range' => [self::MODE_WEBHOOK, self::MODE_POLL]],
-            [['apiUrl', 'proxy'], 'url', 'validSchemes' => ['http', 'https', 'socks5'], 'skipOnEmpty' => true],
+            [['apiUrl'], 'url', 'validSchemes' => ['http', 'https', 'socks5'], 'skipOnEmpty' => true],
+            // A proxy may carry a login and a password: http://user:pass@host:3128.
+            [['proxy'], 'url', 'validSchemes' => ['http', 'https', 'socks5', 'socks5h'], 'skipOnEmpty' => true,
+                'pattern' => '/^{schemes}:\/\/([^\s\/@:]+(:[^\s\/@]*)?@)?(([A-Z0-9][A-Z0-9_-]*)(\.[A-Z0-9][A-Z0-9_-]*)+)(?::\d{1,5})?\/?$/i'],
             [['signManager'], 'boolean'],
             [['signName'], 'string', 'max' => 64],
             [['botId', 'botUsername'], 'string', 'max' => 255],
@@ -211,6 +214,17 @@ abstract class MessengerDriver extends ConnectionDriver
      * @return BotEvent[]
      */
     public function history(string $chatId, int $count = 100, ?int $from = null, ?int $to = null): array
+    {
+        return [];
+    }
+
+    /**
+     * Facts of the bot for its card, as the last getMe() told them (Telegram:
+     * what the bot sees in groups). Empty — nothing to add.
+     *
+     * @return array label => text
+     */
+    public function describeBot(): array
     {
         return [];
     }

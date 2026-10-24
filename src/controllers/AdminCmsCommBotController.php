@@ -202,11 +202,11 @@ class AdminCmsCommBotController extends AdminCmsCommConnectionController
      * Checks the token in the messenger (stores the bot id and name), makes
      * the account and keeps the subscription as the site needs it.
      *
-     * @return array{summary: string, error: string|null, subscription: array|null}
+     * @return array{summary: string, error: string|null, subscription: array|null, notes: array}
      */
     private function refreshBot(CmsCommConnection $model): array
     {
-        $result = ['summary' => '', 'error' => null, 'subscription' => null];
+        $result = ['summary' => '', 'error' => null, 'subscription' => null, 'notes' => []];
         try {
             $driver = Bots::driver($model);
             $me = $driver->getMe();
@@ -231,6 +231,7 @@ class AdminCmsCommBotController extends AdminCmsCommConnectionController
                 $account->save(false, ['address', 'updated_at']);
             }
             $result['summary'] = ($me->name ?: 'бот').($me->username ? ' @'.$me->username : '');
+            $result['notes'] = $driver->describeBot();
         } catch (\Throwable $e) {
             $result['error'] = 'мессенджер не принял токен: '.$e->getMessage();
             return $result;
@@ -265,6 +266,7 @@ class AdminCmsCommBotController extends AdminCmsCommConnectionController
         if (!empty($result['subscription']['error'])) {
             $rows['Мессенджер сообщает'] = $result['subscription']['error'];
         }
+        $rows += (array)($result['notes'] ?? []);
         $html = '<div class="sx-surface" style="padding:16px"><table class="table table-sm">';
         foreach ($rows as $label => $value) {
             $html .= '<tr><th style="width:240px">'.Html::encode($label).'</th><td>'.Html::encode((string)$value).'</td></tr>';
