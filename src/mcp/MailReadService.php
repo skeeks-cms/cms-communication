@@ -175,6 +175,8 @@ class MailReadService extends AbstractCmsService
                 'read_level' => (string)$access->read_level,
                 'send_level' => (string)$access->send_level,
                 'is_default' => (bool)$access->is_default,
+                // The employee's signature of this mailbox: letters prepared through the API get it below the text.
+                'signature_html' => \skeeks\cms\communication\services\MailSignatures::of($userId, (int)$account->id),
             ];
         }
         return ['items' => $items, 'total' => count($items), 'note' => 'Ящики, к которым у сотрудника есть доступ. Письма других ящиков видны, если привязаны к его клиентам (как в разделе «Почта»).'];

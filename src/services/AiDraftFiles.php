@@ -152,13 +152,17 @@ class AiDraftFiles
         return true;
     }
 
-    /** The first "{Картинка}" of the text becomes the picture, or the picture goes to the end. */
+    /** The first "{Картинка}" of the text becomes the picture, or the picture goes to the end — above the signature. */
     public static function placeImage(string $html, string $token): string
     {
         $img = '<img data-sx-upload="'.htmlspecialchars($token, ENT_QUOTES, 'UTF-8').'" alt="">';
         $position = mb_strpos($html, self::PLACEHOLDER);
         if ($position !== false) {
             return mb_substr($html, 0, $position).$img.mb_substr($html, $position + mb_strlen(self::PLACEHOLDER));
+        }
+        // The signature block of MailSignatures::block() ("-- " line), as saved.
+        if (preg_match('~<div>\s*<div>--(?:&nbsp;|\x{00A0}|\s)*</div>~u', $html, $m, PREG_OFFSET_CAPTURE)) {
+            return substr($html, 0, $m[0][1]).'<p>'.$img.'</p>'.substr($html, $m[0][1]);
         }
 
         return $html.'<p>'.$img.'</p>';

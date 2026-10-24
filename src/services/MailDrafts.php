@@ -92,7 +92,7 @@ class MailDrafts
         // The purpose decides: only an advertising letter goes with its topic and the opt-out link.
         $purpose = LetterPurpose::of($draft->purpose, $draft->cms_comm_topic_id ? (int)$draft->cms_comm_topic_id : null);
         $form->purpose = $purpose;
-        if ($purpose === LetterPurpose::ADVERTISING && $draft->cms_comm_topic_id) {
+        if (LetterPurpose::withTopic($purpose) && $draft->cms_comm_topic_id) {
             $form->cms_comm_topic_id = (int)$draft->cms_comm_topic_id;
         }
 

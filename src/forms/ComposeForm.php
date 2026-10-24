@@ -77,7 +77,8 @@ class ComposeForm extends Model
      * in code, never loaded from a request. Such a letter goes to one
      * recipient that services\MailingPolicy allows, with the personal opt-out
      * link (services\Unsubscribe::PLACEHOLDER in the text or a line at the
-     * end) and the List-Unsubscribe headers. Personal letters have none.
+     * end) and the List-Unsubscribe headers. Personal letters have none; an
+     * individual offer keeps the topic for the opt-out checks only (withOptOut()).
      */
     public $cms_comm_topic_id;
 
@@ -112,7 +113,7 @@ class ComposeForm extends Model
 
     /**
      * The purpose of a letter AI prepared (services\LetterPurpose: advertising,
-     * personal, service), from its draft (MailDrafts::applyAiDraft()); null for
+     * individual_offer, personal, service), from its draft (MailDrafts::applyAiDraft()); null for
      * a letter an employee writes. Its rules are checked here, so the mail
      * screen and the API send it under the same conditions. Set in code, never
      * loaded from a request.
@@ -159,6 +160,19 @@ class ComposeForm extends Model
         foreach ($check['problems'] as $problem) {
             $this->addError($attribute, (string)$problem['message']);
         }
+        if ($this->purpose === \skeeks\cms\communication\services\LetterPurpose::INDIVIDUAL_OFFER && $this->cms_comm_campaign_id) {
+            $this->addError($attribute, 'Индивидуальное предложение не уходит кампанией: письма рассылки всегда со строкой «Отписаться».');
+        }
+    }
+
+    /**
+     * Does the letter carry the personal opt-out line and List-Unsubscribe: a letter with a topic, except an
+     * individual offer (LetterPurpose::INDIVIDUAL_OFFER) outside a campaign — its topic only checks the opt-outs.
+     */
+    public function withOptOut(): bool
+    {
+        return (bool)$this->cms_comm_topic_id
+            && ($this->purpose !== \skeeks\cms\communication\services\LetterPurpose::INDIVIDUAL_OFFER || $this->cms_comm_campaign_id);
     }
 
     public function attributeLabels()

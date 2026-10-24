@@ -123,7 +123,7 @@ class AiActions
     {
         $items = $this->items($args);
         $purpose = $this->purpose($args);
-        $topic = $purpose === LetterPurpose::ADVERTISING ? $this->topic($args) : null;
+        $topic = LetterPurpose::withTopic($purpose) ? $this->topic($args) : null;
         $testMode = $this->testMode($args);
         $accountId = (int)($args['cms_comm_account_id'] ?? 0);
         if ($accountId && !(new MailComposeService($this->user, $this->siteId))->canSendFrom($accountId)) {
@@ -189,8 +189,11 @@ class AiActions
         $this->checkNoDraft($record, $draft ? (int)$draft->id : null);
         $this->checkNotInCampaign($record, null);
         // A repeated offer is a mailing concern: personal and service letters may answer with an offer sent before.
-        $sendable = $offer !== '' ? $this->offer($offer, $record, $owner, $purpose === LetterPurpose::ADVERTISING && !$testMode) : null;
+        $sendable = $offer !== '' ? $this->offer($offer, $record, $owner, LetterPurpose::withTopic($purpose) && !$testMode) : null;
         $attachments = $this->attachmentSources($item);
+        if ($purpose === LetterPurpose::INDIVIDUAL_OFFER && !$sendable) {
+            throw new AiRefusal(LetterPurpose::REASON_PURPOSE, 'Индивидуальное предложение отправляется с Презентацией или КП: укажите offer ("proposal:<id>").');
+        }
 
         $subject = trim((string)($item['subject'] ?? ''));
         $html = (string)($item['body_html'] ?? '');
@@ -200,7 +203,8 @@ class AiActions
         if ($sendable) {
             $html = str_replace('{Ссылка}', SendService::editorLink($sendable[0], $sendable[1], $sendable[2]->getSendButton()), $html);
         }
-        $html = str_replace('{Отписаться}', '<a href="'.Unsubscribe::PLACEHOLDER.'">'.Campaigns::UNSUBSCRIBE_LINK.'</a>', $html);
+        // Only advertising has the opt-out line; an individual offer drops the placeholder.
+        $html = str_replace('{Отписаться}', LetterPurpose::optOut($purpose) ? '<a href="'.Unsubscribe::PLACEHOLDER.'">'.Campaigns::UNSUBSCRIBE_LINK.'</a>' : '', $html);
 
         $service = new MailComposeService($owner, $this->siteId);
         $form = new ComposeForm(['service' => $service]);
@@ -234,6 +238,15 @@ class AiActions
                 }
             }
         }
+        // The sender's signature of this mailbox, once, below the text — as the letter form puts it; pictures
+        // without a "{Картинка}" place go above it.
+        $signature = MailSignatures::of((int)$owner->id, $accountId);
+        if ($signature !== null && !MailSignatures::has((string)$form->body_html, $signature)) {
+            $inline = count(array_filter($attachments, static fn($a) => $a['inline']));
+            $places = mb_substr_count((string)$form->body_html, AiDraftFiles::PLACEHOLDER);
+            $form->body_html = (string)$form->body_html.str_repeat('<p>'.AiDraftFiles::PLACEHOLDER.'</p>', max(0, $inline - $places));
+            $form->body_html = MailSignatures::append((string)$form->body_html, $signature);
+        }
         // The letter form of the owner checks it as the mail screen will when they send it.
         if (!$form->validate()) {
             throw new AiRefusal(self::REASON_INVALID, implode(' ', $form->getFirstErrors()));
@@ -246,6 +259,7 @@ class AiActions
                 'address' => $address,
                 'owner' => ['id' => (int)$owner->id, 'name' => (string)$owner->shortDisplayName],
                 'cms_comm_account_id' => $accountId,
+                'signature' => $signature !== null ? trim(\skeeks\cms\helpers\RichTextHtml::toText($signature)) : null,
                 'purpose' => $purpose,
                 'topic' => $topic ? ['id' => (int)$topic->id, 'name' => (string)$topic->name] : null,
                 'offer' => $sendable ? ['ref' => $sendable[0].':'.$sendable[1], 'title' => $sendable[2]->getSendTitle()] : null,
@@ -310,7 +324,7 @@ class AiActions
         ];
         $purpose = isset($args['purpose']) ? $this->purpose($args) : (LetterPurpose::of($draft->purpose, $draft->cms_comm_topic_id) ?? $this->purpose($args));
         $topicArgs = ['cms_comm_topic_id' => $args['cms_comm_topic_id'] ?? $draft->cms_comm_topic_id];
-        $topic = $purpose === LetterPurpose::ADVERTISING ? $this->topic($topicArgs) : null;
+        $topic = LetterPurpose::withTopic($purpose) ? $this->topic($topicArgs) : null;
         $offer = array_key_exists('offer', $args) ? (string)$args['offer'] : (string)($refs[0] ?? '');
         $testMode = $this->testMode($args);
         try {
@@ -375,13 +389,13 @@ class AiActions
             if (!empty($args['cms_comm_topic_id'])) {
                 return LetterPurpose::ADVERTISING;
             }
-            throw new \DomainException('Укажите purpose — назначение письма: advertising (предложение, нужна тема рассылки), personal (рабочая переписка: клиент недавно писал), '
+            throw new \DomainException('Укажите purpose — назначение письма: advertising (рассылка-предложение, нужна тема, ссылка «Отписаться»), individual_offer (индивидуальное предложение одному человеку: тема для проверки отказов, Презентация или КП, без строки «Отписаться»), personal (рабочая переписка: клиент недавно писал), '
                 .'service (служебное: действующая сделка или оплаченный счёт).');
         }
         if (!isset(LetterPurpose::names()[$purpose])) {
-            throw new \DomainException('purpose — advertising, personal или service.');
+            throw new \DomainException('purpose — advertising, individual_offer, personal или service.');
         }
-        if ($purpose !== LetterPurpose::ADVERTISING && !empty($args['cms_comm_topic_id'])) {
+        if (!LetterPurpose::withTopic($purpose) && !empty($args['cms_comm_topic_id'])) {
             throw new \DomainException('У личного и служебного письма нет темы рассылки: уберите cms_comm_topic_id или выберите purpose=advertising.');
         }
 
@@ -395,7 +409,7 @@ class AiActions
         if ($check['problems']) {
             throw new AiRefusal((string)$check['problems'][0]['reason'], (string)$check['problems'][0]['message']);
         }
-        if ($purpose === LetterPurpose::ADVERTISING) {
+        if (LetterPurpose::withTopic($purpose)) {
             $this->checkContact($record, $type, $address, $topic, $testMode);
         } elseif (!\Yii::$app->communication->isRecipientAllowed($address)) {
             throw new AiRefusal(self::REASON_NOT_ALLOWED, 'Отправка на этот адрес запрещена настройкой allowedRecipients.');
@@ -466,6 +480,7 @@ class AiActions
     public function createCampaign(array $args, bool $apply): array
     {
         $this->requireCampaignRight();
+        $this->campaignPurpose($args);
         $topic = $this->topic($args);
         $campaign = new CmsCommCampaign([
             'cms_site_id' => $this->siteId,
@@ -540,9 +555,20 @@ class AiActions
      *
      * @param array $args cms_comm_campaign_id, items: record_type, record_id, address, name, subject, body_html
      */
+    /** A campaign is a mailing: advertising only, never an individual offer without the opt-out line. */
+    private function campaignPurpose(array $args): void
+    {
+        $purpose = trim((string)($args['purpose'] ?? ''));
+        if ($purpose !== '' && $purpose !== LetterPurpose::ADVERTISING) {
+            throw new \DomainException('Кампания — это рассылка: её письма всегда рекламные, со строкой «Отписаться» и заголовками отписки. '
+                .'Индивидуальное предложение (individual_offer) готовится черновиком cms_comm_draft_create и отправляется по одному.');
+        }
+    }
+
     public function addRecipients(array $args, bool $apply): array
     {
         $this->requireCampaignRight();
+        $this->campaignPurpose($args);
         $campaign = CmsCommCampaign::findOne(['id' => (int)($args['cms_comm_campaign_id'] ?? 0), 'cms_site_id' => $this->siteId]);
         if (!$campaign) {
             throw new \DomainException('Кампания не найдена.');
@@ -645,7 +671,7 @@ class AiActions
     {
         $topic = CmsCommTopic::findOne(['id' => (int)($args['cms_comm_topic_id'] ?? 0), 'cms_site_id' => $this->siteId]);
         if (!$topic || !$topic->is_active) {
-            throw new \DomainException('Укажите действующую тему рассылки cms_comm_topic_id (cms_comm_topic_list): по ней проверяется отписка, и письмо уйдёт со ссылкой «Отписаться».');
+            throw new \DomainException('Укажите действующую тему рассылки cms_comm_topic_id (cms_comm_topic_list): по ней проверяются отказы получателя (у рассылки и кампании — ещё и ссылка «Отписаться»).');
         }
 
         return $topic;

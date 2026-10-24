@@ -101,9 +101,13 @@ check with no side effects (the letter form plus the API rules) whose
 Never send around it (no direct SMTP, no own tracking) and never report a
 queued or sent letter as delivered. Every API letter has an explicit
 purpose (`services\LetterPurpose`: advertising with a topic and opt-out,
-personal — the client wrote, service — cooperation), checked by the server
-and by `ComposeForm::$purpose` alike; never infer it from the text or how
-the letter is sent. Files are `services\AiDraftFiles` (own storage files,
+personal — the client wrote, service — cooperation, individual_offer — one
+offer to one person: every advertising check by its topic, no opt-out line),
+checked by the server and by `ComposeForm::$purpose` alike; never infer it
+from the text or how the letter is sent. Whether a letter carries the
+opt-out is `ComposeForm::withOptOut()` only (campaign letters always do).
+The sender's mailbox signature is `services\MailSignatures` (once, in the
+draft text). Files are `services\AiDraftFiles` (own storage files,
 type by content, copies in mail storage, `cid:` pictures). Test mode is the
 site's `communication.aiTestRecipients` (exact record–address pairs,
 administrators) and skips only the repetition checks. Mailing topics by API are

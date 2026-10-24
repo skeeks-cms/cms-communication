@@ -589,7 +589,11 @@ class MailComposeService
             }
 
             // An advertising letter: the personal opt-out link of its recipient, knowing this letter.
-            if ($form->cms_comm_topic_id) {
+            // An individual offer keeps its topic (the opt-outs were checked by it) without the link.
+            if ($form->cms_comm_topic_id && !$form->withOptOut()) {
+                $message->cms_comm_topic_id = (int)$form->cms_comm_topic_id;
+                $message->save(false);
+            } elseif ($form->cms_comm_topic_id) {
                 $contact = MailingContacts::get($this->siteId, CmsCommContact::KIND_EMAIL, (string)array_key_first($to));
                 $url = Unsubscribe::url($contact, (int)$form->cms_comm_topic_id, (int)$message->id);
                 [$html, $text] = Unsubscribe::apply($html, $text, $url);

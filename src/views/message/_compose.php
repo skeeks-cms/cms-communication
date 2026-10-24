@@ -19,6 +19,7 @@
  * @var $noDrafts bool the form keeps no draft (the window "Отправить клиенту")
  * @var $aiMark array|null the opened draft was prepared by AI (services\AiMark)
  * @var $aiTopic skeeks\cms\communication\models\CmsCommTopic|null its mailing topic
+ * @var $aiPurpose string|null its services\LetterPurpose
  */
 
 use skeeks\cms\communication\helpers\MailUi;
@@ -31,6 +32,7 @@ $sendables = $sendables ?? [];
 $noDrafts = $noDrafts ?? false;
 $aiMark = $aiMark ?? null;
 $aiTopic = $aiTopic ?? null;
+$aiPurpose = $aiPurpose ?? null;
 // "Прикрепить из…": kinds of things installed packages send (communication.sendables).
 $sendableSources = MailUi::sendableSources();
 $forward = (bool)$form->forward_message_id;
@@ -90,7 +92,9 @@ $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByPar
             <?= AiMark::badge($aiMark) ?>
             <span><?= Html::encode(AiMark::text($aiMark)
                 .'. Проверьте текст и отправьте сами'
-                .($aiTopic ? ': письмо уйдёт как рассылка темы «'.$aiTopic->name.'» одному получателю, со ссылкой «Отписаться»' : '').'.') ?></span>
+                .($aiTopic && $aiPurpose === \skeeks\cms\communication\services\LetterPurpose::INDIVIDUAL_OFFER
+                    ? ': это индивидуальное предложение одному получателю, без строки «Отписаться»; отказы получателя по теме «'.$aiTopic->name.'» проверяются'
+                    : ($aiTopic ? ': письмо уйдёт как рассылка темы «'.$aiTopic->name.'» одному получателю, со ссылкой «Отписаться»' : '')).'.') ?></span>
         </div>
     <?php endif; ?>
 

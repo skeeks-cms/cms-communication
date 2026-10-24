@@ -58,7 +58,7 @@ class CommunicationReadToolProvider extends Component implements McpToolProvider
                     'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100], 'max_length' => ['type' => 'integer', 'minimum' => 300, 'maximum' => 10000],
                 ] + $contacts)),
             $this->tool('cms_comm_account_list',
-                'Почтовые ящики, к которым у сотрудника есть доступ: адрес, название, уровни чтения (all — все письма, linked — привязанные к клиентам) и отправки. Без подключений, серверов и паролей.',
+                'Почтовые ящики, к которым у сотрудника есть доступ: адрес, название, уровни чтения (all — все письма, linked — привязанные к клиентам) и отправки, signature_html — ваша подпись этого ящика (её сами добавляют черновики cms_comm_draft_create под текстом, один раз; не пишите подпись в body_html сами). Без подключений, серверов и паролей.',
                 'cms.communication.read', [$service, 'accountList'], $this->object()),
             $this->tool('cms_comm_topic_list',
                 'Темы рекламных рассылок сайта (на них клиент подписывается или отписывается): id, название, описание, активна ли. Нужны для cms_comm_mailing_check, '

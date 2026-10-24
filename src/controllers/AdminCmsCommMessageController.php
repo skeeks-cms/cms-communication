@@ -1029,6 +1029,8 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'aiMark' => $draft ? AiMark::of($draft) : null,
             'aiTopic' => $draft && AiMark::of($draft) && $draft->cms_comm_topic_id
                 ? \skeeks\cms\communication\models\CmsCommTopic::findOne((int)$draft->cms_comm_topic_id) : null,
+            'aiPurpose' => $draft && AiMark::of($draft)
+                ? \skeeks\cms\communication\services\LetterPurpose::of($draft->purpose, $draft->cms_comm_topic_id ? (int)$draft->cms_comm_topic_id : null) : null,
         ];
 
         return $params['inline']

@@ -30,6 +30,11 @@ use yii\db\ActiveRecord;
  *   leads) within personalDays, or the draft answers the client's letter.
  * - service — a letter about our work with the client: an active deal, or a
  *   bill paid within serviceDays.
+ * - individual_offer — one offer to one person: its own subject and text, a
+ *   presentation or КП, reviewed and sent one by one. Everything of
+ *   advertising (a topic kept inside for the opt-outs, MailingPolicy, the
+ *   repetition checks) except the visible opt-out line and List-Unsubscribe.
+ *   Chosen only explicitly, never in a campaign.
  *
  * Personal and service letters have no topic and no opt-out block — they are
  * not mailings; an opt-out of advertising is shown as a warning and never
@@ -42,6 +47,7 @@ class LetterPurpose
     public const ADVERTISING = 'advertising';
     public const PERSONAL = 'personal';
     public const SERVICE = 'service';
+    public const INDIVIDUAL_OFFER = 'individual_offer';
 
     public const REASON_PURPOSE = 'purpose';
     public const REASON_NO_TOPIC = 'no_topic';
@@ -57,7 +63,20 @@ class LetterPurpose
             self::ADVERTISING => 'Рекламное предложение (тема рассылки, ссылка «Отписаться»)',
             self::PERSONAL => 'Личная рабочая переписка (клиент недавно писал нам)',
             self::SERVICE => 'Служебное письмо (действующая сделка или оплаченный счёт)',
+            self::INDIVIDUAL_OFFER => 'Индивидуальное предложение одному человеку (тема рассылки — только для проверки отказов, без строки «Отписаться»)',
         ];
+    }
+
+    /** Purposes checked by a mailing topic (MailingPolicy, repetition): advertising and an individual offer. */
+    public static function withTopic(?string $purpose): bool
+    {
+        return $purpose === self::ADVERTISING || $purpose === self::INDIVIDUAL_OFFER;
+    }
+
+    /** Does the letter carry the opt-out line and List-Unsubscribe: advertising only. */
+    public static function optOut(?string $purpose): bool
+    {
+        return $purpose === self::ADVERTISING;
     }
 
     /** The purpose of a draft: its own, or advertising when it has a topic (drafts made before purposes). */
@@ -89,13 +108,15 @@ class LetterPurpose
         $problems = [];
         $warnings = [];
         if (!isset(self::names()[$purpose])) {
-            return ['problems' => [['reason' => self::REASON_PURPOSE, 'message' => 'Назначение письма — advertising, personal или service.']], 'warnings' => []];
+            return ['problems' => [['reason' => self::REASON_PURPOSE, 'message' => 'Назначение письма — advertising, individual_offer, personal или service.']], 'warnings' => []];
         }
 
-        if ($purpose === self::ADVERTISING) {
+        if (self::withTopic($purpose)) {
             $topic = $topicId ? CmsCommTopic::findOne(['id' => $topicId, 'cms_site_id' => $siteId]) : null;
             if (!$topic || !$topic->is_active) {
-                $problems[] = ['reason' => self::REASON_NO_TOPIC, 'message' => 'Рекламному предложению нужна действующая тема рассылки (cms_comm_topic_list): по ней проверяется отписка и добавляется ссылка «Отписаться».'];
+                $problems[] = ['reason' => self::REASON_NO_TOPIC, 'message' => $purpose === self::ADVERTISING
+                    ? 'Рекламному предложению нужна действующая тема рассылки (cms_comm_topic_list): по ней проверяется отписка и добавляется ссылка «Отписаться».'
+                    : 'Индивидуальному предложению нужна действующая тема рассылки (cms_comm_topic_list): по ней проверяются отказы получателя; строка «Отписаться» в письмо не выводится.'];
             }
 
             return ['problems' => $problems, 'warnings' => $warnings];

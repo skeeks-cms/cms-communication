@@ -133,7 +133,7 @@ class AiSend
         $purpose = LetterPurpose::of($draft->purpose, $draft->cms_comm_topic_id ? (int)$draft->cms_comm_topic_id : null);
         $form->purpose = $purpose;
         if (!$purpose) {
-            $problems[] = $problem(self::REASON_NO_TOPIC, 'У черновика не задано назначение: через API отправляются письма ИИ с purpose (advertising с темой, personal, service). '
+            $problems[] = $problem(self::REASON_NO_TOPIC, 'У черновика не задано назначение: через API отправляются письма ИИ с purpose (advertising с темой, individual_offer с темой и предложением, personal, service). '
                 .'Задайте его: cms_comm_draft_update с purpose.');
         }
         if (!$form->validate()) {
@@ -169,7 +169,7 @@ class AiSend
             }
         }
         // A repetition is a mailing concern: personal and service letters continue a dialog.
-        $repetition = $purpose === LetterPurpose::ADVERTISING && !$testMode;
+        $repetition = LetterPurpose::withTopic($purpose) && !$testMode;
         if ($record && $repetition) {
             $days = AiActions::limits()['recentDays'];
             if ($days > 0 && ($at = AiActions::lastLetterAt($record, time() - $days * 86400))) {
@@ -191,6 +191,23 @@ class AiSend
             if ($record && $repetition && $days > 0 && $source instanceof SendHistoryInterface && ($at = $source->lastSentAt((int)$item['id'], $record)) && $at >= time() - $days * 86400) {
                 $problems[] = $problem(AiActions::REASON_RECENT_OFFER, 'Это предложение отправляли клиенту '.\Yii::$app->formatter->asDate($at, 'php:d.m.Y').'.');
             }
+        }
+        // An individual offer is an offer: a presentation or КП, and no opt-out line of its own.
+        if ($purpose === LetterPurpose::INDIVIDUAL_OFFER) {
+            if (!$form->sendables) {
+                $problems[] = $problem(LetterPurpose::REASON_PURPOSE, 'Индивидуальное предложение отправляется с Презентацией или КП: укажите offer (cms_comm_draft_update).');
+            }
+            if (mb_strpos($form->getHtml(), Unsubscribe::PLACEHOLDER) !== false) {
+                $problems[] = $problem(LetterPurpose::REASON_PURPOSE, 'В индивидуальном предложении нет строки «Отписаться»: уберите её из текста или выберите advertising.');
+            }
+        }
+
+        // The signature: never invented by AI; the employee's own for this mailbox, or a warning.
+        $signature = self::signature((int)$this->user->id, (int)$form->cms_comm_account_id, $form->getHtml());
+        if ($signature === null) {
+            $warnings[] = 'У вас нет подписи для этого ящика («Почта» → «Мои настройки почты» → «Подписи»): письмо уйдёт без подписи.';
+        } elseif (!$signature['in_letter']) {
+            $warnings[] = 'Вашей подписи этого ящика нет в тексте: письмо уйдёт без неё (cms_comm_draft_update с body_html добавит её).';
         }
 
         // Files: what the draft holds now, within the limits.
@@ -226,8 +243,20 @@ class AiSend
             $form->getToAddresses(), $form->getCcAddresses(), $form->getBccAddresses(),
             trim((string)$form->subject), preg_replace('/\s+/u', ' ', trim($html)),
             $sendables, (string)$purpose, (int)$form->cms_comm_topic_id, (string)$form->context_model_code, (int)$form->context_model_id,
-            $files, $testMode,
+            $files, $testMode, $form->withOptOut(),
         ], JSON_UNESCAPED_UNICODE));
+    }
+
+    /**
+     * The signature of the employee for the mailbox and whether the letter has it: html and text, or null
+     * when the employee has no signature for this mailbox ("Мои настройки почты" → «Подписи»).
+     */
+    public static function signature(int $userId, int $accountId, string $html): ?array
+    {
+        $signature = MailSignatures::of($userId, $accountId);
+
+        return $signature === null ? null : ['html' => $signature, 'text' => trim(RichTextHtml::toText($signature)),
+            'in_letter' => MailSignatures::has($html, $signature)];
     }
 
     /** What the person approves: who, from where, the subject, the text with a dead button, the offer. */
@@ -252,8 +281,13 @@ class AiSend
             ],
             'sender' => $account ? ['cms_comm_account_id' => (int)$account->id, 'address' => (string)$account->address, 'name' => (string)$account->name] : null,
             'purpose' => $prepared['purpose'] ? ['code' => $prepared['purpose'], 'name' => LetterPurpose::names()[$prepared['purpose']],
-                'opt_out' => $prepared['purpose'] === LetterPurpose::ADVERTISING] : null,
-            'topic' => $topic ? ['id' => (int)$topic->id, 'name' => (string)$topic->name] : null,
+                'opt_out' => $form->withOptOut()] : null,
+            // The sender's signature of this mailbox: it is in the text above, the preview shows the letter as it leaves.
+            'signature' => self::signature((int)$this->user->id, (int)$form->cms_comm_account_id, $form->getHtml()),
+            // Will the letter carry the opt-out line and the List-Unsubscribe headers.
+            'unsubscribe' => ['line' => $form->withOptOut(), 'headers' => $form->withOptOut()],
+            'topic' => $topic ? ['id' => (int)$topic->id, 'name' => (string)$topic->name,
+                'role' => $form->withOptOut() ? 'рассылка: ссылка «Отписаться» и заголовки отписки' : 'только проверка отказов получателя, в письмо не выводится'] : null,
             'offers' => $offers,
             'attachments' => $prepared['files'] ?? null,
             'warnings' => $prepared['warnings'] ?? [],
@@ -262,7 +296,8 @@ class AiSend
                 'text' => $text,
                 'html' => $html,
                 'note' => 'Предпросмотр: кнопка предложения не ведёт на личную ссылку'
-                    .($prepared['purpose'] === LetterPurpose::ADVERTISING ? ', ссылка «Отписаться» добавится при отправке' : ', блока отписки нет — это не рассылка')
+                    .($form->withOptOut() ? ', ссылка «Отписаться» добавится при отправке'
+                        : ($prepared['purpose'] === LetterPurpose::INDIVIDUAL_OFFER ? ', строки «Отписаться» и заголовков отписки не будет (индивидуальное предложение)' : ', блока отписки нет — это не рассылка'))
                     .'; картинки и вложения — из attachments. Ничего не отправлено.',
             ],
             'prepared' => AiMark::forApi(is_array($form->aiMark) ? $form->aiMark : null),

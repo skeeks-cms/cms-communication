@@ -61,8 +61,11 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
         $purpose = ['purpose' => ['type' => 'string', 'enum' => array_keys(\skeeks\cms\communication\services\LetterPurpose::names()),
             'description' => 'Назначение письма. advertising — предложение без запроса клиента: нужна тема cms_comm_topic_id, проверяется отписка, в письме будет «Отписаться». '
                 .'personal — рабочая переписка: клиент писал нам за последние 90 дней (или ответ на его письмо); без темы и блока отписки, жалоба и недоставка запрещают. '
-                .'service — служебное письмо: у клиента действующая сделка или оплаченный счёт за год. Индивидуальный текст и приложенная Презентация назначение не меняют: '
-                .'без переписки и сотрудничества письмо — advertising. Без purpose и с темой — advertising.']];
+                .'service — служебное письмо: у клиента действующая сделка или оплаченный счёт за год. '
+                .'individual_offer — индивидуальное предложение одному человеку, только явно: своя тема и текст, обязательно offer (Презентация или КП), вложения и картинки; '
+                .'тема cms_comm_topic_id обязательна и хранится внутри — по ней проверяются отказы, жалобы, недоставка и стоп-лист, повтор письма и предложения; '
+                .'строки «Отписаться» и заголовков List-Unsubscribe нет. Не для кампаний и не для массовых писем. Индивидуальный текст, один получатель и приложенная Презентация '
+                .'сами назначение не меняют. Без purpose и с темой — advertising.']];
         $testMode = ['test_mode' => ['type' => 'boolean', 'description' => 'Тестовый режим: только администратор и только для тестовых получателей из настройки сайта '
             .'(клиент + точный адрес, сейчас company:712 + asdasd@skeeks.com). Снимает только проверки повторного письма и повторного предложения; права, адрес, отписка, '
             .'вложения, лимиты, check_token, idempotency_key и подтверждение остаются. Передавайте одинаково в черновик, проверку и отправку.']];
@@ -71,6 +74,9 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                 .'PNG, JPEG, GIF, WEBP, PDF по содержимому файла, до '.(\skeeks\cms\communication\services\AiDraftFiles::MAX_FILE_SIZE / 1048576).' МБ каждый, до '
                 .(\skeeks\cms\communication\services\AiDraftFiles::MAX_TOTAL / 1048576).' МБ вместе. В письмо идёт копия: ваш файл не меняется и не удаляется.',
             'items' => ['type' => ['object', 'integer'], 'properties' => ['cms_storage_file_id' => ['type' => 'integer'], 'inline' => ['type' => 'boolean']]]]];
+        // A campaign is a mailing: its letters always carry the opt-out line; an individual offer is refused.
+        $campaignPurpose = ['purpose' => ['type' => 'string', 'description' => 'Только advertising (или не передавать): письма кампании всегда со строкой «Отписаться» и заголовками отписки. '
+            .'individual_offer для кампаний запрещён — такие письма готовятся черновиками cms_comm_draft_create и отправляются по одному.']];
         $topicFields = [
             'name' => ['type' => 'string', 'maxLength' => 255, 'description' => 'Название темы: его видит клиент на странице отписки.'],
             'description' => ['type' => ['string', 'null'], 'maxLength' => 2000, 'description' => 'Описание для клиента на странице отписки.'],
@@ -83,13 +89,14 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                 'Черновики личных писем клиентам: своя тема и текст каждому, предложение, файлы. Черновик появляется в «Черновиках» почты у ответственного за клиента сотрудника '
                 .'(его ящик по умолчанию) или в вашем ящике cms_comm_account_id, если вам можно с него отправлять. Сам черновик ничего не отправляет: его отправляет сотрудник в «Почте», '
                 .'а через API — только черновик в вашем ящике после cms_comm_draft_check и cms_comm_draft_send (отдельное право). '
-                .'purpose — назначение: advertising (тема рассылки, «Отписаться»), personal (рабочая переписка), service (служебное). '
+                .'purpose — назначение: advertising (тема рассылки, «Отписаться»), individual_offer (индивидуальное предложение: тема только для проверки отказов, offer обязателен, без «Отписаться»), personal (рабочая переписка), service (служебное). '
                 .'offer — предложение «proposal:<id>»: общая Презентация или КП этого клиента (cms_proposal_library_get, cms_proposal_list); личная ссылка создаётся при отправке, открытие видно в ленте и ставит задачу по правилам предложения. '
-                .'attachments — ваши загруженные файлы: вложения или картинки в тексте.'
+                .'attachments — ваши загруженные файлы: вложения или картинки в тексте. '
+                .'Подпись не пишите: под текстом один раз добавится подпись отправителя для этого ящика из CRM (cms_comm_account_list → signature_html), как в «Почте».'
                 .$rules.' Пример: {"purpose":"advertising","cms_comm_topic_id":1,"offer":"proposal:1","cms_comm_account_id":1,"items":[{"record_type":"company","record_id":712,"address":"asdasd@skeeks.com",'
                 .'"subject":"…","body_html":"<p>Здравствуйте!</p><p>…</p><p>{Картинка}</p><p>{Ссылка}</p>","attachments":[{"cms_storage_file_id":501,"inline":true}]}],"confirm":true}.',
                 'cms.communication.write', [$this, 'draftCreate'], $this->object($purpose + [
-                    'cms_comm_topic_id' => ['type' => 'integer', 'description' => 'Тема рассылки — только для purpose=advertising.'],
+                    'cms_comm_topic_id' => ['type' => 'integer', 'description' => 'Тема рассылки: для advertising (и ссылка «Отписаться») и individual_offer (только проверка отказов, в письмо не выводится); у personal и service — нет.'],
                     'offer' => ['type' => 'string', 'description' => 'Предложение для всех писем вызова: proposal:<id>. У строки может быть своё offer.'],
                     'cms_comm_account_id' => ['type' => 'integer', 'description' => 'Ваш ящик (cms_comm_account_list с правом отправки). Без него — ящик ответственного за клиента.'],
                     'items' => ['type' => 'array', 'minItems' => 1, 'maxItems' => $limits['perCall'], 'items' => $this->object($record + [
@@ -97,7 +104,7 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                     ] + $attachments, ['record_type', 'record_id', 'subject', 'body_html'])],
                 ] + $testMode + $confirm, ['items'])),
             $this->tool('cms_comm_draft_get',
-                'Ваш черновик (в ваших «Черновиках»): получатель, клиент, ящик, назначение, тема рассылки, тема и начало текста, предложение, фактический состав файлов '
+                'Ваш черновик (в ваших «Черновиках»): получатель, клиент, ящик, назначение, будут ли строка и заголовки отписки (unsubscribe), тема рассылки и её роль, тема и полный текст письма (body_html), предложение, фактический состав файлов '
                 .'(id, имя, MIME, размер, картинка в тексте или вложение, итог и лимиты), отметка ИИ. Пример: {"draft_id":43}.',
                 'cms.communication.read', [$this, 'draftGet'], $this->object(['draft_id' => ['type' => 'integer']], ['draft_id'])),
             $this->tool('cms_comm_draft_update',
@@ -123,8 +130,9 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                 .'Проверяет то же, что форма письма в «Почте» (ящик и право отправки с него, адреса, «только свои клиенты», MailingPolicy темы, документ), и правила ИИ: '
                 .'одному адресу из карточки клиента CRM, без копий, нет письма клиенту и отправки этого предложения за '.$limits['recentDays'].' дней, предложение можно отправить (срок, адрес страницы), '
                 .'дневной лимит отправок ('.$limits['sendPerDay'].'). Возвращает получателя, отправителя, тему, предложение, предпросмотр (тема, текст, HTML с неработающей кнопкой) и problems. '
-                .'Назначение письма — по правилам purpose (у personal и service нет темы и блока отписки, у advertising — тема и «Отписаться»); attachments — фактические файлы '
-                .'(id, имя, MIME, размер, итог, лимиты); warnings — предупреждения (например, адрес отписан от рекламы). '
+                .'Назначение письма — по правилам purpose (у personal и service нет темы и блока отписки, у advertising — тема и «Отписаться», у individual_offer — тема для проверки отказов и предложение, без «Отписаться»); '
+                .'unsubscribe — будут ли строка отписки и заголовки List-Unsubscribe (входит в check_token); attachments — фактические файлы '
+                .'(id, имя, MIME, размер, итог, лимиты); signature — подпись ящика из CRM и есть ли она в письме; warnings — предупреждения (например, адрес отписан от рекламы). '
                 .'Пройденная проверка даёт check_token — отпечаток получателя, отправителя, назначения, темы, текста, предложения, файлов (по содержимому) и тестового режима; '
                 .'он нужен для cms_comm_draft_send. Пример: {"draft_id":43}.',
                 'cms.communication.write', [$this, 'draftCheck'], $this->object([
@@ -178,7 +186,7 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                     'subject' => ['type' => 'string', 'description' => 'Тема шаблона для получателей без личной темы; по умолчанию название.'],
                     'body_html' => ['type' => 'string', 'description' => 'Шаблон для получателей без личного текста: {Имя}, {Компания}, {Менеджер}, {Ссылка}, {Отписаться}.'],
                     'task_on_open' => ['type' => 'boolean'], 'task_on_reply' => ['type' => 'boolean'],
-                ] + $confirm, ['name', 'cms_comm_topic_id'])),
+                ] + $campaignPurpose + $confirm, ['name', 'cms_comm_topic_id'])),
             $this->tool('cms_comm_campaign_recipient_add',
                 'Получатели черновика кампании с личной темой и текстом каждому (повторный вызов для того же клиента заменяет текст). {Ссылка} и {Отписаться} обязательны в письме — без них добавятся в конце; '
                 .'{Имя}, {Компания}, {Менеджер} подставятся при отправке. Кампания остаётся черновиком: запускает её только сотрудник в интерфейсе, инструмента запуска нет.'
@@ -188,7 +196,7 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                     'items' => ['type' => 'array', 'minItems' => 1, 'maxItems' => $limits['perCall'], 'items' => $this->object($record + [
                         'name' => ['type' => 'string', 'description' => 'Имя для {Имя}.'],
                     ], ['record_type', 'record_id', 'subject', 'body_html'])],
-                ] + $confirm, ['cms_comm_campaign_id', 'items'])),
+                ] + $campaignPurpose + $confirm, ['cms_comm_campaign_id', 'items'])),
         ];
     }
 
@@ -251,9 +259,15 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                 'name' => \skeeks\cms\communication\services\CrmRecords::name($record)] : null,
             'sender' => $account ? ['cms_comm_account_id' => (int)$account->id, 'address' => (string)$account->address] : null,
             'purpose' => $purpose,
-            'topic' => $topic ? ['id' => (int)$topic->id, 'name' => (string)$topic->name] : null,
+            // A draft is never a campaign letter: the opt-out line and headers belong to advertising only.
+            'unsubscribe' => ['line' => $topic && \skeeks\cms\communication\services\LetterPurpose::optOut($purpose),
+                'headers' => $topic && \skeeks\cms\communication\services\LetterPurpose::optOut($purpose)],
+            'topic' => $topic ? ['id' => (int)$topic->id, 'name' => (string)$topic->name,
+                'role' => \skeeks\cms\communication\services\LetterPurpose::optOut($purpose) ? 'рассылка: ссылка «Отписаться» и заголовки отписки' : 'только проверка отказов получателя, в письмо не выводится'] : null,
             'subject' => (string)$draft->subject,
             'snippet' => $draft->getSnippet(500),
+            'body_html' => (string)$draft->body_html,
+            'signature' => \skeeks\cms\communication\services\AiSend::signature((int)$this->user()->id, (int)$draft->cms_comm_account_id, (string)$draft->body_html),
             'offers' => $draft->getSendableRefs(),
             'attachments' => \skeeks\cms\communication\services\AiDraftFiles::describe($draft),
             'prepared' => \skeeks\cms\communication\services\AiMark::forApi(\skeeks\cms\communication\services\AiMark::of($draft)),
