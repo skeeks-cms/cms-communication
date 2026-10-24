@@ -96,11 +96,14 @@
             return;
         }
         var fit = function () {
-            var height = Math.max(
-                doc.documentElement ? doc.documentElement.scrollHeight : 0,
-                doc.body ? doc.body.scrollHeight : 0
-            );
+            var html = doc.documentElement ? doc.documentElement.scrollHeight : 0;
+            var body = doc.body ? doc.body.scrollHeight : 0;
+            // The html is at least as tall as the frame: when nothing overflows it, the body tells
+            // the real height, so the frame also shrinks (a folded quote, a short letter).
+            var height = html > frame.clientHeight ? Math.max(html, body) : (body || html);
             if (height > 0) {
+                // The minimum height only keeps the place while the letter loads: a short letter is short.
+                frame.style.minHeight = '0';
                 frame.style.height = (height + 8) + 'px';
             }
         };
@@ -143,6 +146,7 @@
                 setTimeout(waitText, 50);
                 return;
             }
+            syncQuote(frame);
             window.sxMailFitFrame(frame);
             var pending = Array.prototype.some.call(current.images || [], function (img) {
                 return !img.complete && /^https?:/i.test(img.currentSrc || img.src);
@@ -160,11 +164,58 @@
             if ($note) {
                 $note.remove();
             }
+            syncQuote(frame);
             window.sxMailFitFrame(frame);
         });
         frame.srcdoc = doc;
         setTimeout(waitText, 0);
     }
+
+    /**
+     * The quoted history under the own text is folded on the server
+     * (MailText::foldQuotedHtml marks the frame html): "Показать переписку"
+     * under the frame shows it. The choice survives a reload of the frame
+     * (images shown).
+     */
+    function syncQuote(frame) {
+        var doc;
+        try {
+            doc = frame.contentDocument;
+        } catch (e) {
+            return;
+        }
+        if (!doc || !doc.documentElement) {
+            return;
+        }
+        var hasQuote = doc.documentElement.getAttribute('data-sx-mail-quote') === '1';
+        doc.documentElement.classList.toggle('sx-mail-quote-open', !!frame.sxQuoteOpen);
+        $(frame).closest('.sx-letter__body').find('[data-sx-letter-quote-toggle]').prop('hidden', !hasQuote);
+    }
+
+    $(document).on('click', '[data-sx-letter-quote-toggle]', function () {
+        var $toggle = $(this);
+        var $body = $toggle.closest('.sx-letter__body');
+        var open = $toggle.attr('aria-expanded') !== 'true';
+        $toggle.attr('aria-expanded', open ? 'true' : 'false')
+            .find('[data-sx-letter-quote-label]').text(open ? 'Скрыть переписку' : 'Показать переписку');
+        $body.find('[data-sx-letter-text-quote]').prop('hidden', !open);
+        var frame = $body.find('[data-sx-letter-frame]').get(0);
+        if (!frame) {
+            return;
+        }
+        frame.sxQuoteOpen = open;
+        syncQuote(frame);
+        var doc = frame.contentDocument;
+        if (!open && doc && doc.body) {
+            // The fit only grows the frame (its html is as tall as the frame): fit the folded letter here.
+            var scrollY = window.scrollY;
+            frame.style.height = (doc.body.scrollHeight + 8) + 'px';
+            window.scrollTo(window.scrollX, scrollY);
+        }
+        if (frame.sxMailFit) {
+            frame.sxMailFit();
+        }
+    });
 
     // The letter is put into its frame only after the page has loaded, so the
     // panel never waits for the letter's own resources (images included).

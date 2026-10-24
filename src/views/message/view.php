@@ -231,12 +231,21 @@ if ($canManage) {
                 </div>
             <?php endif; ?>
             <?php // The letter goes into its frame after the panel has opened: its images never delay opening.
-            // allow-same-origin only lets this page measure the frame height. ?>
+            // allow-same-origin only lets this page measure the frame height and fold the quote. ?>
             <iframe class="sx-letter__frame" scrolling="no" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
                     data-srcdoc="<?= Html::encode($doc) ?>" data-sx-letter-frame></iframe>
+        <?php elseif ($split = \skeeks\cms\communication\helpers\MailText::splitQuotedText((string)$model->body_text)) : ?>
+            <div class="sx-letter__text"><?= Html::encode($split[0]) ?></div>
+            <div class="sx-letter__text sx-letter__text-quote" data-sx-letter-text-quote hidden><?= Html::encode($split[1]) ?></div>
         <?php else : ?>
             <div class="sx-letter__text"><?= Html::encode((string)$model->body_text) ?></div>
         <?php endif; ?>
+        <?php // The quoted history and a forwarded letter are folded (MailText): shown on demand, like in web mail. ?>
+        <button type="button" class="sx-letter__quote-toggle" data-sx-letter-quote-toggle aria-expanded="false"
+                <?= !$model->body_html && !empty($split) ? '' : 'hidden' ?>>
+            <span class="sx-letter__quote-dots" aria-hidden="true">•••</span>
+            <span data-sx-letter-quote-label>Показать переписку</span>
+        </button>
     </div>
 
     <?php // Stored files download through the access check; letters received before storing keep only names. ?>

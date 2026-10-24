@@ -43,6 +43,12 @@ it on the server and find letters moved or deleted in the mail service);
 drivers that can change a mailbox implement `mail\MailManageSessionInterface`.
 Conversation search is `services\MailSearch` (`cms_comm_message_search`,
 written by `CmsCommMessage::afterSave()`).
+The letter page folds the quoted history and a forwarded letter under the
+own text (`helpers\MailText::foldQuotedHtml()` in the frame document,
+`splitQuotedText()` for plain text, "Показать переписку"); a bare forward
+and design blockquotes of newsletters stay visible
+(`tests/mail-quote-fold.php`). Its reply bar sticks to the bottom of the
+panel until a reply is opened.
 "Отправить клиенту" is `services\SendService` with channels in `send\`
 (`EmailSendChannel` reuses `MailComposeService::queue()` and its
 `ComposeForm::$sendables`, `SmsSendChannel` + job `comm.sms.send`); documents of

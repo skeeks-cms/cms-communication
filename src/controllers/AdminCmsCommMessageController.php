@@ -952,8 +952,11 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     public static function letterDocument(CmsCommMessage $model, bool $showImages, ?int &$blocked = null): string
     {
         $html = MailHtml::sanitize((string)$model->body_html, $showImages, $blocked, MailFiles::cidMap($model));
+        // The quoted history and a forwarded letter under the own text are folded: the page shows them on demand.
+        $folded = \skeeks\cms\communication\helpers\MailText::foldQuotedHtml($html);
 
-        return '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;background:#fff;color:#222;font-family:Arial,sans-serif;font-size:14px;height:auto!important;min-height:0!important;overflow-y:hidden}body{overflow-x:auto}img{max-width:100%;height:auto}</style></head><body>'.$html.'</body></html>';
+        return '<!doctype html><html'.($folded !== null ? ' data-sx-mail-quote="1"' : '').'><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;background:#fff;color:#222;font-family:Arial,sans-serif;font-size:14px;height:auto!important;min-height:0!important;overflow-y:hidden}body{overflow-x:auto}img{max-width:100%;height:auto}'
+            .'.sx-mail-quote{display:none}html.sx-mail-quote-open .sx-mail-quote{display:block}</style></head><body>'.($folded ?? $html).'</body></html>';
     }
 
     /**

@@ -8,21 +8,28 @@
 namespace skeeks\cms\communication\log;
 
 use skeeks\cms\communication\helpers\MailUi;
+use skeeks\cms\communication\models\CmsCommCampaign;
 use skeeks\cms\communication\models\CmsCommLink;
 use skeeks\cms\communication\models\CmsCommMessage;
+use skeeks\cms\communication\send\SmsSendChannel;
 use skeeks\cms\communication\services\AiMark;
-use skeeks\cms\log\CmsLogRendererInterface;
+use skeeks\cms\communication\services\SendContacts;
+use skeeks\cms\communication\services\SiteMessages;
+use skeeks\cms\log\CmsLogEntry;
+use skeeks\cms\log\CmsLogEntryRenderer;
 use skeeks\cms\models\CmsLog;
 use yii\helpers\ArrayHelper;
 use yii\helpers\Html;
 
 /**
- * A letter in the activity feed of a lead, company or client. The letter is
- * shown only to employees who may read it.
+ * A letter, an SMS or a message from the site in the
+ * activity feed of a lead, company or client: the content of the shared
+ * feed entry (CmsLogEntry). The letter is shown only to employees who may
+ * read it.
  */
-class MessageLogRenderer implements CmsLogRendererInterface
+class MessageLogRenderer extends CmsLogEntryRenderer
 {
-    public function render(CmsLog $log): string
+    public function entry(CmsLog $log): CmsLogEntry
     {
         $id = (int)ArrayHelper::getValue($log->data, 'id');
         $query = CmsCommMessage::find()->andWhere([CmsCommMessage::tableName().'.id' => $id]);
@@ -31,53 +38,62 @@ class MessageLogRenderer implements CmsLogRendererInterface
         }
         $message = $query->one();
         if (!$message) {
-            return Html::tag('div', CmsCommMessage::find()->andWhere(['id' => $id])->exists()
-                ? 'Письмо из ящика, к которому у вас нет доступа.'
-                : 'Письмо удалено.', ['class' => 'sx-gray']);
+            return new CmsLogEntry([
+                'icon'    => 'mail',
+                'title'   => 'Письмо',
+                'details' => [CmsCommMessage::find()->andWhere(['id' => $id])->exists()
+                    ? 'Письмо из ящика, к которому у вас нет доступа.'
+                    : 'Письмо удалено.'],
+            ]);
         }
 
         $incoming = $message->direction === CmsCommMessage::DIRECTION_IN;
-        $sms = $message->channel === \skeeks\cms\communication\send\SmsSendChannel::CHANNEL;
-        $title = $sms ? ($incoming ? 'Входящее СМС' : 'СМС') : ($incoming ? 'Входящее письмо' : 'Исходящее письмо');
-        if ($message->channel === \skeeks\cms\communication\services\SiteMessages::CHANNEL) {
-            $title = 'Сообщение с сайта';
+        $sms = $message->channel === SmsSendChannel::CHANNEL;
+        $entry = new CmsLogEntry([
+            'icon'  => $sms ? 'sms' : ($incoming ? 'mail-in' : 'mail-out'),
+            'tone'  => $incoming ? CmsLogEntry::TONE_SUCCESS : CmsLogEntry::TONE_ACCENT,
+            'title' => $sms ? ($incoming ? 'Входящее СМС' : 'СМС') : ($incoming ? 'Входящее письмо' : 'Исходящее письмо'),
+        ]);
+        if ($message->channel === SiteMessages::CHANNEL) {
+            $entry->icon = 'globe';
+            $entry->title = 'Сообщение с сайта';
         }
         // The record was created from this letter ("Создать задачу / лид / сделку").
         $link = $log->id ? CmsCommLink::find()->andWhere(['cms_log_id' => (int)$log->id])->one() : null;
         if ($link && $link->link_type === CmsCommLink::TYPE_CREATED) {
-            $title = 'Создано из '.($incoming ? 'входящего' : 'исходящего').' письма';
+            $entry->title = 'Создано из '.($incoming ? 'входящего' : 'исходящего').' письма';
         } elseif ($link && $link->link_type === CmsCommLink::TYPE_MANUAL && $link->created_by && ($by = \skeeks\cms\models\CmsUser::findOne((int)$link->created_by))) {
-            $title .= ' · привязано вручную ('.$by->shortDisplayName.')';
+            $entry->badges[] = CmsLogEntry::badge('Привязано вручную', 'Привязал '.$by->shortDisplayName, CmsLogEntry::TONE_NEUTRAL);
         }
-        $who = $incoming
-            ? '<span class="sx-gray">От:</span> '.Html::encode($message->getFromAsText())
-            : '<span class="sx-gray">Кому:</span> '.Html::encode($sms
-                ? implode(', ', array_map(static fn($phone, $name) => \skeeks\cms\communication\services\SendContacts::formatPhone((string)$phone).($name ? ' ('.$name.')' : ''),
+        if (!$incoming && $message->status !== CmsCommMessage::STATUS_SENT) {
+            $failed = in_array($message->status, [CmsCommMessage::STATUS_FAILED, CmsCommMessage::STATUS_UNKNOWN], true);
+            $entry->badges[] = CmsLogEntry::badge($message->getStatusName(), '', $failed ? CmsLogEntry::TONE_DANGER : CmsLogEntry::TONE_NEUTRAL);
+            if ($failed) {
+                $entry->tone = CmsLogEntry::TONE_DANGER;
+            }
+        }
+        // "Подготовлено ИИ": the AI client, who asked and who sent it are in the tooltip.
+        if ($aiMark = AiMark::of($message)) {
+            $entry->badges[] = CmsLogEntry::badge('Подготовлено ИИ', AiMark::text($aiMark, $message->sent_by_user_id ? (int)$message->sent_by_user_id : null));
+        }
+
+        $attachments = count($message->getAttachmentList());
+        $entry->summary = Html::a(Html::encode($message->subject ?: '(без темы)'), '#', [
+                'data-pjax' => '0',
+                'onclick'   => MailUi::viewOnClick((int)$message->id),
+            ])
+            .($attachments ? ' '.Html::tag('span', '· вложений: '.$attachments, ['class' => 'sx-gray']) : '');
+        $entry->details[] = $incoming
+            ? 'От: '.Html::encode($message->getFromAsText())
+            : 'Кому: '.Html::encode($sms
+                ? implode(', ', array_map(static fn($phone, $name) => SendContacts::formatPhone((string)$phone).($name ? ' ('.$name.')' : ''),
                     array_keys($message->getTo()), $message->getTo()))
                 : $message->getToAsText());
-        $status = '';
-        if (!$incoming && $message->status !== CmsCommMessage::STATUS_SENT) {
-            $status = ' · '.Html::tag('span', Html::encode($message->getStatusName()), [
-                'class' => in_array($message->status, [CmsCommMessage::STATUS_FAILED, CmsCommMessage::STATUS_UNKNOWN], true) ? 'sx-status sx-status--danger' : 'sx-status',
-            ]);
+        if ($message->cms_comm_campaign_id && ($name = CmsCommCampaign::find()->select('name')->andWhere(['id' => (int)$message->cms_comm_campaign_id])->scalar())) {
+            $entry->details[] = 'Рассылка «'.Html::encode((string)$name).'»';
         }
-        $attachments = count($message->getAttachmentList());
-        // "Подготовлено ИИ": which AI client wrote it, for whom, and who sent it.
-        $aiMark = AiMark::of($message);
-        $sender = $message->sent_by_user_id ? (int)$message->sent_by_user_id : null;
+        $entry->snippet = (string)$message->getSnippet(300);
 
-        return Html::tag('div',
-            Html::tag('div', Html::encode($title).$status.($aiMark ? ' '.AiMark::badge($aiMark, $sender, 'Подготовлено ИИ') : ''), ['class' => 'h5'])
-            .($aiMark ? Html::tag('div', Html::encode(AiMark::text($aiMark, $sender)), ['class' => 'sx-gray sx-ai-mark-text']) : '')
-            .Html::tag('div', $who)
-            .Html::tag('div', Html::a(Html::encode($message->subject ?: '(без темы)'), '#', [
-                'data-pjax' => '0',
-                'onclick' => MailUi::viewOnClick((int)$message->id),
-                'style' => 'font-weight:600',
-            ]).($attachments ? ' <span class="sx-gray">· вложений: '.$attachments.'</span>' : ''))
-            .Html::tag('div', Html::encode($message->getSnippet(300)), ['class' => 'sx-gray']),
-            // Long addresses in the text (marked links of letters) wrap instead of widening the feed on a phone.
-            ['class' => 'sx-comm-message-log', 'style' => 'overflow-wrap:anywhere']
-        );
+        return $entry;
     }
 }

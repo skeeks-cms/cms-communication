@@ -23,7 +23,8 @@
 /* The page scrolls; folders and the list head stay in place below the header.
  * The shell wrapper clips its overflow with "hidden", which makes it a scroll
  * container and breaks position: sticky; "clip" clips the same way. */
-.sx-main-wrapper:has(.sx-mail) {
+.sx-main-wrapper:has(.sx-mail),
+.sx-main-wrapper:has(.sx-letter) {
     overflow: clip;
 }
 
@@ -551,6 +552,24 @@
     max-width: 50%;
 }
 
+.sx-letter__record-wrap {
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* A phone: the records go under the sender, from the left. */
+@media (max-width: 600px) {
+    .sx-letter__head {
+        flex-wrap: wrap;
+    }
+
+    .sx-letter__head .sx-letter__records {
+        flex: 1 1 100%;
+        max-width: 100%;
+        justify-content: flex-start;
+    }
+}
+
 .sx-letter__name {
     font-weight: 600;
     margin-right: 6px;
@@ -566,24 +585,31 @@
     color: var(--sx-color-danger, #bd4348);
 }
 
-/* CRM records in the panel header (BackendModelHeader side slot) */
+/*
+ * CRM records in the letter header: compact chips in one line — a 20px logo
+ * or icon, the type in small letters and the name cut with an ellipsis.
+ * Many records wrap under each other without breaking the header.
+ */
 .sx-letter__records {
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-end;
-    gap: 8px;
+    gap: 6px;
 }
 
 .sx-letter__record {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    max-width: 280px;
-    padding: 4px 12px 4px 4px;
+    gap: 6px;
+    max-width: 260px;
+    height: 28px;
+    padding: 0 10px 0 4px;
     border: 1px solid var(--sx-color-border, #dedede);
     border-radius: 999px;
     background: var(--sx-color-surface, #fff);
     color: var(--sx-color-text, #262626);
+    font-size: 13px;
+    line-height: 1;
     text-decoration: none;
 }
 
@@ -595,14 +621,39 @@ a.sx-letter__record:focus {
     text-decoration: none;
 }
 
+/* The shared entity media is sized by backend.css, which the letter page does not load. */
+.sx-letter__record .sx-collection-cell__media {
+    display: inline-flex;
+    flex: 0 0 20px;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    overflow: hidden;
+    border: 0;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.sx-letter__record .sx-collection-cell__media--accent {
+    color: var(--sx-color-accent, #ee4d7d);
+    background: var(--sx-color-accent-soft, #fdedf2);
+}
+
+.sx-letter__record .sx-collection-cell__media svg {
+    width: 12px;
+    height: 12px;
+}
+
 .sx-letter__record-text {
     display: flex;
-    flex-direction: column;
+    align-items: baseline;
+    gap: 5px;
     min-width: 0;
-    line-height: 1.2;
 }
 
 .sx-letter__record-type {
+    flex: none;
     font-size: 11px;
     color: var(--sx-color-text-muted, #6f7484);
 }
@@ -842,8 +893,72 @@ a.sx-letter__record:focus {
 }
 
 /* Quick reply under the letter */
+/* "Показать переписку": the folded quote and forwarded letter under the own text. */
+.sx-letter__quote-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 4px 10px 4px 4px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.sx-letter__quote-toggle:hover {
+    background: var(--sx-color-surface-muted, #f4f6f8);
+    color: var(--sx-color-text, #262626);
+}
+
+.sx-letter__quote-toggle[hidden] {
+    display: none;
+}
+
+.sx-letter__quote-dots {
+    padding: 0 8px;
+    border-radius: 999px;
+    background: var(--sx-color-surface-muted, #f4f6f8);
+    font-size: 10px;
+    letter-spacing: 1px;
+    line-height: 18px;
+}
+
+.sx-letter__text-quote {
+    margin-top: 10px;
+    padding-left: 12px;
+    border-left: 3px solid var(--sx-color-border, #dedede);
+    color: var(--sx-color-text-muted, #6f7484);
+}
+
 .sx-letter__reply {
     margin-top: 24px;
+}
+
+/*
+ * The reply bar stays at the bottom of the panel while a long letter
+ * scrolls; it takes its place after the letter at the end, so it never
+ * hides the last lines. While a reply is being written it scrolls normally.
+ */
+.sx-letter__reply:has(> .sx-letter__reply-bar:not([hidden])) {
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
+    padding: 10px 0 12px;
+    background: var(--sx-color-surface, #fff);
+}
+
+.sx-letter__reply:has(> .sx-letter__reply-bar:not([hidden]))::before {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: 100%;
+    left: 0;
+    height: 16px;
+    background: linear-gradient(to bottom, transparent, var(--sx-color-surface, #fff));
+    pointer-events: none;
 }
 
 .sx-letter__reply-bar {

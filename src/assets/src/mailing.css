@@ -437,8 +437,8 @@ p.sx-import__muted {
 
 /* Campaigns: the card (summary, preview, report) and the form. */
 
+/* The card uses the full width of the panel, like other CRM cards. */
 .sx-campaign {
-    max-width: 1100px;
     padding: 4px 2px 24px;
 }
 
