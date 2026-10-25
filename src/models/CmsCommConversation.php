@@ -86,6 +86,15 @@ class CmsCommConversation extends ActiveRecord
         return $title !== '' ? $title : ($this->isChat() ? 'Чат #'.(int)$this->id : '(без темы)');
     }
 
+    /**
+     * The asText property: the header notification center and backend links
+     * read it as on CMS records.
+     */
+    public function getAsText(): string
+    {
+        return $this->asText();
+    }
+
     public function getConnection()
     {
         return $this->hasOne(CmsCommConnection::class, ['id' => 'cms_comm_connection_id']);
