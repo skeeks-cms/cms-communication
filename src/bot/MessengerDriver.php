@@ -184,6 +184,35 @@ abstract class MessengerDriver extends ConnectionDriver
     abstract public function downloadFile(string $ref): array;
 
     /**
+     * Reactions the bot may put on a message from the CRM, in the order of
+     * the picker. Empty — the messenger gives bots no reactions (MAX).
+     *
+     * @return string[] emoji
+     */
+    public function reactionChoices(): array
+    {
+        return [];
+    }
+
+    /**
+     * The bot's reaction on a message (null — remove it). A messenger with
+     * reactions overrides it; a refusal is a BotException.
+     */
+    public function react(string $chatId, string $messageId, ?string $emoji): void
+    {
+        throw new BotException('Мессенджер не даёт ботам ставить реакции.');
+    }
+
+    /**
+     * The current subscription (getWebhook()) lacks something this driver
+     * now asks for (new kinds of updates): the bot is subscribed again.
+     */
+    public function webhookOutdated(array $current): bool
+    {
+        return false;
+    }
+
+    /**
      * Answers a button press (removes the "loading" state in the messenger).
      * Messengers that need no answer do nothing.
      */

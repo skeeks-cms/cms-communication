@@ -57,7 +57,7 @@ class BotSubscriptions
             $connection->save(false, ['driver_config', 'secret', 'updated_at']);
         }
         $url = Bots::webhookUrl($connection);
-        if ($currentUrl !== $url || !$hadSecret) {
+        if ($currentUrl !== $url || !$hadSecret || $driver->webhookOutdated($current)) {
             $driver->setWebhook($url, $secret);
 
             return ['state' => self::SUBSCRIBED, 'url' => $url, 'error' => null];

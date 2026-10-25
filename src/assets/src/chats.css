@@ -400,3 +400,44 @@ html[data-sx-theme="dark"] .sx-chat, html[data-sx-theme="dark"] .sx-chats { --sx
 /* The photo of a chat from the messenger instead of the initials. */
 .sx-chat-row__avatar--photo { overflow: hidden; }
 .sx-chat-row__avatar--photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Reactions under a message, as in messengers: an emoji with the number; the employee's own is marked. */
+.sx-msg__reactions { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
+.sx-msg__reaction {
+    display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border: 1px solid transparent; border-radius: 13px;
+    background: color-mix(in srgb, var(--sx-color-text) 9%, transparent); color: var(--sx-color-text); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.sx-msg__reaction-emoji { font-size: 15px; line-height: 1; }
+.sx-msg__reaction.is-mine { border-color: var(--sx-color-accent); background: color-mix(in srgb, var(--sx-color-accent) 18%, transparent); }
+.sx-msg__reaction:hover { border-color: var(--sx-color-accent-border); }
+.sx-msg-menu__reactions { display: flex; flex-wrap: wrap; gap: 2px; padding: 2px 2px 6px; margin-bottom: 4px; border-bottom: 1px solid var(--sx-color-border); max-width: 260px; }
+.sx-msg-menu .sx-msg-menu__reaction {
+    width: 34px; height: 34px; padding: 0; border-radius: 50%; font-size: 20px; line-height: 34px; text-align: center; transition: transform .1s;
+}
+.sx-msg-menu .sx-msg-menu__reaction:hover { transform: scale(1.18); background: var(--sx-color-surface-hover); }
+.sx-msg-menu .sx-msg-menu__reaction.is-mine { background: var(--sx-color-accent-soft); }
+
+/* A quote leads to its message; the found message is lit for a moment. */
+.sx-msg__reply[data-sx-chat-goto] { cursor: pointer; }
+.sx-msg__reply[data-sx-chat-goto]:hover { background: hsl(var(--sx-chat-hue, 200) 60% var(--sx-chat-name-l) / .2); }
+@keyframes sx-msg-found { 0%, 60% { background: color-mix(in srgb, var(--sx-color-accent) 18%, transparent); } 100% { background: transparent; } }
+.sx-msg.is-found { animation: sx-msg-found 2s ease-out; border-radius: 12px; }
+
+/* The "down" button with the number of new messages, and short notes. */
+.sx-chat__column { position: relative; }
+.sx-chat__down {
+    position: absolute; right: 18px; bottom: 76px; z-index: 4; width: 42px; height: 42px; padding: 0; border: 0; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center; background: var(--sx-color-surface); color: var(--sx-color-text-muted);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .18); cursor: pointer;
+}
+.sx-chat__down[hidden] { display: none; }
+.sx-chat__down:hover { color: var(--sx-color-accent); }
+.sx-chat__down-count:not(:empty) {
+    position: absolute; top: -6px; left: 50%; transform: translateX(-50%); min-width: 20px; padding: 0 6px; border-radius: 10px;
+    background: var(--sx-color-accent); color: #fff; font-size: 11px; font-weight: 600; line-height: 20px; text-align: center;
+}
+.sx-chat__toast {
+    position: absolute; left: 50%; bottom: 76px; z-index: 5; transform: translateX(-50%); max-width: 90%; padding: 8px 14px; border-radius: 10px;
+    background: color-mix(in srgb, var(--sx-color-text) 88%, transparent); color: var(--sx-color-surface); font-size: 13px; transition: opacity .3s;
+}
+.sx-chat__toast.is-hiding { opacity: 0; }

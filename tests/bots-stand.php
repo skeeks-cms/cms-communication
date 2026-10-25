@@ -159,6 +159,21 @@ try {
     $reply->refresh();
     check($reply->status === 'sent' && $reply->external_id === (int)$connection->id.':-5:'.FakeMessengerDriver::$sent[0]['id'] && FakeMessengerDriver::$sent[0]['reply'] === '3'
         && strpos(FakeMessengerDriver::$sent[0]['text'], 'Счёт пришлём сегодня') !== false, 'The reply went as an answer to the client\'s message.');
+
+    // The employee's reaction from the CRM goes through the bot; the same emoji again takes it back.
+    $reactions = \skeeks\cms\communication\chat\ChatReactions::class;
+    $reactions::toggle($message, $admin, '👍');
+    $summary = $reactions::summary([(int)$message->id], (int)$admin->id);
+    check(FakeMessengerDriver::$reacted === [['-5', '3', '👍']] && ($summary[(int)$message->id][0]['mine'] ?? false) === true, 'The bot puts the employee\'s reaction.');
+    $reactions::toggle($message, $admin, '👍');
+    check(FakeMessengerDriver::$reacted[1] === ['-5', '3', null] && !$reactions::summary([(int)$message->id]), 'The same reaction again is taken back.');
+    FakeMessengerDriver::$failNext = [new \skeeks\cms\communication\bot\BotException('Нет прав')];
+    try {
+        $reactions::toggle($message, $admin, '🔥');
+        check(false, 'A refused reaction is an error.');
+    } catch (\DomainException $e) {
+        check(strpos($e->getMessage(), 'Нет прав') !== false && !$reactions::summary([(int)$message->id]), 'A reaction the messenger refused is not kept.');
+    }
 } finally {
     $transaction->rollBack();
     foreach ($storedFiles as $path) {

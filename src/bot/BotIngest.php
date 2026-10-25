@@ -142,6 +142,13 @@ class BotIngest
                     $message->save(false, ['removed_at', 'updated_at']);
                 }
                 break;
+            case BotEvent::REACTION:
+                // The reactions of the person on the message now; the message itself is not changed.
+                $reacted = $this->messageKey($event) !== null ? $this->findMessage($this->messageKey($event)) : null;
+                if ($reacted && $identity) {
+                    \skeeks\cms\communication\chat\ChatReactions::replace($reacted, $identity, $event->reactions);
+                }
+                break;
             case BotEvent::MEMBERS_JOINED:
             case BotEvent::MEMBERS_LEFT:
                 $this->members($conversation, $event);

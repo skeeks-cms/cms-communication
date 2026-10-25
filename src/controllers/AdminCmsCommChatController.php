@@ -448,6 +448,20 @@ class AdminCmsCommChatController extends BackendModelStandartController
                     }
                     $conversation->updateAttributes(['task_notify' => (int)(bool)$request->post('value')]);
                     break;
+                case 'react':
+                    // The employee's reaction on a message; the same emoji again removes it.
+                    $reacted = CmsCommMessage::find()->andWhere(['id' => (int)$request->post('message_id'), 'cms_comm_conversation_id' => (int)$conversation->id])
+                        ->with(['identity', 'files', 'sentBy'])->one();
+                    if (!$reacted) {
+                        throw new \DomainException('Сообщение не найдено.');
+                    }
+                    $emoji = trim((string)$request->post('emoji'));
+                    \skeeks\cms\communication\chat\ChatReactions::toggle($reacted, \Yii::$app->user->identity, $emoji !== '' ? $emoji : null);
+
+                    return ['success' => true, 'replace' => [[
+                        'id' => (int)$reacted->id,
+                        'html' => $this->renderPartial('@skeeks/cms/communication/views/chat/_messages', ['messages' => [$reacted], 'conversation' => $conversation]),
+                    ]]];
                 default:
                     return ['success' => false, 'error' => 'Неизвестное действие.'];
             }

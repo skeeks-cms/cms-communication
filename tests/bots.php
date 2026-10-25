@@ -114,6 +114,7 @@ $db->createCommand()->createTable('cms_comm_conversation', ['id' => 'pk', 'creat
 $db->createCommand()->createTable('cms_comm_message', ['id' => 'pk', 'created_at' => 'integer', 'updated_at' => 'integer', 'cms_site_id' => 'integer', 'cms_comm_conversation_id' => 'integer', 'cms_comm_account_id' => 'integer', 'channel' => 'string', 'direction' => 'string', 'status' => 'string', 'external_id' => 'string', 'provider_ref' => 'text', 'in_reply_to' => 'string', 'references_list' => 'text', 'from_address' => 'string', 'from_name' => 'string', 'to_list' => 'text', 'cc_list' => 'text', 'subject' => 'string', 'body_text' => 'text', 'body_html' => 'text', 'attachments' => 'text', 'is_internal' => 'integer default 0', 'is_auto' => 'integer default 0', 'is_history' => 'integer default 0', 'message_at' => 'integer', 'sent_by_user_id' => 'integer', 'error' => 'text',
     'cms_comm_identity_id' => 'integer', 'reply_to_message_id' => 'integer', 'edited_at' => 'integer', 'removed_at' => 'integer'])->execute();
 $db->createCommand()->createIndex('msg_unique', 'cms_comm_message', ['cms_site_id', 'channel', 'external_id'], true)->execute();
+$db->createCommand()->createTable('cms_comm_message_reaction', ['id' => 'pk', 'created_at' => 'integer', 'cms_comm_message_id' => 'integer', 'cms_comm_identity_id' => 'integer', 'cms_user_id' => 'integer', 'emoji' => 'string'])->execute();
 $db->createCommand()->createTable('cms_comm_message_file', ['id' => 'pk', 'created_at' => 'integer', 'cms_comm_message_id' => 'integer', 'storage_file_id' => 'integer', 'part_index' => 'integer', 'is_cached' => 'integer default 0', 'last_access_at' => 'integer', 'fetch_error' => 'text', 'name' => 'string', 'mime_type' => 'string', 'size' => 'integer', 'content_hash' => 'string', 'content_id' => 'string', 'is_inline' => 'integer default 0', 'priority' => 'integer default 100', 'external_ref' => 'string'])->execute();
 $db->createCommand()->createTable('cms_comm_identity', ['id' => 'pk', 'created_at' => 'integer', 'updated_at' => 'integer', 'cms_site_id' => 'integer', 'channel' => 'string', 'external_id' => 'string', 'name' => 'string', 'username' => 'string', 'is_bot' => 'integer default 0', 'phone' => 'string', 'phone_verified_at' => 'integer', 'cms_user_id' => 'integer', 'link_method' => 'string', 'linked_at' => 'integer', 'linked_by' => 'integer', 'is_blocked' => 'integer default 0', 'last_seen_at' => 'integer'])->execute();
 $db->createCommand()->createIndex('identity_unique', 'cms_comm_identity', ['cms_site_id', 'channel', 'external_id'], true)->execute();
@@ -253,6 +254,18 @@ botExpect(($late = CmsCommMessage::find()->andWhere(['external_id' => $cid.':-10
 $apply(['id' => 6, 'type' => 'removed', 'chat' => $group, 'message_id' => '11', 'date' => 1800000400]);
 $second->refresh();
 botExpect((int)$second->removed_at === 1800000400 && $second->body_text === 'И цены', 'A removal is marked, the text is kept.');
+// Reactions: each event is the whole set of the person's reactions on the message.
+$conversationCount = (int)CmsCommMessage::find()->andWhere(['cms_comm_conversation_id' => (int)$conversation->id])->count();
+$apply(['id' => 60, 'type' => 'reaction', 'chat' => $group, 'from' => $anna, 'message_id' => '10', 'reactions' => ['👍', '🔥'], 'date' => 1800000410]);
+$apply(['id' => 61, 'type' => 'reaction', 'chat' => $group, 'from' => $ivan, 'message_id' => '10', 'reactions' => ['👍'], 'date' => 1800000420]);
+$summary = \skeeks\cms\communication\chat\ChatReactions::summary([(int)$first->id]);
+botExpect(array_map(static fn($g) => [$g['emoji'], $g['count']], $summary[(int)$first->id] ?? []) === [['👍', 2], ['🔥', 1]]
+    && in_array('Анна Клиентова', $summary[(int)$first->id][0]['names'], true), 'Reactions are counted by emoji with who put them.');
+$apply(['id' => 62, 'type' => 'reaction', 'chat' => $group, 'from' => $anna, 'message_id' => '10', 'reactions' => [], 'date' => 1800000430]);
+$summary = \skeeks\cms\communication\chat\ChatReactions::summary([(int)$first->id]);
+botExpect(array_map(static fn($g) => [$g['emoji'], $g['count']], $summary[(int)$first->id] ?? []) === [['👍', 1]]
+    && CmsCommMessage::find()->andWhere(['cms_comm_conversation_id' => (int)$conversation->id])->count() == $conversationCount,
+    'Removed reactions go away; a reaction is no message.');
 $apply(['id' => 7, 'type' => 'left', 'chat' => $group, 'members' => [$ivan], 'date' => 1800000500]);
 $ivanIdentity = CmsCommIdentity::find()->andWhere(['external_id' => '8'])->one();
 botExpect((int)CmsCommParticipant::find()->andWhere(['cms_comm_identity_id' => $ivanIdentity->id])->one()->left_at === 1800000500, 'A member who left is marked.');

@@ -34,6 +34,8 @@ final class BotEvent
     public const BOT_STATUS = 'bot_status';
     /** The group title changed: chatTitle. */
     public const CHAT_TITLE = 'chat_title';
+    /** A person set or removed reactions on a message: messageId, sender, reactions (the whole new set). */
+    public const REACTION = 'reaction';
 
     public string $type;
     public string $chatId;
@@ -62,6 +64,8 @@ final class BotEvent
     public ?array $botPermissions = null;
     /** A message forwarded from elsewhere: who wrote it originally, as text. */
     public ?string $forwardedFrom = null;
+    /** @var string[] emoji of a REACTION event: all reactions of the sender on the message now (empty — removed) */
+    public array $reactions = [];
 
     public function __construct(string $type, string $chatId, string $chatType)
     {

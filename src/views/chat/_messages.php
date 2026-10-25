@@ -33,6 +33,8 @@ if ($messages) {
         $tasks[(int)$link->cms_comm_message_id][] = (int)$link->model_id;
     }
 }
+// Reactions under the messages, grouped by emoji; the employee's own are marked.
+$reactions = \skeeks\cms\communication\chat\ChatReactions::summary(array_map(static fn($m) => (int)$m->id, $messages), (int)\Yii::$app->user->id);
 foreach ($messages as $m):
     $ours = $m->direction === CmsCommMessage::DIRECTION_OUT || ($m->identity && $m->identity->isWorker());
     $author = ChatUi::author($m);
@@ -80,7 +82,8 @@ foreach ($messages as $m):
                 <div class="sx-msg__author"><?= Html::encode($author) ?></div>
             <?php endif; ?>
             <?php if ($reply): ?>
-                <div class="sx-msg__reply" style="--sx-chat-hue: <?= ChatUi::hue(ChatUi::author($reply)) ?>">
+                <div class="sx-msg__reply" data-sx-chat-goto="<?= (int)$reply->id ?>" role="button" tabindex="0" title="Перейти к сообщению"
+                     style="--sx-chat-hue: <?= ChatUi::hue(ChatUi::author($reply)) ?>">
                     <b><?= Html::encode(ChatUi::author($reply)) ?></b>
                     <span><?= Html::encode(mb_substr(trim(preg_replace('/\s+/u', ' ', ChatUi::body($reply))), 0, 120) ?: 'Файл') ?></span>
                 </div>
@@ -121,6 +124,16 @@ foreach ($messages as $m):
                             'content' => $taskIcon.' Задача №'.$taskId,
                             'options' => ['class' => 'sx-msg__task', 'title' => 'Открыть задачу'],
                         ]) ?>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+            <?php if (!empty($reactions[(int)$m->id])): ?>
+                <div class="sx-msg__reactions">
+                    <?php foreach ($reactions[(int)$m->id] as $r): ?>
+                        <button type="button" class="sx-msg__reaction<?= $r['mine'] ? ' is-mine' : '' ?>" data-sx-chat-react="<?= Html::encode($r['emoji']) ?>"
+                                title="<?= Html::encode(implode(', ', array_filter($r['names']))) ?>">
+                            <span class="sx-msg__reaction-emoji"><?= Html::encode($r['emoji']) ?></span><?php if ($r['count'] > 1): ?><span><?= (int)$r['count'] ?></span><?php endif; ?>
+                        </button>
                     <?php endforeach; ?>
                 </div>
             <?php endif; ?>

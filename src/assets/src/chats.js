@@ -24,6 +24,9 @@
             pane.initInfo();
             pane.scrollDown();
             pane.stick = true;
+            if (pane.cfg.focus) {
+                pane.goto(pane.cfg.focus);
+            }
         })();
         // Pictures load later and push the messages up: the chat stays at the bottom while the employee is there.
         var self = this, box = $el.find('[data-sx-chat-messages]')[0];
@@ -38,6 +41,9 @@
             });
             $el.on('click', '[data-sx-chat-older]', function () {
                 self.older();
+            });
+            box.addEventListener('scroll', function () {
+                self.downButton();
             });
             var keep = function () {
                 if (self.stick) {
@@ -187,6 +193,31 @@
         $el.find('[data-sx-chat-messages]').on('scroll', function () {
             self.closeMenu();
         });
+        // A quote leads to the message it answers.
+        $el.on('click keydown', '[data-sx-chat-goto]', function (e) {
+            if (e.type === 'keydown' && e.key !== 'Enter') {
+                return;
+            }
+            e.preventDefault();
+            self.goto($(this).data('sx-chat-goto'));
+        });
+        // A reaction under a message: the same one of the employee again removes it, another one is added.
+        $el.on('click', '[data-sx-chat-react]', function () {
+            if (!self.cfg.reactions || self.cfg.reactions.indexOf(String($(this).data('sx-chat-react'))) < 0) {
+                return;
+            }
+            self.react($(this).closest('[data-sx-msg]').data('sx-msg'), String($(this).data('sx-chat-react')));
+        });
+        $el.on('click', '[data-sx-chat-down]', function () {
+            self.stick = true;
+            self.scrollDown();
+            self.downButton();
+        });
+        $el.on('keydown', '[data-sx-chat-text]', function (e) {
+            if (e.key === 'Escape' && self.replyTo) {
+                self.setReply(null);
+            }
+        });
         // "Это наш сотрудник": choose who of the employees the member is; "×" — not ours.
         $el.on('click', '[data-sx-chat-worker-open]', function () {
             $el.find('[data-sx-chat-worker="' + $(this).data('sx-chat-worker-open') + '"]').prop('hidden', false).trigger('focus');
@@ -225,7 +256,7 @@
     };
 
     /** Earlier messages above the first one shown; the chat keeps its place on the screen. */
-    Pane.prototype.older = function () {
+    Pane.prototype.older = function (then) {
         var self = this, $box = this.$el.find('[data-sx-chat-messages]'), $button = $box.find('[data-sx-chat-older]');
         var first = $box.find('[data-sx-msg]').first().data('sx-msg');
         if (!$button.length || this.loadingOlder || !first) {
@@ -243,10 +274,14 @@
             }
             self.decorate();
             box.scrollTop = top + (box.scrollHeight - height);
-        }).fail(function () {
-            $button.prop('disabled', false).text('Не получилось загрузить — повторить');
-        }).always(function () {
+            // Free before the callback: it may ask for the next page (looking for a quoted message).
             self.loadingOlder = false;
+            if (then) {
+                then();
+            }
+        }).fail(function () {
+            self.loadingOlder = false;
+            $button.prop('disabled', false).text('Не получилось загрузить — повторить');
         });
     };
 
@@ -279,12 +314,33 @@
                 $link[0].click();
             }]);
         });
+        if (this.cfg.messageLink) {
+            items.push(['Ссылка на сообщение', function () {
+                var url = self.cfg.messageLink.replace('%7Bmsg%7D', $m.data('sx-msg')).replace('{msg}', $m.data('sx-msg'));
+                if (navigator.clipboard) {
+                    navigator.clipboard.writeText(url);
+                }
+                self.toast('Ссылка на сообщение скопирована');
+            }]);
+        }
         if (!items.length) {
             return;
         }
         var $menu = $('<div class="sx-msg-menu" role="menu"></div>');
+        // Reactions, as in messengers: the row above the actions (where the messenger lets the bot react).
+        if (this.cfg.reactions && this.cfg.reactions.length && !$m.hasClass('sx-msg--removed')) {
+            var $row = $('<div class="sx-msg-menu__reactions"></div>').appendTo($menu);
+            $.each(this.cfg.reactions, function (i, emoji) {
+                $('<button type="button" class="sx-msg-menu__reaction"></button>').text(emoji).attr('title', 'Реакция ' + emoji)
+                    .toggleClass('is-mine', $m.find('.sx-msg__reaction.is-mine[data-sx-chat-react="' + emoji + '"]').length > 0)
+                    .on('click', function () {
+                        self.closeMenu();
+                        self.react($m.data('sx-msg'), emoji);
+                    }).appendTo($row);
+            });
+        }
         $.each(items, function (i, item) {
-            $('<button type="button" role="menuitem"></button>').text(item[0]).on('click', function () {
+            $('<button type="button" role="menuitem" class="sx-msg-menu__item"></button>').text(item[0]).on('click', function () {
                 self.closeMenu();
                 item[1]();
             }).appendTo($menu);
@@ -296,7 +352,75 @@
         $m.addClass('is-menu');
         this.$menu = $menu;
         this.$menuFor = $m;
-        $menu.find('button').first().trigger('focus');
+        $menu.find('.sx-msg-menu__item').first().trigger('focus');
+    };
+
+    /** The employee's reaction (the same again removes it); the message is drawn again. */
+    Pane.prototype.react = function (messageId, emoji) {
+        var self = this;
+        this.post(this.cfg.dialogUrl, {do: 'react', message_id: messageId, emoji: emoji}).done(function (r) {
+            if (!r.success) {
+                self.toast(r.error || 'Реакция не поставлена.');
+                return;
+            }
+            $.each(r.replace || [], function (i, item) {
+                self.$el.find('[data-sx-msg="' + item.id + '"]').replaceWith(item.html);
+            });
+            self.decorate();
+        }).fail(function () {
+            self.toast('Реакция не поставлена: нет связи с сервером.');
+        });
+    };
+
+    /**
+     * Shows a message of the chat, as a click on a quote does in messengers:
+     * earlier messages are loaded until it is there, then it is scrolled to the
+     * middle and lit for a moment.
+     */
+    Pane.prototype.goto = function (messageId, tries) {
+        var self = this, $box = this.$el.find('[data-sx-chat-messages]'), $m = $box.find('[data-sx-msg="' + messageId + '"]');
+        tries = tries || 0;
+        if ($m.length) {
+            this.stick = false;
+            $m[0].scrollIntoView({block: 'center', behavior: tries ? 'auto' : 'smooth'});
+            this.downButton();
+            $m.removeClass('is-found');
+            setTimeout(function () {
+                $m.addClass('is-found');
+            }, 10);
+            setTimeout(function () {
+                $m.removeClass('is-found');
+            }, 2200);
+            return;
+        }
+        if (!$box.find('[data-sx-chat-older]').length || tries > 40) {
+            this.toast('Сообщения нет в этом чате: оно удалено или не попало в CRM.');
+            return;
+        }
+        this.older(function () {
+            self.goto(messageId, tries + 1);
+        });
+    };
+
+    /** A short note at the bottom of the chat. */
+    Pane.prototype.toast = function (text) {
+        var $toast = $('<div class="sx-chat__toast" role="status"></div>').text(text).appendTo(this.$el.find('.sx-chat__column'));
+        setTimeout(function () {
+            $toast.addClass('is-hiding');
+        }, 2600);
+        setTimeout(function () {
+            $toast.remove();
+        }, 3000);
+    };
+
+    /** The round "down" button with the number of new messages, while the chat is scrolled up. */
+    Pane.prototype.downButton = function () {
+        var $button = this.$el.find('[data-sx-chat-down]');
+        $button.prop('hidden', this.stick);
+        if (this.stick) {
+            this.unseen = 0;
+        }
+        $button.find('[data-sx-chat-down-count]').text(this.unseen ? (this.unseen > 99 ? '99+' : this.unseen) : '');
     };
 
     Pane.prototype.closeMenu = function () {
@@ -409,6 +533,9 @@
             });
             if (r.html) {
                 $box.find('.sx-chats__none').remove();
+                if (!bottom) {
+                    self.unseen = (self.unseen || 0) + $('<div>').html(r.html).find('[data-sx-msg]').length;
+                }
                 $box.append(r.html);
             }
             if (r.html || (r.replace && r.replace.length)) {
@@ -418,6 +545,7 @@
                 if (bottom) {
                     self.scrollDown();
                 }
+                self.downButton();
                 $(document).trigger('sx-chats:changed');
             }
             self.last = r.last || self.last;

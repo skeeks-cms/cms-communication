@@ -30,6 +30,14 @@ $config = [
     'personWindow' => (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByParams(['link', 'pk' => (int)$conversation->id, 'person' => 1])->enableEmptyLayout()->url,
     // "Создать задачу" from a message: the standard create window with ?source=message:{id}.
     'taskWindow' => \skeeks\cms\communication\helpers\MailUi::createActions('{id}')['task']['url'] ?? null,
+    // Reactions the bot may put from the CRM; empty — the messenger gives bots none (MAX).
+    'reactions' => $canSend && $conversation->connection && ($driver = $conversation->connection->createDriver(false)) instanceof \skeeks\cms\communication\bot\MessengerDriver
+        ? $driver->reactionChoices() : [],
+    'channelName' => ChatUi::channelName($conversation),
+    // "Ссылка на сообщение": the chat in "Чаты" scrolled to the message.
+    'messageLink' => Url::to(['chats', 'folder' => 'all', 'id' => (int)$conversation->id, 'msg' => '{msg}'], true),
+    // A message to show when the chat opens (a link to a message).
+    'focus' => (int)\Yii::$app->request->get('msg') ?: null,
     'csrfParam' => \Yii::$app->request->csrfParam,
     'csrf' => \Yii::$app->request->getCsrfToken(),
 ];
@@ -68,6 +76,11 @@ $participants = $conversation->chat_type !== CmsCommConversation::CHAT_PRIVATE
             <?php if (!$messages): ?><div class="sx-chats__none">Сообщений пока нет</div><?php endif; ?>
             <?= $this->render('_messages', ['messages' => $messages, 'conversation' => $conversation]) ?>
         </div>
+        <?php // Scrolled up: back to the newest, with the number of messages that came meanwhile. ?>
+        <button type="button" class="sx-chat__down" data-sx-chat-down hidden title="К последним сообщениям" aria-label="К последним сообщениям">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="sx-chat__down-count" data-sx-chat-down-count></span>
+        </button>
         <?php if ($canSend): ?>
             <form class="sx-chat__reply" data-sx-chat-reply enctype="multipart/form-data">
                 <div class="sx-chat__replying" data-sx-chat-replying hidden>

@@ -12,6 +12,7 @@ use skeeks\cms\communication\bot\Bots;
 use skeeks\cms\communication\chat\ChatAccess;
 use skeeks\cms\communication\chat\ChatFeed;
 use skeeks\cms\communication\chat\ChatFolders;
+use skeeks\cms\communication\chat\ChatReactions;
 use skeeks\cms\communication\chat\ChatTasks;
 use skeeks\cms\communication\components\AiApiSettings;
 use skeeks\cms\communication\helpers\ChatUi;
@@ -138,9 +139,14 @@ class ChatToolService
             }
         }
 
+        // Reactions answer "did the client like it": who put which emoji (not in the client history — noise there).
+        $reactions = ChatReactions::summary(array_map(static fn($m) => (int)$m->id, $messages));
+
         return $this->chatData($chat, $context) + [
             'people' => $people,
-            'messages' => array_map(fn(CmsCommMessage $m) => $this->messageData($m, $context, $length) + ['tasks' => $tasks[(int)$m->id] ?? []], $messages),
+            'messages' => array_map(fn(CmsCommMessage $m) => $this->messageData($m, $context, $length) + ['tasks' => $tasks[(int)$m->id] ?? []]
+                + (isset($reactions[(int)$m->id]) ? ['reactions' => array_map(static fn($g) => ['emoji' => $g['emoji'], 'count' => $g['count'],
+                    'who' => array_map(fn($n) => $context->text((string)$n, 100), $g['names'])], $reactions[(int)$m->id])] : []), $messages),
             'has_older' => $more,
             'can_send' => (new ChatAccess($this->user))->canSend($chat),
         ];

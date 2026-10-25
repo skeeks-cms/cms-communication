@@ -36,6 +36,8 @@ class FakeMessengerDriver extends MessengerDriver
     /** @var array chat id => ['title' => …, 'photo' => …] */
     public static array $chats = [];
     public static int $nextId = 500;
+    /** @var array reactions the bot put: [chat, message, emoji|null] */
+    public static array $reacted = [];
 
     public static function title(): string
     {
@@ -57,6 +59,20 @@ class FakeMessengerDriver extends MessengerDriver
         self::$chats = [];
         self::$members = [];
         self::$nextId = 500;
+        self::$reacted = [];
+    }
+
+    public function reactionChoices(): array
+    {
+        return ['👍', '🔥'];
+    }
+
+    public function react(string $chatId, string $messageId, ?string $emoji): void
+    {
+        if (self::$failNext) {
+            throw array_shift(self::$failNext);
+        }
+        self::$reacted[] = [$chatId, $messageId, $emoji];
     }
 
     public function textLimit(): int
@@ -94,7 +110,7 @@ class FakeMessengerDriver extends MessengerDriver
         $chat = $update['chat'] ?? [];
         $map = ['message' => BotEvent::MESSAGE, 'edited' => BotEvent::EDITED, 'removed' => BotEvent::REMOVED, 'joined' => BotEvent::MEMBERS_JOINED,
             'left' => BotEvent::MEMBERS_LEFT, 'bot' => BotEvent::BOT_STATUS, 'title' => BotEvent::CHAT_TITLE, 'start' => BotEvent::STARTED,
-            'stop' => BotEvent::STOPPED, 'callback' => BotEvent::CALLBACK];
+            'stop' => BotEvent::STOPPED, 'callback' => BotEvent::CALLBACK, 'reaction' => BotEvent::REACTION];
         $type = $map[$update['type'] ?? ''] ?? null;
         if (!$type || !isset($chat['id'])) {
             return [];
@@ -118,6 +134,7 @@ class FakeMessengerDriver extends MessengerDriver
         foreach ((array)($update['members'] ?? []) as $member) {
             $event->members[] = $this->user($member);
         }
+        $event->reactions = (array)($update['reactions'] ?? []);
         $event->botStatus = $update['status'] ?? null;
         $event->botPermissions = $update['rights'] ?? null;
         $event->chatTitle = $type === BotEvent::CHAT_TITLE ? ($update['title'] ?? null) : $event->chatTitle;

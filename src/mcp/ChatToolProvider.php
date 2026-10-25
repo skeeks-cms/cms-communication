@@ -39,7 +39,7 @@ class ChatToolProvider extends Component implements McpToolProviderInterface
                 ] + $contacts)),
             $this->tool('cms_comm_chat_get',
                 'Чат и его сообщения (последние limit, по умолчанию 50, старые — before_id): автор, наше ли (ours: ответ из CRM или сотрудник в группе), текст до max_length, '
-                .'названия файлов, на какое сообщение ответ, статус отправки наших, задачи из сообщения (tasks), отметка ИИ. Для группы — участники с ролями и отметкой «сотрудник». '
+                .'названия файлов, на какое сообщение ответ, статус отправки наших, задачи из сообщения (tasks), реакции (reactions: emoji, сколько, кто), отметка ИИ. Для группы — участники с ролями и отметкой «сотрудник». '
                 .'can_send — можно ли вам писать в чат. Пример: {"id":1935,"limit":30}.',
                 'cms.communication.read', [$this, 'chatGet'], $this->object([
                     'id' => ['type' => 'integer'], 'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 200], 'before_id' => ['type' => 'integer'],
