@@ -568,7 +568,13 @@
             return;
         }
         var top = el.getBoundingClientRect().top + window.scrollY;
-        el.style.setProperty('--sx-chats-height', Math.max(420, window.innerHeight - top - 10) + 'px');
+        var height = Math.max(280, window.innerHeight - top - 10);
+        el.style.setProperty('--sx-chats-height', height + 'px');
+        // Whatever the shell puts below the screen (paddings, a footer of another theme) is taken off too.
+        var over = document.documentElement.scrollHeight - window.innerHeight;
+        if (over > 0) {
+            el.style.setProperty('--sx-chats-height', Math.max(280, height - over) + 'px');
+        }
         if (window.scrollY) {
             window.scrollTo(0, 0);
         }
@@ -581,6 +587,19 @@
         this.pane = null;
         this.fit();
         $(window).on('resize load', this.fit.bind(this));
+        // The shell above may grow after loading (a task timer, a notice in the header): the screen follows it.
+        if (window.ResizeObserver && !$el.hasClass('sx-chats--panel')) {
+            var queued = false;
+            new ResizeObserver(function () {
+                if (!queued) {
+                    queued = true;
+                    setTimeout(function () {
+                        queued = false;
+                        self.fit();
+                    }, 30);
+                }
+            }).observe(document.body);
+        }
         var $pane = $el.find('[data-sx-chat-pane]');
         if ($pane.length) {
             this.pane = new Pane($pane);

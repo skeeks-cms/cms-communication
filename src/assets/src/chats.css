@@ -3,6 +3,8 @@
 /* The screen fills the window (chats.js sets its height): no empty space under it that would scroll the page. */
 .sx-main-wrapper:has(.sx-chats:not(.sx-chats--panel)) .sx-main-col { padding-bottom: 0; }
 .sx-main-wrapper:has(.sx-chats:not(.sx-chats--panel)) .sx-shell-footer { display: none; }
+/* Only the list and the chat scroll, as in messengers: the page itself never does (chats.js keeps the screen within the window). */
+html:has(.sx-chats:not(.sx-chats--panel)), html:has(.sx-chats:not(.sx-chats--panel)) body { overflow: hidden; }
 
 .sx-chats {
     --sx-chats-height: calc(100vh - var(--sx-shell-top-offset, 64px) - 32px);
@@ -12,7 +14,7 @@
     /* One row of the window height: a long chat scrolls inside, it never stretches the screen. */
     grid-template-rows: minmax(0, 1fr);
     height: var(--sx-chats-height);
-    min-height: 420px;
+    min-height: 280px;
     border: 1px solid var(--sx-color-border);
     border-radius: var(--sx-radius-panel, 12px);
     background: var(--sx-color-surface);
