@@ -23,8 +23,14 @@ are never resent automatically. Provider acceptance does not prove receipt.
 Credentials are never exposed in forms, job payloads, results, logs or
 exceptions. Visibility of a message is account access OR visibility of a
 linked entity through its `forManager()` scope; sending is limited by the
-employee's send right on the account. Notifications use CmsWebNotify only,
-with server-side recipients and no self-notification.
+employee's send right on the account. Notifications go through the core
+`notifications->notify()` with a kind registered in `config/common.php`
+(stored as CmsWebNotify), with server-side recipients and no
+self-notification. Their delivery outside the CRM (mail, MAX, Telegram, the
+application) is `notify\NotifyDeliveries` on the component event `created`,
+journal `cms_comm_notify_delivery`; an employee's messenger channel is
+`cms_comm_notify_channel`, connected by `notify\NotifyLinks` (see
+ARCHITECTURE.md, "Единый механизм уведомлений").
 
 Exception to the queue rule: the interactive "Проверить подключение" action
 logs in to IMAP/SMTP synchronously with the driver timeout; it reads and sends

@@ -153,15 +153,16 @@ class MailNotifier
         $last = end($letters);
         $from = $last->from_name ?: (string)$last->from_address;
         $count = count($letters);
-        $notify = new CmsWebNotify();
-        $notify->cms_user_id = $userId;
-        $notify->name = mb_substr($count === 1
-            ? 'Новое письмо от '.$from
-            : $count.' '.self::plural($count, 'новое письмо', 'новых письма', 'новых писем').', последнее от '.$from, 0, 250);
-        $notify->model_code = self::MODEL_CODE;
-        $notify->model_id = (int)$last->id;
+        $rows = \Yii::$app->notifications->notify($userId, 'mail.new', [
+            'name' => $count === 1
+                ? 'Новое письмо от '.$from
+                : $count.' '.self::plural($count, 'новое письмо', 'новых письма', 'новых писем').', последнее от '.$from,
+            'model_code' => self::MODEL_CODE,
+            'model_id' => (int)$last->id,
+            'eventKey' => 'mail.new:'.(int)$last->id,
+        ]);
 
-        return $notify->save();
+        return (bool)$rows || \Yii::$app->notifications->isMuted($userId, 'mail.new');
     }
 
     /**

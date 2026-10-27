@@ -534,8 +534,8 @@ class LeadImport
         $text = 'Создано лидов: '.(int)$import->created_count.', уже были в CRM: '.(int)$import->duplicate_count.', пропущено: '.(int)$import->skipped_count.'.';
         // The notification center opens the import card (CmsCommImport in Skeeks::$modelsConfig, see the bootstrap).
         $notify = static function (int $userId, string $name) use ($text, $import) {
-            (new CmsWebNotify(['cms_user_id' => $userId, 'name' => $name, 'comment' => $text,
-                'model_code' => CmsCommImport::class, 'model_id' => (int)$import->id]))->save();
+            \Yii::$app->notifications->notify($userId, 'import.done', ['name' => $name, 'comment' => $text,
+                'model_code' => CmsCommImport::class, 'model_id' => (int)$import->id]);
         };
         $current = \Yii::$app->has('user') && !\Yii::$app->user->isGuest ? (int)\Yii::$app->user->id : 0;
         if ($status === CmsCommImport::STATUS_DONE && $import->executor_id && (int)$import->created_count > 0 && (int)$import->executor_id !== $current) {

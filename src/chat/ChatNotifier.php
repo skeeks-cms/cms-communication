@@ -97,24 +97,31 @@ class ChatNotifier implements BotEventHandlerInterface
     {
         $from = $message->from_name ?: ($message->from_address ?: 'клиента');
         $where = $conversation->chat_type === CmsCommConversation::CHAT_PRIVATE ? '' : ' в «'.$conversation->asText().'»';
+        // One unread notification per chat: later messages update its text (a burst of one entry).
+        $eventKey = 'chat:'.(int)$conversation->id;
         $notify = CmsWebNotify::find()->andWhere([
             'cms_user_id' => $userId,
             'model_code' => CmsCommConversation::class,
             'model_id' => (int)$conversation->id,
             'is_read' => 0,
         ])->orderBy(['id' => SORT_DESC])->one();
+        if ($notify && $notify->event_key !== $eventKey) {
+            // A notification made before kinds of events: it becomes the burst row.
+            CmsWebNotify::updateAll(['event_key' => null], ['cms_user_id' => $userId, 'event_key' => $eventKey]);
+            $notify->updateAttributes(['event_key' => $eventKey, 'kind' => 'chat.message', 'category' => 'messages']);
+        }
+        $name = 'Новое сообщение от '.$from.$where.': '.$message->getSnippet(80);
         if ($notify) {
             $count = (int)CmsCommMessage::find()->andWhere(['cms_comm_conversation_id' => (int)$conversation->id, 'direction' => CmsCommMessage::DIRECTION_IN, 'is_history' => 0])
                 ->andWhere(['>=', 'created_at', (int)$notify->created_at])->count();
-            $notify->name = mb_substr('Новые сообщения ('.max(2, $count).') от '.$from.$where, 0, 250);
-            $notify->save(false, ['name']);
-            return;
+            $name = 'Новые сообщения ('.max(2, $count).') от '.$from.$where;
         }
-        $notify = new CmsWebNotify();
-        $notify->cms_user_id = $userId;
-        $notify->name = mb_substr('Новое сообщение от '.$from.$where.': '.$message->getSnippet(80), 0, 250);
-        $notify->model_code = CmsCommConversation::class;
-        $notify->model_id = (int)$conversation->id;
-        $notify->save(false);
+        \Yii::$app->notifications->notify($userId, 'chat.message', [
+            'name' => $name,
+            'comment' => $notify ? 'Последнее: '.$message->getSnippet(200) : null,
+            'model' => $conversation,
+            'eventKey' => $eventKey,
+            'collapse' => true,
+        ]);
     }
 }

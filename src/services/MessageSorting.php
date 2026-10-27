@@ -150,12 +150,12 @@ class MessageSorting
     /** "Вам назначена переписка": opens the letter like a new-letter notification. */
     private function notifyAssignee(CmsUser $assignee, CmsCommMessage $message): void
     {
-        $notify = new CmsWebNotify();
-        $notify->cms_user_id = (int)$assignee->id;
-        $notify->name = mb_substr('Вас назначили ответственным за переписку «'.$message->getAsText().'» ('.$this->user->shortDisplayName.')', 0, 250);
-        $notify->model_code = MailNotifier::MODEL_CODE;
-        $notify->model_id = (int)$message->id;
-        if (!$notify->save()) {
+        $rows = \Yii::$app->notifications->notify((int)$assignee->id, 'mail.assigned', [
+            'name' => 'Вас назначили ответственным за переписку «'.$message->getAsText().'» ('.$this->user->shortDisplayName.')',
+            'model_code' => MailNotifier::MODEL_CODE,
+            'model_id' => (int)$message->id,
+        ]);
+        if (!$rows && !\Yii::$app->notifications->isMuted((int)$assignee->id, 'mail.assigned')) {
             throw new \RuntimeException('Не удалось уведомить сотрудника.');
         }
     }

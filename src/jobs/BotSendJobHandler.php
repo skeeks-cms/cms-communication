@@ -25,6 +25,12 @@ class BotSendJobHandler extends AbstractJobHandler
     {
         $reporter->setTotal(1);
         [$status, $error] = BotSend::deliver((int)$context->get('messageId'));
+        // A notification sent to an employee's chat: its journal gets the outcome (and a refusal its fallback).
+        try {
+            \skeeks\cms\communication\notify\NotifyDeliveries::onBotResult((int)$context->get('messageId'), $status, $error);
+        } catch (\Throwable $e) {
+            \Yii::error('Итог уведомления по сообщению #'.(int)$context->get('messageId').' не записан: '.$e->getMessage(), self::class);
+        }
         if ($status === null) {
             return;
         }

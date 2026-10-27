@@ -226,7 +226,8 @@ class LinkVisits
         }
         if ($first) {
             try {
-                $this->callTask($track, $now);
+                // "Вам поставлена новая задача" of the call task is one entry with the visit.
+                \Yii::$app->notifications->group('link-visit:'.(int)$track->id.':'.(int)$visit->id, fn() => $this->callTask($track, $now));
             } catch (\Throwable $e) {
                 \Yii::error('Задача по переходу из письма не поставлена: '.$e->getMessage(), self::class);
             }
@@ -390,21 +391,24 @@ class LinkVisits
         $who = $record ? CrmRecords::name($record) : (string)$track->recipient;
         $message = $track->message;
         $date = \Yii::$app->formatter->asDate((int)($message->message_at ?? $track->created_at), 'php:d.m.Y');
-        $notify = new CmsWebNotify();
-        $notify->cms_user_id = (int)$sender->id;
-        $notify->name = mb_substr(($who !== '' ? $who.': к' : 'К').'лиент '.($first ? '' : 'снова ').'перешёл на сайт из письма от '.$date, 0, 250);
         $page = $visit->getPageList()[0] ?? null;
-        $notify->comment = mb_substr(($message && $message->subject ? 'Письмо «'.$message->subject.'». ' : '')
-            .($page ? 'Страница: '.((string)$page['title'] !== '' ? $page['title'].' — ' : '').$page['url'] : ''), 0, 1000);
+        $data = [
+            'name' => ($who !== '' ? $who.': к' : 'К').'лиент '.($first ? '' : 'снова ').'перешёл на сайт из письма от '.$date,
+            'comment' => mb_substr(($message && $message->subject ? 'Письмо «'.$message->subject.'». ' : '')
+                .($page ? 'Страница: '.((string)$page['title'] !== '' ? $page['title'].' — ' : '').$page['url'] : ''), 0, 1000),
+            'eventKey' => 'link.visit:'.(int)$visit->id,
+        ];
         if ($record) {
-            $notify->model_code = get_class($record);
-            $notify->model_id = (int)$record->primaryKey;
+            $data['model_code'] = get_class($record);
+            $data['model_id'] = (int)$record->primaryKey;
         } elseif ($message) {
-            $notify->model_code = CmsCommMessage::class;
-            $notify->model_id = (int)$message->id;
+            $data['model_code'] = CmsCommMessage::class;
+            $data['model_id'] = (int)$message->id;
         }
+        // The call task of a first visit (callTask() in the same group) joins this notification in one entry.
+        $rows = \Yii::$app->notifications->notify((int)$sender->id, 'link.visit', $data + ['groupKey' => 'link-visit:'.(int)$track->id.':'.(int)$visit->id]);
 
-        return $notify->save() ? $notify : null;
+        return $rows[0] ?? null;
     }
 
     /**

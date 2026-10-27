@@ -61,12 +61,10 @@ class ChatDialogs
         }
         $this->assign($conversation, $userId);
         if ($userId !== null && $userId !== (int)$this->access->user()->id) {
-            $notify = new CmsWebNotify();
-            $notify->cms_user_id = $userId;
-            $notify->name = mb_substr('Вам передан диалог «'.$conversation->asText().'»', 0, 250);
-            $notify->model_code = CmsCommConversation::class;
-            $notify->model_id = (int)$conversation->id;
-            $notify->save();
+            \Yii::$app->notifications->notify($userId, 'chat.passed', [
+                'name' => 'Вам передан диалог «'.$conversation->asText().'»',
+                'model' => $conversation,
+            ]);
         }
     }
 

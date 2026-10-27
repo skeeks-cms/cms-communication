@@ -62,7 +62,13 @@ class ChatAccess
                 [$c.'.assigned_user_id' => $userId],
                 ['exists', CmsCommMessage::find()->andWhere([CmsCommMessage::tableName().'.cms_comm_conversation_id' => new Expression($c.'.id'), 'sent_by_user_id' => $userId])],
                 ['and', [$c.'.cms_comm_connection_id' => $exposed], $this->linkedCondition()],
+                // The employee's own chat where their notifications come.
+                [$c.'.id' => \skeeks\cms\communication\notify\NotifyLinks::ownChats($userId)],
             ]);
+        // Private chats where colleagues get their notifications are theirs; administrators see them.
+        if (!\Yii::$app->authManager->checkAccess($userId, \skeeks\cms\rbac\CmsManager::PERMISSION_ROLE_ADMIN_ACCESS)) {
+            $query->andWhere(['not in', $c.'.id', \skeeks\cms\communication\notify\NotifyLinks::chatsOfOthers($userId)]);
+        }
         if ($siteId !== null) {
             $query->andWhere([$c.'.cms_site_id' => $siteId]);
         }

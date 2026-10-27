@@ -31,9 +31,40 @@ return [
             // their own phone, chats of a linked person), tasks asked for by "/task", then notifications
             // about new messages.
             'botHandlers' => [
+                // "Подключить" in the notification settings: the employee's private chat becomes their channel.
+                'notifyLink' => \skeeks\cms\communication\notify\NotifyLinkHandler::class,
                 'identity' => \skeeks\cms\communication\chat\ChatIdentityHandler::class,
                 'tasks' => \skeeks\cms\communication\chat\ChatTasks::class,
                 'notify' => \skeeks\cms\communication\chat\ChatNotifier::class,
+            ],
+        ],
+
+        // Notifications (step У4a): kinds of mail, chats and visits; channels outside the CRM, delivered
+        // by notify\NotifyDeliveries. A messenger channel exists only while the site has an active bot of it.
+        // Handlers are bound here, not in the web bootstrap: jobs of the console notify too.
+        'notifications' => [
+            'on created' => [\skeeks\cms\communication\notify\NotifyDeliveries::class, 'onCreated'],
+            'on renderSettings' => [\skeeks\cms\communication\notify\NotifyJournal::class, 'render'],
+            'kinds' => [
+                'mail.new' => ['name' => 'Новые письма', 'category' => 'messages'],
+                'mail.assigned' => ['name' => 'Вас назначили ответственным за переписку', 'category' => 'messages', 'importance' => 1],
+                'chat.message' => ['name' => 'Новое сообщение в чате', 'category' => 'messages'],
+                'chat.passed' => ['name' => 'Вам передан диалог', 'category' => 'messages', 'importance' => 1],
+                'link.visit' => ['name' => 'Клиент перешёл на сайт из письма', 'category' => 'clients'],
+                'mail.sync_failed' => ['name' => 'Письмо не перенесено в почтовом ящике', 'category' => 'system'],
+                'import.done' => ['name' => 'Импорт базы в лиды', 'category' => 'system'],
+                'notify.test' => ['name' => 'Проверка канала уведомлений', 'category' => 'system', 'mutable' => false],
+            ],
+            'channels' => [
+                // One channel per installed messenger driver, coded by the driver's channel (max, telegram, …).
+                'messengers' => \skeeks\cms\communication\notify\MessengerNotifyChannels::class,
+                'push' => \skeeks\cms\communication\notify\PushNotifyChannel::class,
+                'email' => \skeeks\cms\communication\notify\EmailNotifyChannel::class,
+            ],
+            // Ready variants of messengers; one shows only while its channel exists on the site.
+            'presets' => [
+                'important_max' => ['name' => 'Важное в MAX, остальное в вебе', 'modes' => ['crm' => 'all', 'max' => 'important']],
+                'all_telegram' => ['name' => 'Всё в Telegram', 'modes' => ['crm' => 'all', 'telegram' => 'all']],
             ],
         ],
 
@@ -366,6 +397,24 @@ return [
                 'idempotent' => true,
                 'overlapPolicy' => 'skip',
                 'dedupKey' => static fn() => 'comm.bot.maintain',
+            ],
+            // One notification in one channel outside the CRM (notify\NotifyDeliveries): quiet hours are a requeue.
+            'comm.notify.deliver' => [
+                'type' => 'comm.notify.deliver',
+                'title' => 'Уведомление: доставка',
+                'handler' => \skeeks\cms\communication\jobs\NotifyDeliverJobHandler::class,
+                'queue' => 'communication',
+                'visibility' => 'visible',
+                'retentionDays' => 30,
+                'timeout' => 120,
+                'leaseSeconds' => 180,
+                // An external send with an unknown outcome is never retried.
+                'maxAttempts' => 1,
+                'idempotent' => false,
+                'overlapPolicy' => 'skip',
+                // A channel test turns a waiting row into a test: its own job runs at once beside the waiting one
+                // (the row status lets only one of them send).
+                'dedupKey' => static fn($payload) => 'comm.notify.deliver:'.(int)($payload['deliveryId'] ?? 0).(!empty($payload['test']) ? ':test' : ''),
             ],
         ]],
 

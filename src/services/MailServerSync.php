@@ -396,12 +396,11 @@ class MailServerSync
         if ($by && !isset($this->notified[$by][(int)$copy->cms_comm_message_id])) {
             $this->notified[$by][(int)$copy->cms_comm_message_id] = true;
             try {
-                $notify = new CmsWebNotify();
-                $notify->cms_user_id = $by;
-                $notify->name = mb_substr('Письмо «'.($copy->message ? $copy->message->getAsText() : '#'.$copy->cms_comm_message_id).'» не перенесено: '.$error, 0, 250);
-                $notify->model_code = MailNotifier::MODEL_CODE;
-                $notify->model_id = (int)$copy->cms_comm_message_id;
-                $notify->save();
+                \Yii::$app->notifications->notify($by, 'mail.sync_failed', [
+                    'name' => 'Письмо «'.($copy->message ? $copy->message->getAsText() : '#'.$copy->cms_comm_message_id).'» не перенесено: '.$error,
+                    'model_code' => MailNotifier::MODEL_CODE,
+                    'model_id' => (int)$copy->cms_comm_message_id,
+                ]);
             } catch (\Throwable $e) {
                 \Yii::warning('Уведомление об ошибке не создано: '.$e->getMessage(), self::class);
             }
