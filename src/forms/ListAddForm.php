@@ -62,7 +62,7 @@ class ListAddForm extends Model
                     return;
                 }
                 if (!$this->section) {
-                    $this->addError($attribute, 'Правило сохраняется только из разделов «Компании», «Лиды», «Клиенты».');
+                    $this->addError($attribute, 'Правило сохраняется только из разделов «Компании», «Сделки», «Клиенты».');
                 } elseif ($errors = ListRules::errors($this->section, ListRules::valuesFromPage((string)$this->source))) {
                     $this->addError($attribute, implode(' ', $errors));
                 }

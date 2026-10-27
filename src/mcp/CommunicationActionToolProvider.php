@@ -47,7 +47,7 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
     {
         $limits = AiActions::limits();
         $record = [
-            'record_type' => ['type' => 'string', 'enum' => ['lead', 'company', 'client'], 'description' => 'Клиент CRM: лид, компания или клиент-человек.'],
+            'record_type' => ['type' => 'string', 'enum' => ['lead', 'company', 'client'], 'description' => 'Клиент CRM: сделка (продажа, lead), компания или клиент-человек.'],
             'record_id' => ['type' => 'integer'],
             'address' => ['type' => 'string', 'description' => 'Email клиента из его карточки (компании — и её людей); по умолчанию первый. Выбирайте явно, если адресов несколько.'],
             'subject' => ['type' => 'string', 'maxLength' => 500],
@@ -61,7 +61,7 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
         $purpose = ['purpose' => ['type' => 'string', 'enum' => array_keys(\skeeks\cms\communication\services\LetterPurpose::names()),
             'description' => 'Назначение письма. advertising — предложение без запроса клиента: нужна тема cms_comm_topic_id, проверяется отписка, в письме будет «Отписаться». '
                 .'personal — рабочая переписка: клиент писал нам за последние 90 дней (или ответ на его письмо); без темы и блока отписки, жалоба и недоставка запрещают. '
-                .'service — служебное письмо: у клиента действующая сделка или оплаченный счёт за год. '
+                .'service — служебное письмо: у клиента действующая услуга или оплаченный счёт за год. '
                 .'individual_offer — индивидуальное предложение одному человеку, только явно: своя тема и текст, обязательно offer (Презентация или КП), вложения и картинки; '
                 .'тема cms_comm_topic_id обязательна и хранится внутри — по ней проверяются отказы, жалобы, недоставка и стоп-лист, повтор письма и предложения; '
                 .'строки «Отписаться» и заголовков List-Unsubscribe нет. Не для кампаний и не для массовых писем. Индивидуальный текст, один получатель и приложенная Презентация '

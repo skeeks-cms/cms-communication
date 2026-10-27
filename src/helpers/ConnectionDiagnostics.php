@@ -66,7 +66,7 @@ class ConnectionDiagnostics
         }
         $run = \Yii::$app->jobs->push('comm.mail.poll', ['connectionId' => (int)$connection->id], ['siteId' => (int)$connection->cms_site_id]);
         $text = $run
-            ? 'Приём писем запущен. Через несколько секунд письма появятся в разделе «Почта» и в лентах лидов, компаний и клиентов.'
+            ? 'Приём писем запущен. Через несколько секунд письма появятся в разделе «Почта» и в лентах сделок, компаний и клиентов.'
             : 'Приём писем по этому ящику уже идёт.';
 
         return self::surface('Получить письма', Html::tag('div', Html::encode($text), ['class' => 'alert alert-info']));

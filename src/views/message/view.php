@@ -121,12 +121,12 @@ if ($canManage) {
             </span>
         <?php endif; ?>
         <span class="sx-letter__toolbar-gap"></span>
-        <button type="button" class="sx-mail__tool" data-sx-letter-link="<?= Html::encode(MailUi::linkUrl((int)$model->id)) ?>" title="Привязать к лиду, компании, клиенту или сделке (l)">
+        <button type="button" class="sx-mail__tool" data-sx-letter-link="<?= Html::encode(MailUi::linkUrl((int)$model->id)) ?>" title="Привязать к сделке, компании, клиенту или услуге (l)">
             <?= MailUi::icon('link', 17) ?> <span class="sx-mail__tool-text">Привязать</span>
         </button>
         <?php if ($createActions) : ?>
             <span class="sx-mail__menu-wrap">
-                <button type="button" class="sx-mail__tool" data-sx-mail-menu-toggle aria-haspopup="true" title="Создать задачу, лид или сделку из письма">
+                <button type="button" class="sx-mail__tool" data-sx-mail-menu-toggle aria-haspopup="true" title="Создать задачу, сделку или услугу из письма">
                     <?= MailUi::icon('plus', 17) ?> <span class="sx-mail__tool-text">Создать</span> <?= MailUi::icon('chevron-down', 14) ?>
                 </button>
                 <span class="sx-mail__menu" data-sx-mail-menu hidden>

@@ -25,7 +25,7 @@ class CommunicationReadToolProvider extends Component implements McpToolProvider
     {
         $service = \Yii::createObject($this->serviceConfig);
         $record = [
-            'record_type' => ['type' => 'string', 'enum' => ['lead', 'company', 'client'], 'description' => 'Клиент CRM: лид, компания или клиент-человек.'],
+            'record_type' => ['type' => 'string', 'enum' => ['lead', 'company', 'client'], 'description' => 'Клиент CRM: сделка (продажа, lead), компания или клиент-человек.'],
             'record_id' => ['type' => 'integer'],
             'cms_lead_id' => ['type' => 'integer'], 'cms_company_id' => ['type' => 'integer'], 'cms_user_id' => ['type' => 'integer'],
         ];
@@ -33,7 +33,7 @@ class CommunicationReadToolProvider extends Component implements McpToolProvider
         return [
             $this->tool('cms_comm_message_list',
                 'Письма, СМС и сообщения с сайта, видимые сотруднику (как в разделе «Почта»: его ящики и письма, привязанные к его клиентам), новые первыми. '
-                .'Фильтры: клиент (record_type + record_id, include_related=true — с лидами и сделками компании), ящик cms_comm_account_id (cms_comm_account_list), переписка cms_comm_conversation_id, '
+                .'Фильтры: клиент (record_type + record_id, include_related=true — со сделками (lead) и услугами (deal) компании), ящик cms_comm_account_id (cms_comm_account_list), переписка cms_comm_conversation_id, '
                 .'direction (in/out), channel (email, sms, site), status, is_auto, q — поиск по словам в отправителе, получателях, теме и тексте, date_from/date_to. '
                 .'Каждое письмо: kind (email_in, email_out, sms_out…), дата, тема, отправитель и получатели, snippet — начало собственного текста (без цитат и подписи), названия вложений, привязки к клиентам. '
                 .'Текст целиком — cms_comm_message_get, вся переписка — cms_comm_conversation_get. Пример: {"record_type":"company","record_id":15,"limit":20}.',

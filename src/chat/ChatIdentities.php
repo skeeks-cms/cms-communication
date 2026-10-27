@@ -132,7 +132,7 @@ class ChatIdentities
     public static function invite(CmsCommConnection $connection, string $type, int $id, ?int $by): array
     {
         if (!in_array($type, [CrmRecords::LEAD, CrmRecords::COMPANY, CrmRecords::CLIENT], true)) {
-            throw new \DomainException('Пригласить можно лида, компанию или клиента.');
+            throw new \DomainException('Пригласить можно контакт сделки, компании или клиента.');
         }
         $token = new CmsCommLinkToken([
             'cms_site_id' => (int)$connection->cms_site_id,

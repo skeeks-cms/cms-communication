@@ -41,10 +41,10 @@ final class CrmRecords
     public static function types(): array
     {
         return [
-            self::LEAD => ['class' => CmsLead::class, 'title' => 'Лид', 'icon' => 'id-card', 'create' => 'Создать лид', 'number' => 'Лид №'],
+            self::LEAD => ['class' => CmsLead::class, 'title' => 'Сделка', 'icon' => 'id-card', 'create' => 'Создать сделку', 'number' => 'Сделка №'],
             self::COMPANY => ['class' => CmsCompany::class, 'title' => 'Компания', 'icon' => 'building'],
             self::CLIENT => ['class' => CmsUser::class, 'title' => 'Клиент', 'icon' => 'user'],
-            self::DEAL => ['class' => CmsDeal::class, 'title' => 'Сделка', 'icon' => 'handshake', 'create' => 'Создать сделку', 'number' => 'Сделка №'],
+            self::DEAL => ['class' => CmsDeal::class, 'title' => 'Услуга', 'icon' => 'handshake', 'create' => 'Создать услугу', 'number' => 'Услуга №'],
             self::TASK => ['class' => CmsTask::class, 'title' => 'Задача', 'icon' => 'tasks', 'create' => 'Создать задачу', 'number' => 'Задача №'],
         ];
     }

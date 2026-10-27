@@ -50,8 +50,8 @@ $pages = (int)ceil($total / 100);
         <?= Html::a('+ Добавить', Url::to($addUrl), ['class' => 'btn btn-primary', 'data-pjax' => 0, 'onclick' => ListUi::windowOnClick($addUrl, 'small')]) ?>
         <?= Html::a('Выгрузить CSV', $exportUrl, ['class' => 'btn btn-default', 'data-pjax' => 0, 'target' => '_blank']) ?>
     </div>
-    <p class="sx-import__muted">Много записей сразу — массовым действием «В список рассылки» в разделах «Компании», «Лиды», «Клиенты»
-        (отметьте записи или «для всех» по фильтру) или при импорте таблицы в лиды.</p>
+    <p class="sx-import__muted">Много записей сразу — массовым действием «В список рассылки» в разделах «Компании», «Сделки», «Клиенты»
+        (отметьте записи или «для всех» по фильтру) или при импорте таблицы в сделки.</p>
 
     <div class="sx-import__card">
         <h2 class="sx-import__title">Правила пополнения</h2>

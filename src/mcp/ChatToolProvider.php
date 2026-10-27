@@ -69,7 +69,7 @@ class ChatToolProvider extends Component implements McpToolProviderInterface
                 'cms.communication.read', [$this, 'sendStatus'], $this->object(['idempotency_key' => ['type' => 'string'], 'cms_comm_message_id' => ['type' => 'integer']])),
             $this->tool('cms_comm_chat_task_create',
                 'Задача из сообщения чата — как «Создать задачу» в «Чатах»: название из первой строки сообщения (или name), описание — сообщение, автор, чат, '
-                .'компания и лид из привязок чата, клиент из собеседника; задача привязана к сообщению (в чате под ним «Задача №N», в карточке задачи — «Создано из сообщения»). '
+                .'компания и сделка (lead) из привязок чата, клиент из собеседника; задача привязана к сообщению (в чате под ним «Задача №N», в карточке задачи — «Создано из сообщения»). '
                 .'Исполнитель — executor_id, иначе ведущий чат, иначе менеджер компании, иначе вы. В описание добавляется «Поставлено ИИ (клиент) по запросу …». '
                 .'Без confirm=true — только что будет создано. Пример: {"cms_comm_message_id":2407,"confirm":true}.',
                 'cms.task.write', [$this, 'taskCreate'], $this->object([

@@ -84,7 +84,7 @@ $who = static function (array $data): string {
             <div class="sx-import__card">
                 <h2 class="sx-import__title">Колонки</h2>
                 <p class="sx-import__muted">Что лежит в каждой колонке. Email и телефон могут быть в нескольких колонках; лишние колонки можно не
-                    импортировать — их значения всё равно попадут в описание лида.</p>
+                    импортировать — их значения всё равно попадут в описание сделки.</p>
                 <?php if (!empty($errors['mapping'])) : ?>
                     <div class="sx-import__notice sx-import__notice--error"><?= Html::encode($errors['mapping']) ?></div>
                 <?php endif; ?>
@@ -105,13 +105,13 @@ $who = static function (array $data): string {
                 <h2 class="sx-import__title">Настройки для всего файла</h2>
                 <div class="sx-import__settings">
                     <label>
-                        <span class="sx-import__label">Ответственный за новые лиды</span>
+                        <span class="sx-import__label">Ответственный за новые сделки</span>
                         <?= Html::dropDownList('executor_id', $import->executor_id, $executors, ['class' => 'form-control', 'prompt' => count($executors) > 1 ? '— выберите —' : null]) ?>
                         <?php if (!empty($errors['executor_id'])) : ?><span class="sx-import__error"><?= Html::encode($errors['executor_id']) ?></span><?php endif; ?>
                     </label>
                     <label>
                         <span class="sx-import__label">Тема рассылки</span>
-                        <?= Html::dropDownList('cms_comm_topic_id', $import->cms_comm_topic_id, ['' => 'Без темы — только создать лиды'] + \yii\helpers\ArrayHelper::map($topics, 'id', 'name'), ['class' => 'form-control']) ?>
+                        <?= Html::dropDownList('cms_comm_topic_id', $import->cms_comm_topic_id, ['' => 'Без темы — только создать сделки'] + \yii\helpers\ArrayHelper::map($topics, 'id', 'name'), ['class' => 'form-control']) ?>
                     </label>
                     <label>
                         <span class="sx-import__label">Основание согласия</span>
@@ -126,7 +126,7 @@ $who = static function (array $data): string {
                         </label>
                     <?php endif; ?>
                 </div>
-                <p class="sx-import__muted">Тема и основание отмечаются у каждого email и телефона файла — и у новых лидов, и у найденных повторов.
+                <p class="sx-import__muted">Тема и основание отмечаются у каждого email и телефона файла — и у новых сделок, и у найденных повторов.
                     Отписку клиента импорт не снимает, а настоящее согласие не превращается в «холодный контакт». «Холодным» контактам можно
                     писать только личные письма менеджера; через сервис рассылок — только тем, кто дал согласие.</p>
             </div>
@@ -172,7 +172,7 @@ $who = static function (array $data): string {
                 <button type="submit" name="preview" value="1" class="btn <?= $preview ? 'btn-default' : 'btn-primary' ?>">
                     <?= $preview ? 'Обновить предпросмотр' : 'Показать предпросмотр' ?></button>
                 <?php if ($preview) : ?>
-                    <button type="submit" name="start" value="1" class="btn btn-primary">Импортировать: создать лидов — <?= (int)$preview['counts'][CmsCommImportRow::STATUS_CREATED] ?></button>
+                    <button type="submit" name="start" value="1" class="btn btn-primary">Импортировать: создать сделок — <?= (int)$preview['counts'][CmsCommImportRow::STATUS_CREATED] ?></button>
                     <?php if ($import->row_count > LeadImport::SYNC_LIMIT) : ?>
                         <span class="sx-import__muted">Большой файл: импорт пойдёт в фоне, по окончании придёт уведомление.</span>
                     <?php endif; ?>

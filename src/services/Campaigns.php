@@ -167,7 +167,7 @@ class Campaigns
         $result = [];
         foreach ($query->all() as $import) {
             $result[(int)$import->id] = '№'.(int)$import->id.' · '.($import->file_name ?: 'вставленная таблица')
-                .' · '.\Yii::$app->formatter->asDate((int)$import->created_at, 'php:d.m.Y').' · лидов '.((int)$import->created_count + (int)$import->duplicate_count);
+                .' · '.\Yii::$app->formatter->asDate((int)$import->created_at, 'php:d.m.Y').' · сделок '.((int)$import->created_count + (int)$import->duplicate_count);
         }
 
         return $result;
@@ -223,7 +223,7 @@ class Campaigns
         $t = CmsLead::tableName();
         $count = (int)(clone $query)->count();
         if ($count > self::MAX_RECIPIENTS) {
-            throw new \DomainException('В аудитории '.$count.' лидов: из ящиков менеджеров за один запуск — не больше '.self::MAX_RECIPIENTS
+            throw new \DomainException('В аудитории '.$count.' сделок: из ящиков менеджеров за один запуск — не больше '.self::MAX_RECIPIENTS
                 .'. Сузьте фильтр; для больших баз будет сервис рассылок.');
         }
         /** @var CmsLead[] $leads */
@@ -594,7 +594,7 @@ class Campaigns
         }
         $type = CrmRecords::typeOfCode(method_exists($record, 'getSkeeksModelCode') ? (string)$record->getSkeeksModelCode() : get_class($record));
         if (!in_array($type, self::ADDABLE, true) || ($type === CrmRecords::CLIENT && $record->is_worker)) {
-            throw new \DomainException('Получателем может быть лид, компания или клиент.');
+            throw new \DomainException('Получателем может быть сделка, компания или клиент.');
         }
         if (!CrmRecords::isVisible(CrmRecords::codeOf($type), (int)$record->primaryKey, $user)) {
             throw new \DomainException('Запись CRM не найдена или вам не видна.');
@@ -1139,7 +1139,7 @@ class Campaigns
         $reason = null;
         $error = null;
         if (!$record) {
-            $error = 'Лид удалён.';
+            $error = 'Сделка удалена.';
         } else {
             $check = MailingPolicy::check((int)$campaign->cms_site_id, 'email', (string)$recipient->address, (int)$campaign->cms_comm_topic_id,
                 self::channel($campaign)->policyMode());

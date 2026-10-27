@@ -67,7 +67,7 @@ class CampaignTasks
             'Клиент ответил на письмо рассылки «'.$campaign->name.'» '.\Yii::$app->formatter->asDatetime((int)$reply->message_at ?: $now, 'php:d.m.Y в H:i')
                 .' ('.$reply->getFromAsText().').',
             'Тема ответа: '.(string)$reply->subject,
-            'Ответ — в ленте лида и в «Почте».',
+            'Ответ — в ленте сделки и в «Почте».',
         ];
         $task->description = implode('', array_map(static fn($line) => Html::tag('p', Html::encode($line)), $lines));
         if (!$task->save()) {

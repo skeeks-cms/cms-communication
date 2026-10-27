@@ -71,7 +71,7 @@ class CmsCommListMember extends ActiveRecord
     {
         $ref = (string)$this->added_ref;
         if ($this->added_via === self::VIA_SECTION) {
-            $sections = ['companies' => 'Компании', 'leads' => 'Лиды', 'clients' => 'Клиенты'];
+            $sections = ['companies' => 'Компании', 'leads' => 'Сделки', 'clients' => 'Клиенты'];
 
             return 'из раздела «'.($sections[$ref] ?? $ref).'»';
         }

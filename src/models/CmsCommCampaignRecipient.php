@@ -118,7 +118,7 @@ class CmsCommCampaignRecipient extends ActiveRecord
             self::REASON_NO_MAILBOX => 'Нет ящика, с которого отправить: у ответственного нет своего ящика или нет ответственного',
             self::REASON_DUPLICATE_ADDRESS => 'Этот адрес уже есть у другого получателя кампании',
             self::REASON_HIDDEN => 'Запись не видна запустившему кампанию',
-            self::REASON_CLOSED => 'Лид закрыт',
+            self::REASON_CLOSED => 'Сделка закрыта',
             self::REASON_EXCLUDED_LIST => 'Есть в исключающем списке (сам или его компания)',
             self::REASON_RECENT => 'Недавно получал рассылку: не чаще одной в срок из настроек рассылок',
             self::REASON_QUIET => 'Недавно общались: не мешаем менеджеру',

@@ -62,7 +62,7 @@ class LetterPurpose
         return [
             self::ADVERTISING => 'Рекламное предложение (тема рассылки, ссылка «Отписаться»)',
             self::PERSONAL => 'Личная рабочая переписка (клиент недавно писал нам)',
-            self::SERVICE => 'Служебное письмо (действующая сделка или оплаченный счёт)',
+            self::SERVICE => 'Служебное письмо (действующая услуга или оплаченный счёт)',
             self::INDIVIDUAL_OFFER => 'Индивидуальное предложение одному человеку (тема рассылки — только для проверки отказов, без строки «Отписаться»)',
         ];
     }
@@ -130,7 +130,7 @@ class LetterPurpose
             $problems[] = ['reason' => self::REASON_NO_DIALOG, 'message' => 'Клиент не писал нам за '.self::days()['personalDays'].' дней, и черновик не отвечает на его письмо: '
                 .'это не рабочая переписка, а предложение — выберите purpose=advertising с темой рассылки.'];
         } elseif ($purpose === self::SERVICE && !self::cooperates($record)) {
-            $problems[] = ['reason' => self::REASON_NO_COOPERATION, 'message' => 'У клиента нет действующей сделки и оплаченного счёта за '.self::days()['serviceDays'].' дней: '
+            $problems[] = ['reason' => self::REASON_NO_COOPERATION, 'message' => 'У клиента нет действующей услуги и оплаченного счёта за '.self::days()['serviceDays'].' дней: '
                 .'служебное письмо писать не о чем — выберите personal (если клиент недавно писал) или advertising.'];
         }
 

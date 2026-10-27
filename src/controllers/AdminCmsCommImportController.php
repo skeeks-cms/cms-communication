@@ -42,7 +42,7 @@ class AdminCmsCommImportController extends BackendModelStandartController
 {
     public function init()
     {
-        $this->name = 'Импорт в лиды';
+        $this->name = 'Импорт в сделки';
         $this->modelShowAttribute = 'asText';
         $this->modelClassName = CmsCommImport::class;
         $this->modelDefaultAction = 'view';
@@ -72,7 +72,7 @@ class AdminCmsCommImportController extends BackendModelStandartController
                 'isVisible' => false,
                 'emptyState' => [
                     'title' => 'Импортов пока нет',
-                    'description' => 'Загрузите таблицу получателей (CSV или скопированную из Excel): каждая строка станет лидом с источником «Рассылка», повторы найдутся сами.',
+                    'description' => 'Загрузите таблицу получателей (CSV или скопированную из Excel): каждая строка станет сделкой с источником «Рассылка», повторы найдутся сами.',
                     'icon' => 'fas fa-file-import',
                     'action' => $upload,
                 ],
@@ -218,7 +218,7 @@ class AdminCmsCommImportController extends BackendModelStandartController
                 } else {
                     $run = \Yii::$app->jobs->push('comm.import.leads', ['importId' => (int)$import->id], [
                         'siteId' => $siteId,
-                        'title' => 'Импорт в лиды №'.(int)$import->id,
+                        'title' => 'Импорт в сделки №'.(int)$import->id,
                         'triggerType' => 'manual',
                     ]);
                     if ($run) {
@@ -274,7 +274,7 @@ class AdminCmsCommImportController extends BackendModelStandartController
             $mapping[$i] = isset($fields[$field]) ? $field : '';
         }
         if (!array_intersect($mapping, ['email', 'phone'])) {
-            $errors['mapping'] = 'Укажите колонку с email или телефоном: без них лиду некуда писать.';
+            $errors['mapping'] = 'Укажите колонку с email или телефоном: без них по сделке некуда писать.';
         }
         $import->mapping = Json::encode($mapping);
 

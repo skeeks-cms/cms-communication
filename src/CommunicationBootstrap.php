@@ -48,7 +48,7 @@ class CommunicationBootstrap implements BootstrapInterface
             ];
             // "Готов импорт №…", "Вам назначены лиды из импорта №…" open the import card.
             $app->skeeks->modelsConfig[\skeeks\cms\communication\models\CmsCommImport::class] = [
-                'name' => 'Импорт в лиды',
+                'name' => 'Импорт в сделки',
                 'name_one' => 'Импорт',
                 'controller' => 'cmsCommunication/admin-cms-comm-import',
             ];

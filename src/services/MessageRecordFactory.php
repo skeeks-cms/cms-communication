@@ -121,7 +121,7 @@ class MessageRecordFactory
             $model->source_type = CmsLead::SOURCE_EMAIL;
             $model->source_name = $this->mailboxAddress($message);
         } elseif ($model instanceof CmsDeal) {
-            $model->name = mb_substr($subject !== '' ? $subject : 'Сделка из письма от '.$this->senderName($message), 0, 255);
+            $model->name = mb_substr($subject !== '' ? $subject : 'Услуга из письма от '.$this->senderName($message), 0, 255);
             if ($related['company']) {
                 $model->cms_company_id = (int)$related['company']->id;
             } elseif ($related['client']) {
@@ -286,7 +286,7 @@ class MessageRecordFactory
             $model->source_type = $this->chatLeadSource($message);
             $model->source_name = mb_substr((string)$message->conversation->asText(), 0, 255);
         } elseif ($model instanceof CmsDeal) {
-            $model->name = mb_substr('Сделка из чата «'.$message->conversation->asText().'»', 0, 255);
+            $model->name = mb_substr('Услуга из чата «'.$message->conversation->asText().'»', 0, 255);
             if ($related['company']) {
                 $model->cms_company_id = (int)$related['company']->id;
             } elseif ($related['client']) {

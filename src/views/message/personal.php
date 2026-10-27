@@ -55,7 +55,7 @@ $action = Url::current();
                     <span>
                         <?= Html::encode($access->account ? $accountTitle($access->account) : '#'.$access->cms_comm_account_id) ?>
                         <?php if ($access->read_level === CmsCommAccountAccess::READ_LINKED) : ?>
-                            <small class="sx-mail-settings__muted">— только письма ваших лидов, компаний и клиентов</small>
+                            <small class="sx-mail-settings__muted">— только письма ваших сделок, компаний и клиентов</small>
                         <?php endif; ?>
                     </span>
                 </label>

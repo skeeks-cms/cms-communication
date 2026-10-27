@@ -148,7 +148,7 @@ class AiSend
         $record = $form->context_model_code && $form->context_model_id ? $service->contextRecord((string)$form->context_model_code, (int)$form->context_model_id) : null;
         $to = $form->getToAddresses();
         if (!$record) {
-            $problems[] = $problem(self::REASON_NO_CLIENT, 'Черновик не привязан к клиенту CRM, которого вы видите: через API пишут только лиду, компании или клиенту из CRM.');
+            $problems[] = $problem(self::REASON_NO_CLIENT, 'Черновик не привязан к клиенту CRM, которого вы видите: через API пишут только по сделке, компании или клиенту из CRM.');
         } elseif (count($to) !== 1 || !isset(Campaigns::recordAddresses($record)[$to[0]])) {
             $problems[] = $problem(self::REASON_ADDRESS, 'Получатель должен быть одним адресом из карточки клиента ('.implode(', ', array_keys(Campaigns::recordAddresses($record))).').');
         }

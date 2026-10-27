@@ -57,7 +57,7 @@ class CmsCommAccountAccess extends ActiveRecord
     {
         return [
             self::READ_ALL => 'Все письма ящика',
-            self::READ_LINKED => 'Только связанные с его лидами, компаниями и клиентами',
+            self::READ_LINKED => 'Только связанные с его сделками, компаниями и клиентами',
             self::READ_NONE => 'Нет',
         ];
     }
@@ -66,7 +66,7 @@ class CmsCommAccountAccess extends ActiveRecord
     {
         return [
             self::SEND_ANY => 'На любой адрес',
-            self::SEND_OWN => 'Только своим лидам, компаниям и клиентам',
+            self::SEND_OWN => 'Только по своим сделкам, компаниям и клиентам',
             self::SEND_NONE => 'Нет',
         ];
     }

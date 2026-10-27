@@ -52,7 +52,7 @@ return [
                 'chat.passed' => ['name' => 'Вам передан диалог', 'category' => 'messages', 'importance' => 1],
                 'link.visit' => ['name' => 'Клиент перешёл на сайт из письма', 'category' => 'clients'],
                 'mail.sync_failed' => ['name' => 'Письмо не перенесено в почтовом ящике', 'category' => 'system'],
-                'import.done' => ['name' => 'Импорт базы в лиды', 'category' => 'system'],
+                'import.done' => ['name' => 'Импорт базы в сделки', 'category' => 'system'],
                 'notify.test' => ['name' => 'Проверка канала уведомлений', 'category' => 'system', 'mutable' => false],
             ],
             'channels' => [
@@ -220,7 +220,7 @@ return [
             // A large import of mailing recipients into leads (LeadImportJobHandler); small ones run at once.
             'comm.import.leads' => [
                 'type' => 'comm.import.leads',
-                'title' => 'Импорт получателей рассылок в лиды',
+                'title' => 'Импорт получателей рассылок в сделки',
                 'handler' => \skeeks\cms\communication\jobs\LeadImportJobHandler::class,
                 'queue' => 'communication',
                 'visibility' => 'visible',

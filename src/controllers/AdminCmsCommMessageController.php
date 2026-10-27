@@ -95,7 +95,7 @@ class AdminCmsCommMessageController extends BackendModelStandartController
                 'priority' => 50,
                 'emptyState' => [
                     'title' => 'Писем пока нет',
-                    'description' => 'Здесь появятся письма ящиков, к которым у вас есть доступ, и письма ваших лидов, компаний и клиентов.',
+                    'description' => 'Здесь появятся письма ящиков, к которым у вас есть доступ, и письма ваших сделок, компаний и клиентов.',
                     'icon' => 'far fa-envelope',
                     'action' => ['backendAction' => 'create', 'label' => 'Написать письмо'],
                 ],

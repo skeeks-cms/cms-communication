@@ -147,7 +147,7 @@ class AdminCmsCommChatController extends BackendModelStandartController
         try {
             if ($identity) {
                 if (!in_array($type, [CrmRecords::LEAD, CrmRecords::COMPANY, CrmRecords::CLIENT], true)) {
-                    throw new \DomainException('Собеседника можно привязать к лиду, компании или клиенту.');
+                    throw new \DomainException('Собеседника можно привязать к сделке, компании или клиенту.');
                 }
                 $record = CrmRecords::find($type, $id, $user);
                 if (!$record || ($type === CrmRecords::CLIENT && (int)$record->is_worker === 1)) {

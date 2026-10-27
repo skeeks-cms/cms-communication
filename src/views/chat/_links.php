@@ -61,7 +61,7 @@ $methods = [
         <?php endif; ?>
         <?php if ($identity->is_blocked): ?><span class="sx-chat__warn">остановил бота</span><?php endif; ?>
         <?php if (!$identity->cms_user_id): ?>
-            <button type="button" class="sx-chat-btn sx-chat-btn--small" data-sx-chat-link-window="person" title="Кто этот человек в CRM: лид, компания или клиент">Привязать собеседника…</button>
+            <button type="button" class="sx-chat-btn sx-chat-btn--small" data-sx-chat-link-window="person" title="Кто этот человек в CRM: сделка, компания или клиент">Привязать собеседника…</button>
         <?php endif; ?>
         <?php if ($canAskPhone): ?>
             <button type="button" class="sx-chat-btn sx-chat-btn--small" data-sx-chat-do="ask-phone" title="Боту уйдёт сообщение с кнопкой «Поделиться номером»">Попросить номер</button>

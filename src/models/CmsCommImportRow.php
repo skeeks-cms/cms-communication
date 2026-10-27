@@ -45,7 +45,7 @@ class CmsCommImportRow extends ActiveRecord
     public static function statuses(): array
     {
         return [
-            self::STATUS_CREATED => 'Создан лид',
+            self::STATUS_CREATED => 'Создана сделка',
             self::STATUS_DUPLICATE => 'Уже есть в CRM',
             self::STATUS_SKIPPED => 'Пропущено',
         ];

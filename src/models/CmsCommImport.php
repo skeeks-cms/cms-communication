@@ -89,7 +89,7 @@ class CmsCommImport extends ActiveRecord
             'cms_comm_topic_id' => 'Тема рассылки',
             'consent_basis' => 'Основание согласия',
             'row_count' => 'Строк',
-            'created_count' => 'Создано лидов',
+            'created_count' => 'Создано сделок',
             'duplicate_count' => 'Повторов',
             'skipped_count' => 'Пропущено',
             'created_at' => 'Загружен',

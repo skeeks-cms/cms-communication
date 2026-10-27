@@ -110,7 +110,7 @@ class MailComposeService
                 continue;
             }
             if (!$this->addresses->findRecords([$address], $this->siteId, $this->user)) {
-                return "С этого ящика вы можете писать только своим лидам, компаниям и клиентам. Адрес «{$address}» не найден среди них.";
+                return "С этого ящика вы можете писать только по своим сделкам, компаниям и клиентам. Адрес «{$address}» не найден среди них.";
             }
         }
 
@@ -407,7 +407,7 @@ class MailComposeService
                 [CmsLead::tableName().'.id' => CmsLead::find()->select(CmsLead::tableName().'.id')->search($q)],
             ])->select(CmsLead::tableName().'.id')->limit(50)->column();
         foreach (\skeeks\cms\models\CmsLeadEmail::find()->andWhere(['cms_lead_id' => $leadIds ?: [0]])->with('cmsLead')->limit(50)->all() as $row) {
-            $add((string)$row->value, $row->name ?: ($row->cmsLead ? (string)$row->cmsLead->asText() : ''), 'Лид');
+            $add((string)$row->value, $row->name ?: ($row->cmsLead ? (string)$row->cmsLead->asText() : ''), 'Сделка');
         }
 
         $companyIds = CmsCompany::find()->forManager($this->user)

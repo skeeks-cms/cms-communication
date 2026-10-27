@@ -78,7 +78,7 @@ class AdminCmsCommConsentController extends BackendController
         $saved = false;
         if ($request->isPost) {
             if (!$canEdit) {
-                throw new ForbiddenHttpException('Подписки контакта лида меняет ответственный менеджер или администратор.');
+                throw new ForbiddenHttpException('Подписки контакта сделки меняет ответственный менеджер или администратор.');
             }
             $contact = $contact ?: MailingContacts::get($siteId, $kind, $value);
             $this->save($contact, $topics, (array)$request->post('topics', []), (array)$request->post('suppression', []), (string)$request->post('note'), (int)$user->id);

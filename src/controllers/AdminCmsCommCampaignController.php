@@ -78,7 +78,7 @@ class AdminCmsCommCampaignController extends BackendModelStandartController
                 'name' => 'Кампании',
                 'emptyState' => [
                     'title' => 'Кампаний пока нет',
-                    'description' => 'Кампания — письмо по теме рассылки группе лидов: из ящиков менеджеров, с паузами и только в рабочие часы, '
+                    'description' => 'Кампания — письмо по теме рассылки группе получателей: из ящиков менеджеров, с паузами и только в рабочие часы, '
                         .'с презентацией или КП каждому. Перед запуском видно, кто получит письмо и кто исключён.',
                     'icon' => 'far fa-paper-plane',
                     'action' => ['backendAction' => 'create', 'label' => 'Создать кампанию'],
@@ -205,13 +205,13 @@ class AdminCmsCommCampaignController extends BackendModelStandartController
             Html::tag('label', 'Документ для всех', ['class' => 'control-label'])
             .Html::dropDownList('offer[shared]', $model->offer_kind === CmsCommCampaign::OFFER_SHARED ? $model->offer_id : null, $shared,
                 ['class' => 'form-control', 'prompt' => $shared ? '— выберите —' : 'Нет общих презентаций: создайте её в «Предложениях»'])
-            .Html::tag('div', 'Каждый получатель получит свою личную ссылку: в ленте лида видно, открыл ли он документ.', ['class' => 'hint-block']),
+            .Html::tag('div', 'Каждый получатель получит свою личную ссылку: в ленте сделки видно, открыл ли он документ.', ['class' => 'hint-block']),
             ['class' => 'form-group', 'data-sx-campaign-offer' => CmsCommCampaign::OFFER_SHARED])
             .Html::tag('div',
                 Html::tag('label', 'Шаблон КП', ['class' => 'control-label'])
                 .Html::dropDownList('offer[template]', $model->offer_kind === CmsCommCampaign::OFFER_EACH ? $model->offer_id : null, $templates,
                     ['class' => 'form-control', 'prompt' => $templates ? '— выберите —' : 'Нет шаблонов КП']).
-                Html::tag('div', 'КП каждому лиду создаётся из шаблона в момент отправки его письма; ответственный — отправитель письма.', ['class' => 'hint-block']),
+                Html::tag('div', 'КП каждому получателю создаётся из шаблона в момент отправки его письма; ответственный — отправитель письма.', ['class' => 'hint-block']),
                 ['class' => 'form-group', 'data-sx-campaign-offer' => CmsCommCampaign::OFFER_EACH]);
         // Fields of the other audience or offer kind stay hidden.
         MailingAsset::register(\Yii::$app->view);

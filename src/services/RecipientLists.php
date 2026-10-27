@@ -84,7 +84,7 @@ class RecipientLists
     {
         $type = self::recordType($record);
         if (!$type) {
-            throw new \DomainException('В список можно добавить лид, компанию или клиента.');
+            throw new \DomainException('В список можно добавить сделку, компанию или клиента.');
         }
         if ($checkVisible && !CrmRecords::isVisible(CrmRecords::codeOf($type), (int)$record->primaryKey, $user)) {
             throw new \DomainException('Запись CRM не найдена или вам не видна.');

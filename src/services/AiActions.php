@@ -417,7 +417,7 @@ class AiActions
                 return LetterPurpose::ADVERTISING;
             }
             throw new \DomainException('Укажите purpose — назначение письма: advertising (рассылка-предложение, нужна тема, ссылка «Отписаться»), individual_offer (индивидуальное предложение одному человеку: тема для проверки отказов, Презентация или КП, без строки «Отписаться»), personal (рабочая переписка: клиент недавно писал), '
-                .'service (служебное: действующая сделка или оплаченный счёт).');
+                .'service (служебное: действующая услуга или оплаченный счёт).');
         }
         if (!isset(LetterPurpose::names()[$purpose])) {
             throw new \DomainException('purpose — advertising, individual_offer, personal или service.');

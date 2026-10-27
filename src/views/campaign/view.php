@@ -244,7 +244,7 @@ if ($campaign->offer_id && $source) {
             <iframe class="sx-campaign__letter" sandbox="" title="Предпросмотр письма"
                     srcdoc="<?= Html::encode('<!doctype html><meta charset="utf-8"><body style="margin:12px;background:#fff;color:#1f2430;font-family:Arial,sans-serif">'.$preview['html'].'</body>') ?>"></iframe>
             <?php if ($campaign->offer_kind === CmsCommCampaign::OFFER_EACH) : ?>
-                <p class="sx-import__muted">КП этому лиду создастся из шаблона, когда уйдёт его письмо; кнопка поведёт на его КП.</p>
+                <p class="sx-import__muted">КП для этой сделки создастся из шаблона, когда уйдёт письмо; кнопка поведёт на это КП.</p>
             <?php endif; ?>
             <?= Html::beginForm(Url::current(), 'post', ['class' => 'sx-campaign__inline']) ?>
             <?= Html::hiddenInput('do', 'test') ?>

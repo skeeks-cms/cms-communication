@@ -70,7 +70,7 @@ $choices = ['' => 'Нет отметки'] + CmsCommContactTopic::bases() + [Cms
     <?php endif; ?>
 
     <p class="sx-consent__hint">Согласие и отписка относятся к этому <?= $kind === CmsCommContact::KIND_PHONE ? 'номеру' : 'адресу' ?>, а не к карточке:
-        тот же контакт у лида, компании и клиента — одна отметка. Служебные письма и личные письма менеджера отписка не блокирует.</p>
+        тот же контакт у сделки, компании и клиента — одна отметка. Служебные письма и личные письма менеджера отписка не блокирует.</p>
 
     <div class="sx-consent__section">Стоп-лист</div>
     <?php foreach (CmsCommSuppression::reasons() as $reason => $title) :
@@ -112,6 +112,6 @@ $choices = ['' => 'Нет отметки'] + CmsCommContactTopic::bases() + [Cms
             <button type="submit" class="btn btn-primary">Сохранить</button>
         </div>
     <?php else : ?>
-        <p class="sx-consent__muted">Подписки контакта лида меняет ответственный менеджер или администратор.</p>
+        <p class="sx-consent__muted">Подписки контакта сделки меняет ответственный менеджер или администратор.</p>
     <?php endif; ?>
 </form>

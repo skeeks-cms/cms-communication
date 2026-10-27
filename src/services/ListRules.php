@@ -47,7 +47,7 @@ class ListRules
             'companies' => ['controller' => \skeeks\cms\controllers\AdminCmsCompanyController::class, 'id' => 'admin-cms-company',
                 'title' => 'Компании', 'type' => CrmRecords::COMPANY, 'route' => '/cms/admin-cms-company'],
             'leads' => ['controller' => \skeeks\cms\controllers\AdminCmsLeadController::class, 'id' => 'admin-cms-lead',
-                'title' => 'Лиды', 'type' => CrmRecords::LEAD, 'route' => '/cms/admin-cms-lead/index'],
+                'title' => 'Сделки', 'type' => CrmRecords::LEAD, 'route' => '/cms/admin-cms-lead/index'],
             'clients' => ['controller' => \skeeks\cms\controllers\AdminUserController::class, 'id' => 'admin-user',
                 'title' => 'Клиенты', 'type' => CrmRecords::CLIENT, 'route' => '/cms/admin-user'],
         ];
@@ -221,7 +221,7 @@ class ListRules
     public static function errors(string $section, array $values): array
     {
         if (!isset(self::sections()[$section])) {
-            return ['section' => 'Правило можно сохранить только из разделов «Компании», «Лиды», «Клиенты».'];
+            return ['section' => 'Правило можно сохранить только из разделов «Компании», «Сделки», «Клиенты».'];
         }
         $values = self::clean($values);
         if (!$values) {

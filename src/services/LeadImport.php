@@ -279,7 +279,7 @@ class LeadImport
         }
         if ($reporter) {
             $reporter->setTotal((int)$import->row_count);
-            $reporter->setStage('import', 'Импорт строк в лиды');
+            $reporter->setStage('import', 'Импорт строк в сделки');
         }
 
         try {
@@ -494,7 +494,7 @@ class LeadImport
             $blameable->value = (int)$import->created_by;
         }
         if (!$lead->save()) {
-            throw new \RuntimeException('Не удалось создать лид из строки '.(int)$row->row_num.': '.implode('; ', $lead->getFirstErrors()));
+            throw new \RuntimeException('Не удалось создать сделку из строки '.(int)$row->row_num.': '.implode('; ', $lead->getFirstErrors()));
         }
         if ($import->executor_id) {
             $lead->updateAttributes(['executor_id' => (int)$import->executor_id, 'status' => CmsLead::STATUS_IN_WORK]);
@@ -531,7 +531,7 @@ class LeadImport
         $import->finished_at = time();
         $import->save(false, ['status', 'error', 'finished_at', 'updated_at']);
 
-        $text = 'Создано лидов: '.(int)$import->created_count.', уже были в CRM: '.(int)$import->duplicate_count.', пропущено: '.(int)$import->skipped_count.'.';
+        $text = 'Создано сделок: '.(int)$import->created_count.', уже были в CRM: '.(int)$import->duplicate_count.', пропущено: '.(int)$import->skipped_count.'.';
         // The notification center opens the import card (CmsCommImport in Skeeks::$modelsConfig, see the bootstrap).
         $notify = static function (int $userId, string $name) use ($text, $import) {
             \Yii::$app->notifications->notify($userId, 'import.done', ['name' => $name, 'comment' => $text,
@@ -539,7 +539,7 @@ class LeadImport
         };
         $current = \Yii::$app->has('user') && !\Yii::$app->user->isGuest ? (int)\Yii::$app->user->id : 0;
         if ($status === CmsCommImport::STATUS_DONE && $import->executor_id && (int)$import->created_count > 0 && (int)$import->executor_id !== $current) {
-            $notify((int)$import->executor_id, 'Вам назначены лиды из импорта №'.(int)$import->id);
+            $notify((int)$import->executor_id, 'Вам назначены сделки из импорта №'.(int)$import->id);
         }
         // A run in the background: the employee who started it learns that it is over.
         if ($import->cms_job_run_id && $import->created_by && (int)$import->created_by !== $current
