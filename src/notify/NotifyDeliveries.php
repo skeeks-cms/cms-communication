@@ -256,9 +256,24 @@ class NotifyDeliveries
                 $message->lines[] = mb_strimwidth((string)$row->comment, 0, 300, '…');
             }
         }
-        $message->url = rtrim(\Yii::$app->communication->siteUrl(), '/').'/~n/'.(int)$main->id;
+        $message->url = self::siteUrl().'/~n/'.(int)$main->id;
 
         return $message;
+    }
+
+    /**
+     * The address of the site for links in messages. Delivery runs in a console job
+     * without a request, so without communication.baseUrl it is the default site.
+     */
+    private static function siteUrl(): string
+    {
+        $url = rtrim(\Yii::$app->communication->siteUrl(), '/');
+        if ($url === '') {
+            $site = \skeeks\cms\models\CmsSite::find()->andWhere(['is_default' => 1])->one();
+            $url = rtrim($site ? (string)$site->url : '', '/');
+        }
+
+        return $url;
     }
 
     /**

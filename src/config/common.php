@@ -64,7 +64,7 @@ return [
             // Ready variants of messengers; one shows only while its channel exists on the site.
             'presets' => [
                 'important_max' => ['name' => 'Важное в MAX, остальное в вебе', 'modes' => ['crm' => 'all', 'max' => 'important']],
-                'all_telegram' => ['name' => 'Всё в Telegram', 'modes' => ['crm' => 'all', 'telegram' => 'all']],
+                'important_telegram' => ['name' => 'Важное в Telegram, остальное в вебе', 'modes' => ['crm' => 'all', 'telegram' => 'important']],
             ],
         ],
 
