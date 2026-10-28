@@ -30,6 +30,11 @@ use yii\db\Query;
  * Built for imports: many candidates at once in a few queries. Phones of
  * the CRM are read once per instance (their notation differs, an index does
  * not help), so keep one instance for a whole import.
+ *
+ * With core П2а (skeeks/cms 6.4.9.75) the search is the core duplicate check
+ * `skeeks\cms\crm\CrmMatcher::findMany()` (every deal, any status); this class
+ * keeps its import contract — the first, strongest match of a candidate —
+ * until the import of П5 uses all candidates.
  */
 class CrmDuplicates
 {
@@ -41,9 +46,17 @@ class CrmDuplicates
     /** @var array|null significant digits => [type, id] */
     private ?array $phones = null;
 
+    /** @var \skeeks\cms\crm\CrmMatcher|null the core check, when the core has it */
+    private $matcher = null;
+
     public function __construct(int $siteId)
     {
         $this->siteId = $siteId;
+        if (class_exists(\skeeks\cms\crm\CrmMatcher::class)) {
+            $matcher = clone \skeeks\cms\crm\CrmMatcher::instance();
+            $matcher->leadStatuses = null;
+            $this->matcher = $matcher;
+        }
     }
 
     /** "ООО «Ромашка»  " → "ооо ромашка". */
@@ -68,6 +81,9 @@ class CrmDuplicates
      */
     public function findMany(array $candidates): array
     {
+        if ($this->matcher) {
+            return $this->findManyByMatcher($candidates);
+        }
         $emails = [];
         $inns = [];
         $names = [];
@@ -114,9 +130,42 @@ class CrmDuplicates
         return $result;
     }
 
+    /** The first match by BY order from all candidates of the core check. */
+    private function findManyByMatcher(array $candidates): array
+    {
+        $inputs = [];
+        foreach ($candidates as $key => $candidate) {
+            $inputs[$key] = [
+                'emails' => (array)($candidate['emails'] ?? []),
+                'phones' => (array)($candidate['phones'] ?? []),
+                'inns' => [(string)($candidate['inn'] ?? '')],
+                'name' => (string)($candidate['name'] ?? ''),
+            ];
+        }
+        $result = [];
+        foreach ($this->matcher->findMany($inputs, $this->siteId) as $key => $found) {
+            foreach (self::BY as $by) {
+                foreach ($found as $match) {
+                    foreach ($match['reasons'] as $reason) {
+                        if ($reason['by'] === $by) {
+                            $result[$key] = ['type' => $match['type'], 'id' => (int)$match['id'], 'by' => $by, 'value' => (string)$reason['value']];
+                            continue 4;
+                        }
+                    }
+                }
+            }
+        }
+
+        return $result;
+    }
+
     /** Remembers a lead made during the import: later rows find it like any CRM record. */
     public function remember(int $leadId, array $phones): void
     {
+        if ($this->matcher) {
+            $this->matcher->rememberLeadPhones($leadId, $phones);
+            return;
+        }
         $this->loadPhones();
         foreach ($phones as $phone) {
             $digits = PhoneHelper::searchDigits((string)$phone);

@@ -364,10 +364,26 @@ class LeadImport
                 $outcome['sameFile'] = $earlier;
                 $outcome['match'] = $match;
                 $outcome['reason'] = 'Повтор строки '.$earlier.' этого файла';
-            } elseif ($match) {
-                $outcome['status'] = CmsCommImportRow::STATUS_DUPLICATE;
+            } elseif ($match && ($open = self::openLeadOf($match, (int)$import->cms_site_id)) && !self::canAddTo($import, $open)) {
+                // The open deal is another manager's: not touched, the request becomes a deal in «Неразобранное» (no executor).
                 $outcome['match'] = $match;
-                $outcome['reason'] = self::matchText($match);
+                $outcome['foreign'] = true;
+                $outcome['reason'] = 'Клиент другого менеджера — новая сделка в «Неразобранное»';
+                foreach ($keys as $key) {
+                    $seen[$key] = (int)$row->row_num;
+                }
+            } elseif ($match && $open) {
+                // The same client with an open deal: the request adds to it (a person decides in it whether it is a new need).
+                $outcome['status'] = CmsCommImportRow::STATUS_DUPLICATE;
+                $outcome['match'] = ['type' => CrmRecords::LEAD, 'id' => $open, 'by' => $match['by'], 'value' => $match['value']];
+                $outcome['reason'] = 'Дополнит открытую сделку, '.preg_replace('/^уже есть в CRM, /u', '', self::matchText($match));
+            } elseif ($match && $match['by'] !== 'name') {
+                // A known client without an open deal: a new deal in «Неразобранное», sorting links the client.
+                $outcome['match'] = $match;
+                $outcome['reason'] = 'Клиент '.self::matchText($match);
+                foreach ($keys as $key) {
+                    $seen[$key] = (int)$row->row_num;
+                }
             } else {
                 // The next rows of the file meet this one.
                 foreach ($keys as $key) {
@@ -378,6 +394,37 @@ class LeadImport
         }
 
         return $result;
+    }
+
+    /** The newest open deal of a matched company, contact or deal (CrmMatcher::repeatsOf()), or null. */
+    private static function openLeadOf(array $match, int $siteId): ?int
+    {
+        if ($match['by'] === 'name') {
+            return null;
+        }
+        $types = [CrmRecords::LEAD => \skeeks\cms\crm\CrmMatcher::TYPE_LEAD, CrmRecords::COMPANY => \skeeks\cms\crm\CrmMatcher::TYPE_COMPANY,
+            CrmRecords::CLIENT => \skeeks\cms\crm\CrmMatcher::TYPE_CLIENT];
+        if (!isset($types[$match['type']]) || !class_exists(\skeeks\cms\crm\CrmMatcher::class)) {
+            return null;
+        }
+        $ids = \skeeks\cms\crm\CrmMatcher::instance()->repeatsOf([['type' => $types[$match['type']], 'id' => (int)$match['id'], 'strong' => true]], $siteId);
+
+        return $ids ? (int)$ids[0] : null;
+    }
+
+    /**
+     * Whether the author of the import may add to the open deal: he sees it
+     * (CrmAccess, П2а). An import without an author (a system one) may.
+     */
+    private static function canAddTo(CmsCommImport $import, int $leadId): bool
+    {
+        if (!$import->created_by || !class_exists(\skeeks\cms\crm\CrmAccess::class)) {
+            return true;
+        }
+        $lead = CmsLead::findOne($leadId);
+        $user = \skeeks\cms\models\CmsUser::findOne((int)$import->created_by);
+
+        return $lead && $user && \skeeks\cms\crm\CrmAccess::instance()->canSeeLead($user, $lead);
     }
 
     /** "уже есть в CRM, совпал email info@…" (the record itself is shown beside it). */
@@ -399,7 +446,7 @@ class LeadImport
             $row->status = $outcome['status'];
             $row->reason = $outcome['reason'] !== null ? mb_substr($outcome['reason'], 0, 500) : null;
             if ($outcome['status'] === CmsCommImportRow::STATUS_CREATED) {
-                $lead = self::createLead($import, $row, $data);
+                $lead = self::createLead($import, $row, $data, !empty($outcome['foreign']));
                 $row->cms_lead_id = (int)$lead->id;
                 $seen['lead:'.$lead->id] = (int)$row->row_num;
                 $duplicates->remember((int)$lead->id, $data['phones']);
@@ -408,6 +455,10 @@ class LeadImport
                 if ($outcome['match']) {
                     $row->match_code = CrmRecords::codeOf($outcome['match']['type']);
                     $row->match_id = (int)$outcome['match']['id'];
+                }
+                if ($outcome['sameFile'] === null && $outcome['match'] && $outcome['match']['type'] === CrmRecords::LEAD
+                    && ($open = CmsLead::findOne((int)$outcome['match']['id'])) && in_array($open->status, [CmsLead::STATUS_NEW, CmsLead::STATUS_IN_WORK], true)) {
+                    self::addToOpenLead($import, $row, $data, $open);
                 }
             }
             if ($outcome['status'] !== CmsCommImportRow::STATUS_SKIPPED) {
@@ -451,8 +502,10 @@ class LeadImport
         }
     }
 
-    private static function createLead(CmsCommImport $import, CmsCommImportRow $row, array $data): CmsLead
+    /** @param bool $unsorted another manager's client: no executor of the import, the deal waits in «Неразобранное» */
+    private static function createLead(CmsCommImport $import, CmsCommImportRow $row, array $data, bool $unsorted = false): CmsLead
     {
+        $executorId = $unsorted ? 0 : (int)$import->executor_id;
         $sourceType = defined(CmsLead::class.'::SOURCE_MAILING') ? CmsLead::SOURCE_MAILING : CmsLead::SOURCE_IMPORT;
         $sourceRef = 'comm-import:'.(int)$import->id.':'.(int)$row->row_num;
         $siteId = (int)$import->cms_site_id;
@@ -470,9 +523,12 @@ class LeadImport
         $lines[] = 'Импорт №'.(int)$import->id.($import->file_name ? ' («'.$import->file_name.'»)' : '').', строка '.(int)$row->row_num.'.';
 
         $lead = new CmsLead();
-        // Created without the responsible, so that core does not send a notification per lead;
-        // the responsible gets one notification about the whole import (finish()).
+        // No notification per lead: the responsible gets one about the whole import (finish()).
         $lead->deferManagerNotifications = true;
+        $quiet = property_exists($lead, 'suppressNotifications');
+        if ($quiet) {
+            $lead->suppressNotifications = true;
+        }
         $lead->setAttributes([
             'cms_site_id' => $siteId,
             'name' => mb_substr($name, 0, 255),
@@ -493,11 +549,17 @@ class LeadImport
             // In a job there is no web user: the lead is the importing employee's.
             $blameable->value = (int)$import->created_by;
         }
+        if ($executorId && $quiet) {
+            // Through the normal save: the first stage, the creation entry, the lifecycle (core П2а).
+            $lead->executor_id = $executorId;
+            $lead->status = CmsLead::STATUS_IN_WORK;
+        }
         if (!$lead->save()) {
             throw new \RuntimeException('Не удалось создать сделку из строки '.(int)$row->row_num.': '.implode('; ', $lead->getFirstErrors()));
         }
-        if ($import->executor_id) {
-            $lead->updateAttributes(['executor_id' => (int)$import->executor_id, 'status' => CmsLead::STATUS_IN_WORK]);
+        if ($executorId && !$quiet) {
+            // An older core: assigning in save() would notify per lead.
+            $lead->updateAttributes(['executor_id' => $executorId, 'status' => CmsLead::STATUS_IN_WORK]);
         }
         $person = $data['name'] !== '' ? $data['name'] : null;
         (new CmsLeadService())->syncContacts($lead,
@@ -507,8 +569,22 @@ class LeadImport
         return $lead;
     }
 
+    /** A repeated request of an open deal's client: the row goes into the deal's feed, a new deal is not made. */
+    private static function addToOpenLead(CmsCommImport $import, CmsCommImportRow $row, array $data, CmsLead $lead): void
+    {
+        if (!method_exists($lead, 'addSystemActivity')) {
+            return;
+        }
+        $lines = [];
+        foreach ($data['values'] as $title => $value) {
+            $lines[] = \yii\helpers\Html::encode($title.': '.$value);
+        }
+        $lead->addSystemActivity('Повторная заявка из импорта №'.(int)$import->id.($import->file_name ? ' «'.\yii\helpers\Html::encode($import->file_name).'»' : '')
+            .', строка '.(int)$row->row_num.($lines ? ':<br>'.implode('<br>', $lines) : '.'), $import->created_by ? (int)$import->created_by : null);
+    }
+
     /** The topic and basis of the file on every contact of the row. */
-    private static function applyConsent(CmsCommImport $import, array $data): void
+    public static function applyConsent(CmsCommImport $import, array $data): void
     {
         if (!$import->cms_comm_topic_id || !$import->consent_basis) {
             return;
@@ -531,7 +607,7 @@ class LeadImport
         $import->finished_at = time();
         $import->save(false, ['status', 'error', 'finished_at', 'updated_at']);
 
-        $text = 'Создано сделок: '.(int)$import->created_count.', уже были в CRM: '.(int)$import->duplicate_count.', пропущено: '.(int)$import->skipped_count.'.';
+        $text = 'Создано сделок: '.(int)$import->created_count.', дополнено открытых: '.(int)$import->duplicate_count.', пропущено: '.(int)$import->skipped_count.'.';
         // The notification center opens the import card (CmsCommImport in Skeeks::$modelsConfig, see the bootstrap).
         $notify = static function (int $userId, string $name) use ($text, $import) {
             \Yii::$app->notifications->notify($userId, 'import.done', ['name' => $name, 'comment' => $text,

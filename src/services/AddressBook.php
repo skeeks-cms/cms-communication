@@ -100,6 +100,14 @@ class AddressBook
             $clients->forManager($visibleTo);
         }
 
-        return array_merge($leads->all(), $companies->distinct()->all(), $clients->distinct()->all());
+        $leads = $leads->all();
+        if (count($leads) > 1 && !$visibleTo) {
+            // A client may have several open deals (core П2а): a letter is not guessed into all of
+            // them. It goes to the company and the person; a reply in the same conversation follows
+            // the deal of that conversation (MessageLinker::inheritFromConversation()).
+            $leads = [];
+        }
+
+        return array_merge($leads, $companies->distinct()->all(), $clients->distinct()->all());
     }
 }

@@ -13,6 +13,9 @@ if (!is_string($secretKey) || $secretKey === '') {
 }
 
 return [
+    // Core П2а: letters and chats of a sorted request go to the deal or service where the work continues.
+    'on crm.leadTriaged' => [\skeeks\cms\communication\services\TriageLinks::class, 'onTriaged'],
+
     'components' => [
         'communication' => [
             'class' => \skeeks\cms\communication\CommunicationComponent::class,
