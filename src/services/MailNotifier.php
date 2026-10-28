@@ -10,6 +10,7 @@ namespace skeeks\cms\communication\services;
 use skeeks\cms\communication\models\CmsCommAccount;
 use skeeks\cms\communication\models\CmsCommAccountAccess;
 use skeeks\cms\communication\models\CmsCommMessage;
+use skeeks\cms\communication\models\CmsCommLink;
 use skeeks\cms\communication\models\CmsCommMessageMailbox;
 use skeeks\cms\models\CmsUser;
 use skeeks\cms\models\CmsWebNotify;
@@ -116,6 +117,16 @@ class MailNotifier
             }
         }
 
+        // П2а+: the main responsible of the client of a letter learns about it too (no mailbox
+        // access needed); only a letter he can open, checked as "Только связанные" below.
+        foreach (self::mainResponsibleOf($ids) as $messageId => $mainIds) {
+            foreach ($mainIds as $userId) {
+                if (!isset($read[$userId][$messageId]) && !isset($result[$userId][$messageId])) {
+                    $linkedChecks[$userId][$messageId] = true;
+                }
+            }
+        }
+
         // "Только связанные": the letter must be visible to the employee, as in the section itself.
         foreach ($linkedChecks as $userId => $candidates) {
             $candidates = array_diff_key($candidates, $result[$userId] ?? []);
@@ -137,6 +148,33 @@ class MailNotifier
         }
 
         return array_map(static fn($set) => array_map('intval', array_keys($set)), $result);
+    }
+
+    /**
+     * The main responsible employees of the companies and people the letters
+     * are linked to (cms_comm_link), active employees only.
+     *
+     * @param int[] $messageIds
+     * @return array letter id => main responsible ids
+     */
+    public static function mainResponsibleOf(array $messageIds): array
+    {
+        $access = \skeeks\cms\crm\CrmAccess::class;
+        if (!$messageIds || !class_exists($access) || !method_exists($access, 'mainResponsibleId')) {
+            return [];
+        }
+        $result = [];
+        foreach (CmsCommLink::find()->select(['cms_comm_message_id', 'model_code', 'model_id'])
+            ->andWhere(['cms_comm_message_id' => $messageIds, 'model_code' => [\skeeks\cms\models\CmsCompany::class, CmsUser::class]])
+            ->asArray()->all() as $link) {
+            $code = $link['model_code'] === \skeeks\cms\models\CmsCompany::class ? 'company' : 'client';
+            $mainId = $access::instance()->mainResponsibleId($code, (int)$link['model_id']);
+            if ($mainId && CmsUser::find()->andWhere(['id' => $mainId, 'is_active' => 1, 'is_worker' => 1])->exists()) {
+                $result[(int)$link['cms_comm_message_id']][$mainId] = $mainId;
+            }
+        }
+
+        return array_map('array_values', $result);
     }
 
     /**

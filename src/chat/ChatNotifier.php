@@ -49,8 +49,11 @@ class ChatNotifier implements BotEventHandlerInterface
     {
         if ($conversation->assigned_user_id) {
             $active = CmsUser::find()->andWhere(['id' => (int)$conversation->assigned_user_id, 'is_active' => 1])->exists();
+            $assignee = $active ? [(int)$conversation->assigned_user_id] : [];
+            // П2а+: the main responsible of the linked client learns about the message too (if he can open the chat).
+            $main = array_values(array_diff(self::mainResponsible($conversation), $assignee));
 
-            return $active ? [(int)$conversation->assigned_user_id] : [];
+            return array_values(array_unique(array_merge($assignee, $main ? self::readers($main, $conversation) : [])));
         }
         // The people of the linked records: managers of a company or a client, the executor of a lead.
         $ids = self::recordPeople($conversation);
@@ -58,6 +61,16 @@ class ChatNotifier implements BotEventHandlerInterface
             $ids = array_merge($ids, CmsCommAccountAccess::find()->select('cms_user_id')
                 ->andWhere(['cms_comm_account_id' => $accountId, 'read_level' => CmsCommAccountAccess::READ_ALL, 'is_notify' => 1])->column());
         }
+        return self::readers($ids, $conversation);
+    }
+
+    /**
+     * Active employees of the ids who can open the chat.
+     *
+     * @return int[]
+     */
+    private static function readers(array $ids, CmsCommConversation $conversation): array
+    {
         $users = CmsUser::find()->andWhere(['id' => array_unique(array_map('intval', $ids)) ?: [0], 'is_active' => 1, 'is_worker' => 1])->all();
 
         // Only those who can open the chat (forManager() of linked records needs the user component in a job).
@@ -70,6 +83,23 @@ class ChatNotifier implements BotEventHandlerInterface
             }
             return $result;
         });
+    }
+
+    /** @return int[] the main responsible of the companies and people the chat is linked to */
+    private static function mainResponsible(CmsCommConversation $conversation): array
+    {
+        $access = \skeeks\cms\crm\CrmAccess::class;
+        if (!class_exists($access) || !method_exists($access, 'mainResponsibleId')) {
+            return [];
+        }
+        $ids = [];
+        foreach (ChatFeed::links($conversation) as $link) {
+            if ($link->model_code === \skeeks\cms\models\CmsCompany::class || $link->model_code === CmsUser::class) {
+                $ids[] = (int)$access::instance()->mainResponsibleId($link->model_code === CmsUser::class ? 'client' : 'company', (int)$link->model_id);
+            }
+        }
+
+        return array_values(array_filter(array_unique($ids)));
     }
 
     /** @return int[] */
