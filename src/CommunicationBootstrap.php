@@ -86,20 +86,20 @@ class CommunicationBootstrap implements BootstrapInterface
             $definition['actionsMap']['comm-import'] = [
                 'class' => \skeeks\cms\backend\ViewBackendAction::class,
                 'name' => 'Импорт',
-                'icon' => 'fas fa-file-import',
+                'icon' => 'fa fa-upload',
                 'priority' => 28,
                 'callback' => [\skeeks\cms\communication\controllers\AdminCmsCommImportController::class, 'renderLeadsTab'],
             ];
             \Yii::$container->set($leads, $definition);
         }
-        // "Импорт в список" — a tab of "Компании": a cold base becomes companies and contacts of a list, without deals.
+        // "Импорт" — a tab of "Компании": a cold base becomes companies and contacts of a list, without deals.
         $companies = \skeeks\cms\controllers\AdminCmsCompanyController::class;
         if (class_exists($companies)) {
             $definition = \Yii::$container->getDefinitions()[$companies] ?? [];
             $definition['actionsMap']['comm-import'] = [
                 'class' => \skeeks\cms\backend\ViewBackendAction::class,
-                'name' => 'Импорт в список',
-                'icon' => 'fas fa-file-import',
+                'name' => 'Импорт',
+                'icon' => 'fa fa-upload',
                 'priority' => 900,
                 'accessCallback' => [\skeeks\cms\communication\helpers\ListUi::class, 'canImportAudience'],
                 'callback' => [\skeeks\cms\communication\controllers\AdminCmsCommImportController::class, 'renderCompaniesTab'],

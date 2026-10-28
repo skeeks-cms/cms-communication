@@ -36,7 +36,7 @@ use yii\web\UploadedFile;
  * Imports of a CSV file or a pasted table in two modes chosen at the upload:
  * - a base into a list of recipients (CmsCommImport::MODE_AUDIENCE,
  *   services\AudienceImport): companies and contacts, no deals — the tab
- *   «Импорт в список» of «Компании», «Импорт в список» and «Добавить адреса»
+ *   «Импорт» of «Компании», «Импорт в список» and «Добавить адреса»
  *   of a list;
  * - real requests into deals (MODE_LEADS, services\LeadImport): a deal in
  *   «Неразобранное» or an addition to an open deal — the tab «Импорт» of
