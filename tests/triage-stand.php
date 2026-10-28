@@ -67,7 +67,8 @@ try {
     $uniq = (string)mt_rand(100000, 999999);
     $company = new CmsCompany(['name' => 'Рассылка '.$uniq]);
     $check($company->save(), 'company saved');
-    $campaign = new CmsCommCampaign(['name' => 'Тест П2а '.$uniq, 'cms_site_id' => $siteId]);
+    // «Куда сделка: Неразобранное» (П2д): the campaign decides; by default the deal is the sender's.
+    $campaign = new CmsCommCampaign(['name' => 'Тест П2а '.$uniq, 'cms_site_id' => $siteId, 'lead_to' => CmsCommCampaign::LEAD_TO_UNSORTED]);
     $campaign->id = 900000000 + (int)$uniq;
     $recipient = new CmsCommCampaignRecipient([
         'cms_comm_campaign_id' => $campaign->id,

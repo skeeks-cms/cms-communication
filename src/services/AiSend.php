@@ -11,6 +11,8 @@ use skeeks\cms\communication\components\AiApiSettings;
 use skeeks\cms\communication\forms\ComposeForm;
 use skeeks\cms\communication\models\CmsCommApiSend;
 use skeeks\cms\communication\models\CmsCommContact;
+use skeeks\cms\communication\models\CmsCommCampaign;
+use skeeks\cms\communication\models\CmsCommCampaignRecipient;
 use skeeks\cms\communication\models\CmsCommDraft;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\models\CmsCommSuppression;
@@ -318,13 +320,13 @@ class AiSend
     /**
      * @return array state (see status()), repeated, problems when refused
      */
-    public function send(int $draftId, string $checkToken, string $key, bool $confirm, bool $testMode = false): array
+    public function send(int $draftId, string $checkToken, string $key, bool $confirm, bool $testMode = false, ?int $campaignId = null): array
     {
         $key = trim($key);
         if (!preg_match('/^[A-Za-z0-9._:\-]{8,128}$/', $key)) {
             throw new \DomainException('idempotency_key обязателен: 8–128 символов (латиница, цифры, . _ : -), новый для каждого письма. Сохраните его до ответа: по нему узнают результат.');
         }
-        $hash = hash('sha256', $draftId.'|'.$checkToken);
+        $hash = hash('sha256', $draftId.'|'.$checkToken.($campaignId ? '|campaign:'.$campaignId : ''));
         $existing = $this->byKey($key);
         if ($existing) {
             if ($existing->request_hash !== $hash) {
@@ -348,6 +350,14 @@ class AiSend
                 'message' => 'Черновик, отправитель, получатель, текст или предложение изменились после проверки (или check_token от другого черновика).',
             ]], 'next' => 'Ничего не отправлено. Повторите cms_comm_draft_check, покажите изменения человеку и отправьте с новым check_token.'];
         }
+        $campaign = null;
+        if ($campaignId) {
+            [$campaign, $refusal] = $this->flowCampaign($campaignId, $prepared['record']);
+            if ($refusal) {
+                return ['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => [['reason' => AiActions::REASON_INVALID, 'message' => $refusal]],
+                    'next' => 'Ничего не отправлено.'];
+            }
+        }
         if (!$confirm) {
             return ['sent' => false, 'state' => 'not_sent', 'requires_confirmation' => true, 'repeated' => false,
                 'next' => 'Проверка пройдена, ничего не отправлено. Отправка — тот же вызов с confirm=true после явного согласия человека.'];
@@ -355,7 +365,7 @@ class AiSend
 
         $row = null;
         try {
-            CmsCommApiSend::getDb()->transaction(function () use ($prepared, $key, $hash, $draftId, $testMode, &$row) {
+            CmsCommApiSend::getDb()->transaction(function () use ($prepared, $key, $hash, $draftId, $testMode, $campaign, &$row) {
                 $row = new CmsCommApiSend([
                     'cms_site_id' => $this->siteId,
                     'cms_user_id' => (int)$this->user->id,
@@ -374,6 +384,9 @@ class AiSend
                 $message = (new MailComposeService($this->user, $this->siteId))->queue($prepared['form']);
                 $row->cms_comm_message_id = (int)$message->id;
                 $row->save(false, ['cms_comm_message_id', 'updated_at']);
+                if ($campaign) {
+                    $this->joinCampaign($campaign, $message, $prepared);
+                }
                 MailDrafts::delete($prepared['draft']);
             });
         } catch (SendException $e) {
@@ -390,6 +403,66 @@ class AiSend
         }
 
         return ['repeated' => false] + $this->status($row);
+    }
+
+    /**
+     * The campaign of a letter of the flow (П2д, cms_comm_draft_send with
+     * cms_comm_campaign_id): of this site, not finished, the record not yet
+     * a recipient of it, not a protected client of another main responsible.
+     *
+     * @return array [CmsCommCampaign|null, string|null refusal]
+     */
+    private function flowCampaign(int $campaignId, $record): array
+    {
+        $campaign = CmsCommCampaign::find()->andWhere(['id' => $campaignId, 'cms_site_id' => $this->siteId])->one();
+        if (!$campaign) {
+            return [null, 'Кампания №'.$campaignId.' не найдена.'];
+        }
+        if (in_array($campaign->status, [CmsCommCampaign::STATUS_DONE, CmsCommCampaign::STATUS_CANCELLED], true)) {
+            return [null, 'Кампания «'.$campaign->name.'» завершена: укажите действующую.'];
+        }
+        $type = $record ? RecipientLists::recordType($record) : null;
+        if (!$type) {
+            return [null, 'Письмо кампании — только клиенту из CRM (компания, контакт или сделка).'];
+        }
+        if (CmsCommCampaignRecipient::find()->andWhere(['cms_comm_campaign_id' => (int)$campaign->id, 'record_type' => $type, 'record_id' => (int)$record->primaryKey])->exists()) {
+            return [null, 'Этот клиент уже получал письмо кампании «'.$campaign->name.'»: следующее письмо — ответом в ту же переписку.'];
+        }
+        $protection = \skeeks\cms\crm\CrmProtection::class;
+        if ($campaign->hasFlow() && class_exists($protection) && $protection::ready()) {
+            $client = $record instanceof \skeeks\cms\models\CmsLead
+                ? ($record->cms_company_id ? $record->company : ($record->cms_user_id ? $record->client : null)) : $record;
+            $code = $client instanceof \skeeks\cms\models\CmsCompany ? 'company' : ($client instanceof \skeeks\cms\models\CmsUser ? 'client' : null);
+            if ($code && $protection::state($code, (int)$client->id) !== $protection::FREE) {
+                $mainId = \skeeks\cms\crm\CrmAccess::instance()->mainResponsibleId($code, (int)$client->id);
+                if ($mainId && $mainId !== (int)$this->user->id) {
+                    return [null, 'Клиент под защитой у другого менеджера: в поток его не берём, пишет только основной ответственный.'];
+                }
+            }
+        }
+
+        return [$campaign, null];
+    }
+
+    /** The letter joins the campaign: its recipient row (sent), so a reply, a view and a visit follow the campaign. */
+    private function joinCampaign(CmsCommCampaign $campaign, CmsCommMessage $message, array $prepared): void
+    {
+        $record = $prepared['record'];
+        $message->updateAttributes(['cms_comm_campaign_id' => (int)$campaign->id]);
+        $to = array_values(array_filter(array_map('trim', explode(',', (string)$prepared['form']->to))));
+        $recipient = new CmsCommCampaignRecipient([
+            'cms_comm_campaign_id' => (int)$campaign->id,
+            'record_type' => RecipientLists::recordType($record),
+            'record_id' => (int)$record->primaryKey,
+            'address' => mb_substr((string)($to[0] ?? ''), 0, 255),
+            'name' => mb_substr(CrmRecords::name($record), 0, 255) ?: null,
+            'sender_user_id' => (int)$this->user->id,
+            'cms_comm_account_id' => $prepared['form']->cms_comm_account_id ? (int)$prepared['form']->cms_comm_account_id : null,
+            'cms_comm_message_id' => (int)$message->id,
+            'status' => CmsCommCampaignRecipient::STATUS_SENT,
+            'sent_at' => time(),
+        ]);
+        $recipient->save(false);
     }
 
     private function byKey(string $key): ?CmsCommApiSend

@@ -212,9 +212,43 @@ class Campaigns
         $pending = array_filter($recipients, static fn($r) => $r->status === CmsCommCampaignRecipient::STATUS_PENDING);
         if ($pending) {
             self::channel($campaign)->assignSenders($campaign, array_values($pending), $user);
+            $this->skipProtected($campaign, array_values($pending));
         }
 
         return $recipients;
+    }
+
+    /**
+     * The flow (П2д) skips a protected client of another main responsible
+     * (a recent payment, an active service, «Всегда по согласованию», core
+     * CrmProtection): only its main responsible writes to it.
+     *
+     * @param CmsCommCampaignRecipient[] $recipients
+     */
+    private function skipProtected(CmsCommCampaign $campaign, array $recipients): void
+    {
+        $protection = \skeeks\cms\crm\CrmProtection::class;
+        $access = \skeeks\cms\crm\CrmAccess::class;
+        if (!$campaign->hasFlow() || !class_exists($protection) || !class_exists($access) || !$protection::ready()) {
+            return;
+        }
+        foreach ($recipients as $recipient) {
+            if ($recipient->status !== CmsCommCampaignRecipient::STATUS_PENDING) {
+                continue;
+            }
+            $record = $recipient->getRecord();
+            if ($record instanceof CmsLead) {
+                $record = $record->cms_company_id ? $record->company : ($record->cms_user_id ? $record->client : null);
+            }
+            $code = $record instanceof CmsCompany ? 'company' : ($record instanceof CmsUser ? 'client' : null);
+            if (!$code || $protection::state($code, (int)$record->id) === $protection::FREE) {
+                continue;
+            }
+            $mainId = $access::instance()->mainResponsibleId($code, (int)$record->id);
+            if ($mainId && $mainId !== (int)$recipient->sender_user_id) {
+                $this->excludeRow($recipient, CmsCommCampaignRecipient::REASON_PROTECTED);
+            }
+        }
     }
 
     /** @return CmsCommCampaignRecipient[] "type:id" => recipient: the members of the lists, the leads of the filter or of the import */
@@ -1369,20 +1403,56 @@ class Campaigns
     /**
      * Does the campaign of this letter want the task "клиент открыл
      * предложение": true or false by its setting, null when the letter is
-     * not a campaign letter (the package's own setting decides).
+     * not a campaign letter (the package's own setting decides). The flow
+     * (П2д): no task when the campaign makes a deal on this event ($event —
+     * 'view' of the presentation or offer, 'visit' by a link).
      */
-    public static function taskOnOpen(?int $messageId): ?bool
+    public static function taskOnOpen(?int $messageId, string $event = 'view'): ?bool
     {
         if (!$messageId) {
             return null;
         }
         $campaignId = CmsCommMessage::find()->select('cms_comm_campaign_id')->andWhere(['id' => $messageId])->scalar();
-        if (!$campaignId) {
+        $campaign = $campaignId ? CmsCommCampaign::findOne((int)$campaignId) : null;
+        if (!$campaign) {
             return null;
         }
-        $setting = CmsCommCampaign::find()->select('task_on_open')->andWhere(['id' => (int)$campaignId])->scalar();
+        $deal = $event === 'visit' ? 'lead_on_visit' : 'lead_on_view';
+        if ($campaign->hasAttribute($deal) && $campaign->{$deal}) {
+            return false;
+        }
 
-        return $setting === false || $setting === null ? null : (bool)$setting;
+        return (bool)$campaign->task_on_open;
+    }
+
+    /**
+     * The responsible of a NEW company the flow of a campaign creates (a bot
+     * through MCP/API, П2д): its «Ответственный за новые компании» — none
+     * (the common pool), the sender ($senderId, the API user), an employee.
+     * An existing company is never changed.
+     *
+     * @throws \DomainException an unknown campaign
+     */
+    public static function newCardOwnerId(int $campaignId, int $senderId): ?int
+    {
+        $campaign = CmsCommCampaign::findOne($campaignId);
+        if (!$campaign || ($campaign->cms_site_id && \Yii::$app->skeeks->site && (int)$campaign->cms_site_id !== (int)\Yii::$app->skeeks->site->id)) {
+            throw new \DomainException('Кампания №'.$campaignId.' не найдена.');
+        }
+        if (!$campaign->hasFlow() || $campaign->new_card_owner === CmsCommCampaign::OWNER_NONE) {
+            return null;
+        }
+
+        return $campaign->new_card_owner === CmsCommCampaign::OWNER_SENDER ? ($senderId ?: null) : ((int)$campaign->new_card_worker_id ?: null);
+    }
+
+    /** The first counted visit by a link of a campaign letter (LinkVisits): a deal when the campaign says so (`lead_on_visit`). */
+    public static function onLinkVisit(int $messageId, ?int $now = null): ?CmsLead
+    {
+        $recipient = $messageId ? CmsCommCampaignRecipient::find()->andWhere(['cms_comm_message_id' => $messageId])->one() : null;
+        $campaign = $recipient ? $recipient->campaign : null;
+
+        return $campaign ? (new CampaignTasks())->onVisit($campaign, $recipient, $now) : null;
     }
 
     /**

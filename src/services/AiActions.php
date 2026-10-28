@@ -521,6 +521,16 @@ class AiActions
         if (array_key_exists('lead_on_view', $args) && $campaign->hasAttribute('lead_on_view')) {
             $campaign->lead_on_view = (int)(bool)$args['lead_on_view'];
         }
+        // The flow (П2д): new companies, what makes a deal, who gets it; absent — «Исходящие продажи» of the CRM settings.
+        if ($campaign->hasFlow()) {
+            foreach (['lead_on_visit' => 'bool', 'new_card_owner' => 'string', 'new_card_worker_id' => 'int', 'lead_to' => 'string',
+                         'lead_worker_id' => 'int', 'lead_pipeline_id' => 'int'] as $attribute => $kind) {
+                if (array_key_exists($attribute, $args)) {
+                    $value = $args[$attribute];
+                    $campaign->{$attribute} = $kind === 'bool' ? (int)(bool)$value : ($kind === 'int' ? ((int)$value ?: null) : (string)$value);
+                }
+            }
+        }
         if (array_key_exists('task_on_reply', $args)) {
             $campaign->task_on_reply = (int)(bool)$args['task_on_reply'];
         }
@@ -897,6 +907,18 @@ class AiActions
                 : ['kind' => (string)$campaign->offer_kind, 'type' => (string)$campaign->offer_type, 'id' => (int)$campaign->offer_id],
             'sender' => $campaign->sender_mode === CmsCommCampaign::SENDER_ACCOUNT ? ['cms_comm_account_id' => (int)$campaign->cms_comm_account_id] : 'responsible',
             'recipients' => $campaign->id ? (int)CmsCommCampaignRecipient::find()->andWhere(['cms_comm_campaign_id' => (int)$campaign->id])->count() : 0,
+            // The flow (П2д): what this campaign does with new companies and deals.
+            'flow' => $campaign->hasFlow() ? [
+                'new_card_owner' => (string)$campaign->new_card_owner,
+                'new_card_worker_id' => $campaign->new_card_worker_id ? (int)$campaign->new_card_worker_id : null,
+                'lead_on_reply' => (bool)$campaign->task_on_reply,
+                'lead_on_view' => (bool)$campaign->lead_on_view,
+                'lead_on_visit' => (bool)$campaign->lead_on_visit,
+                'task_on_view' => (bool)$campaign->task_on_open,
+                'lead_to' => (string)$campaign->lead_to,
+                'lead_worker_id' => $campaign->lead_worker_id ? (int)$campaign->lead_worker_id : null,
+                'lead_pipeline_id' => $campaign->lead_pipeline_id ? (int)$campaign->lead_pipeline_id : null,
+            ] : null,
             'url' => $campaign->id ? self::url('/cmsCommunication/admin-cms-comm-campaign/view', ['pk' => (int)$campaign->id]) : null,
             'can_launch_here' => false,
         ];

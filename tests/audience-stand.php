@@ -240,7 +240,7 @@ try {
     $check($mineRow && \skeeks\cms\models\CmsUser2manager::find()->andWhere(['client_id' => (int)$mineRow->record_id, 'worker_id' => (int)$manager->id])->exists(),
         '«Я»: the card is the manager\'s');
 
-    // П2д: a reply makes a deal of the sender — his own mailbox, a client with a main responsible; else «Неразобранное».
+    // П2д: the flow of a campaign makes deals (ARCHITECTURE.md п. 13, «Ручное предложение и поток»).
     $sentLetter = CmsCommMessage::find()->andWhere(['direction' => CmsCommMessage::DIRECTION_OUT, 'cms_site_id' => $siteId])->orderBy(['id' => SORT_DESC])->one();
     $replyLetter = CmsCommMessage::find()->andWhere(['direction' => CmsCommMessage::DIRECTION_IN, 'cms_site_id' => $siteId])->orderBy(['id' => SORT_DESC])->one();
     $check($sentLetter && $replyLetter, 'the stand needs an incoming and an outgoing letter');
@@ -268,43 +268,118 @@ try {
         return $recipient;
     };
     $tasks = new \skeeks\cms\communication\services\CampaignTasks();
+    $campaigns = \skeeks\cms\communication\services\Campaigns::class;
+    $access = \skeeks\cms\crm\CrmAccess::instance();
+    $check($campaign->hasFlow() && $campaign->lead_to === 'sender' && (int)$campaign->lead_on_view === 1 && $campaign->new_card_owner === 'none',
+        'the flow defaults of a new campaign: deals to the sender, a view makes a deal, new companies to the pool');
+    $sales = \skeeks\cms\crm\OutboundSales::class;
+    $pipeline = class_exists($sales) ? $sales::pipeline($siteId) : null;
+    $stageId = static function (string $role) use ($pipeline, $sales) {
+        $stage = $pipeline && defined($sales.'::ROLE_'.strtoupper($role)) ? $sales::stage($pipeline, constant($sales.'::ROLE_'.strtoupper($role))) : null;
+
+        return $stage ? (int)$stage->id : null;
+    };
+
+    // A reply makes a deal of the sender in «Исходящие продажи» at «Ответил».
     $client = $makeCompany('Свой клиент П2д '.$u, $mail('p2d-own'), (int)$manager->id);
     $sentOwn = $replyOf($client, $own);
     $lead = $tasks->onReply($campaign, $sentOwn, $replyLetter);
     $check($lead instanceof CmsLead && (int)$lead->executor_id === (int)$manager->id && $lead->status === CmsLead::STATUS_IN_WORK,
-        'a reply to the own mailbox: the deal is the sender\'s at once');
+        'a reply: the deal is the sender\'s at once');
+    if ($pipeline) {
+        $check((int)$lead->cms_lead_pipeline_id === (int)$pipeline->id && (!$stageId('replied') || (int)$lead->cms_lead_stage_id === $stageId('replied')),
+            'the deal is in «Исходящие продажи» at «Ответил»');
+    }
+    // The campaign decides, not the mailbox: a shared one goes to the sender too.
     $client2 = $makeCompany('Общий ящик П2д '.$u, $mail('p2d-shared'), (int)$manager->id);
     $lead2 = $tasks->onReply($campaign, $replyOf($client2, $shared), $replyLetter);
-    $check($lead2 instanceof CmsLead && !$lead2->executor_id && $lead2->status === CmsLead::STATUS_NEW, 'a shared mailbox: «Неразобранное»');
+    $check($lead2 instanceof CmsLead && (int)$lead2->executor_id === (int)$manager->id, 'a shared mailbox: the deal still goes where the campaign says');
+    // A company of the pool: the sender gets the deal and becomes its main responsible («Взять в работу»).
     $poolCompany = new CmsCompany(['name' => 'Пул П2д '.$u]);
     $poolCompany->save(false);
-    $poolRecipient = $replyOf($poolCompany, $own);
-    $lead3 = $tasks->onReply($campaign, $poolRecipient, $replyLetter);
-    $check($lead3 instanceof CmsLead && !$lead3->executor_id, 'a company of the pool: «Неразобранное»');
+    $lead3 = $tasks->onReply($campaign, $replyOf($poolCompany, $own), $replyLetter);
+    $check($lead3 instanceof CmsLead && (int)$lead3->executor_id === (int)$manager->id && $access->mainResponsibleId('company', (int)$poolCompany->id) === (int)$manager->id,
+        'a company of the pool: the deal is the sender\'s, he becomes the main responsible');
+    // A protected client of another main responsible: its main responsible gets the deal.
+    $protection = \skeeks\cms\crm\CrmProtection::class;
+    if (class_exists($protection) && $protection::ready()) {
+        $guarded = $makeCompany('Защита П2д '.$u, $mail('p2d-guarded'), (int)$admin->id);
+        (new $protection())->setAlways('company', (int)$guarded->id, true);
+        $lead4 = $tasks->onReply($campaign, $replyOf($guarded, $own), $replyLetter);
+        $check($lead4 instanceof CmsLead && (int)$lead4->executor_id === (int)$admin->id, 'a protected client: the deal is its main responsible\'s');
+    }
+    // «Неразобранное» by the campaign.
+    $unsorted = new \skeeks\cms\communication\models\CmsCommCampaign(['name' => 'Тест П2д разбор '.$u, 'cms_site_id' => $siteId, 'lead_to' => 'unsorted']);
+    $unsorted->save(false);
+    $client5 = $makeCompany('Разбор П2д '.$u, $mail('p2d-unsorted'), (int)$manager->id);
+    $r5 = new CmsCommCampaignRecipient(['cms_comm_campaign_id' => (int)$unsorted->id, 'record_type' => 'company', 'record_id' => (int)$client5->id,
+        'address' => $mail('p2d-unsorted'), 'sender_user_id' => (int)$manager->id, 'cms_comm_account_id' => (int)$own->id, 'status' => CmsCommCampaignRecipient::STATUS_SENT]);
+    $r5->save(false);
+    $lead5 = $tasks->onReply($unsorted, $r5, $replyLetter);
+    $check($lead5 instanceof CmsLead && !$lead5->executor_id && $lead5->status === CmsLead::STATUS_NEW, '«Куда сделка: Неразобранное»');
 
-    // A request from the letter continues the open deal; a view makes a deal only by the campaign setting.
+    // A request from the letter continues the open deal.
     $task = $tasks->onRequest($campaign, $sentOwn, 'Вопрос: сколько стоит?');
     $check($task instanceof \skeeks\cms\models\CmsTask && (int)$task->cms_lead_id === (int)$lead->id && strpos($task->name, 'Связаться:') === 0,
         'a request of a client with an open deal: a task in it');
+
+    // A view makes a deal by default (at «Смотрел»), then no call task; a second view adds to the open deal.
     $viewCompany = $makeCompany('Просмотр П2д '.$u, $mail('p2d-view'), (int)$manager->id);
     $viewer = $replyOf($viewCompany, $own);
-    $check($tasks->onView($campaign, $viewer) === null, 'a view makes no deal by default');
-    $campaign->lead_on_view = 1;
     $viewLead = $tasks->onView($campaign, $viewer);
-    $check($viewLead instanceof CmsLead && (int)$viewLead->executor_id === (int)$manager->id && strpos($viewLead->name, 'Смотрел Презентацию') === 0,
-        '«Создавать сделку при просмотре»: a deal of the sender');
+    $check($viewLead instanceof CmsLead && (int)$viewLead->executor_id === (int)$manager->id && strpos($viewLead->name, 'Смотрел Презентацию') === 0
+        && (!$stageId('viewed') || (int)$viewLead->cms_lead_stage_id === $stageId('viewed')), 'a view makes a deal of the sender at «Смотрел»');
     $check($tasks->onView($campaign, $viewer) instanceof CmsLead && CmsLead::find()->andWhere(['cms_company_id' => (int)$viewCompany->id])->count() == 1,
         'a second view adds to the open deal');
+    $sentLetter->updateAttributes(['cms_comm_campaign_id' => (int)$campaign->id]);
+    $check($campaigns::taskOnOpen((int)$sentLetter->id) === false && $campaigns::taskOnOpen((int)$sentLetter->id, 'visit') === true,
+        'no call task when the view makes a deal; a visit without a deal — the task');
+    $campaign->lead_on_view = 0;
+    $campaign->save(false, ['lead_on_view']);
+    $quiet = $replyOf($makeCompany('Без сделки П2д '.$u, $mail('p2d-quiet'), (int)$manager->id), $own);
+    $check($tasks->onView($campaign, $quiet) === null && $campaigns::taskOnOpen((int)$sentLetter->id) === true,
+        'a view without «сделка при просмотре»: no deal, the call task instead');
+    $check($tasks->onVisit($campaign, $quiet) === null, 'a visit makes no deal by default');
+    $campaign->lead_on_visit = 1;
+    $visitLead = $tasks->onVisit($campaign, $quiet);
+    $check($visitLead instanceof CmsLead && strpos($visitLead->name, 'Перешёл на сайт') === 0, '«сделка при переходе по ссылке»');
+
+    // The responsible of new companies of the flow (a bot creates them with the campaign).
+    $check($campaigns::newCardOwnerId((int)$campaign->id, (int)$manager->id) === null, 'new companies: the pool by default');
+    $campaign->new_card_owner = 'sender';
+    $campaign->save(false, ['new_card_owner']);
+    $check($campaigns::newCardOwnerId((int)$campaign->id, (int)$manager->id) === (int)$manager->id, 'new companies: the sender');
+    $campaign->new_card_owner = 'worker';
+    $campaign->new_card_worker_id = (int)$admin->id;
+    $campaign->save(false, ['new_card_owner', 'new_card_worker_id']);
+    $check($campaigns::newCardOwnerId((int)$campaign->id, (int)$manager->id) === (int)$admin->id, 'new companies: the chosen employee');
+    // A bot creates a company with the campaign (cms-mcp cms_company_create_full): the responsible of the campaign.
+    if (class_exists(\skeeks\cms\mcp\services\CmsCompanyService::class)) {
+        Yii::$app->user->setIdentity($manager);
+        $made = (new \skeeks\cms\mcp\services\CmsCompanyService())->companyCreateFull(['name' => 'Бот П2д '.$u, 'cms_comm_campaign_id' => (int)$campaign->id]);
+        $madeId = (int)($made['company']['id'] ?? 0);
+        $check($madeId && CmsCompany2manager::find()->andWhere(['cms_company_id' => $madeId])->select('cms_user_id')->column() == [(int)$admin->id],
+            'cms_company_create_full with the campaign: the responsible of new companies of the campaign');
+        // A company of the pool: created, the manager has no access — the answer says so instead of failing.
+        $pool = (new \skeeks\cms\mcp\services\CmsCompanyService())->companyCreateFull(['name' => 'Бот пул П2д '.$u]);
+        $check(!CmsCompany2manager::find()->andWhere(['cms_company_id' => (int)($pool['company']['id'] ?? 0)])->exists(),
+            'cms_company_create_full without a campaign: the CRM default — the pool');
+        $check($made['created'] && ($made['company']['visible'] ?? true) === false && ($pool['company']['visible'] ?? true) === false,
+            'a company the bot may not open is reported created without access');
+    }
 
     // The defaults of a new campaign come from the CRM settings «Исходящие продажи».
-    if (Yii::$app->has('crmSettings') && property_exists(Yii::$app->crmSettings, 'outgoingLeadOnView')) {
-        $was = Yii::$app->crmSettings->outgoingLeadOnView;
-        Yii::$app->crmSettings->outgoingLeadOnView = 1;
-        Yii::$app->crmSettings->outgoingTaskOnView = 0;
+    if (Yii::$app->has('crmSettings') && property_exists(Yii::$app->crmSettings, 'outgoingLeadTo')) {
+        $settings = Yii::$app->crmSettings;
+        $was = [$settings->outgoingLeadOnView, $settings->outgoingTaskOnView, $settings->outgoingLeadTo, $settings->outgoingNewCardOwner];
+        $settings->outgoingLeadOnView = 0;
+        $settings->outgoingTaskOnView = 0;
+        $settings->outgoingLeadTo = 'unsorted';
+        $settings->outgoingNewCardOwner = 'sender';
         $fresh = new \skeeks\cms\communication\models\CmsCommCampaign(['name' => 'x']);
-        $check((int)$fresh->lead_on_view === 1 && (int)$fresh->task_on_open === 0, 'a new campaign takes the CRM defaults');
-        Yii::$app->crmSettings->outgoingLeadOnView = $was;
-        Yii::$app->crmSettings->outgoingTaskOnView = 1;
+        $check((int)$fresh->lead_on_view === 0 && (int)$fresh->task_on_open === 0 && $fresh->lead_to === 'unsorted' && $fresh->new_card_owner === 'sender',
+            'a new campaign takes the CRM defaults');
+        [$settings->outgoingLeadOnView, $settings->outgoingTaskOnView, $settings->outgoingLeadTo, $settings->outgoingNewCardOwner] = $was;
     }
 
     // The audience schema of this stand is migrated: imports keep their mode.

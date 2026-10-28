@@ -148,11 +148,13 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                 .'отметка «Отправлено ИИ через API». test_mode — как в проверке. '
                 .'Результат: state — queued (в очереди), sending, sent (принято почтовым сервером отправителя, это не доставка), failed, unknown (неизвестно, повторно не отправляется); '
                 .'delivery — not_confirmed или bounced; id письма и отправки предложения. Без confirm=true — только проверка. '
+                .'cms_comm_campaign_id — кампания потока (П2д): письмо и получатель записываются в неё, ответ, просмотр и переход создают сделку по её настройкам; клиент под защитой у другого менеджера — отказ. '
                 .'Пример: {"draft_id":43,"check_token":"…","idempotency_key":"offer-712-20261024-1","confirm":true}.',
                 'cms.communication.mail_send', [$this, 'draftSend'], $this->object([
                     'draft_id' => ['type' => 'integer'],
                     'check_token' => ['type' => 'string'],
                     'idempotency_key' => ['type' => 'string', 'minLength' => 8, 'maxLength' => 128],
+                    'cms_comm_campaign_id' => ['type' => 'integer'],
                     'confirm' => ['type' => 'boolean'],
                 ] + $testMode, ['draft_id', 'check_token', 'idempotency_key'])),
             $this->tool('cms_comm_send_status',
@@ -186,7 +188,15 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                     'cms_comm_account_id' => ['type' => 'integer'],
                     'subject' => ['type' => 'string', 'description' => 'Тема шаблона для получателей без личной темы; по умолчанию название.'],
                     'body_html' => ['type' => 'string', 'description' => 'Шаблон для получателей без личного текста: {Имя}, {Компания}, {Менеджер}, {Ссылка}, {Отписаться}.'],
-                    'task_on_open' => ['type' => 'boolean'], 'lead_on_view' => ['type' => 'boolean'], 'task_on_reply' => ['type' => 'boolean'],
+                    'task_on_open' => ['type' => 'boolean', 'description' => 'Задача «Позвонить», когда просмотр или переход не создаёт сделку.'],
+                    'task_on_reply' => ['type' => 'boolean'],
+                    'lead_on_view' => ['type' => 'boolean', 'description' => 'Сделка при просмотре Презентации или КП (ответ создаёт сделку всегда).'],
+                    'lead_on_visit' => ['type' => 'boolean', 'description' => 'Сделка при переходе по ссылке из письма.'],
+                    'new_card_owner' => ['type' => 'string', 'enum' => ['none', 'sender', 'worker'], 'description' => 'Ответственный за новые компании потока: none — общий пул, sender — вы, worker — new_card_worker_id.'],
+                    'new_card_worker_id' => ['type' => 'integer'],
+                    'lead_to' => ['type' => 'string', 'enum' => ['unsorted', 'sender', 'worker'], 'description' => 'Куда сделка: «Неразобранное», отправитель письма, сотрудник lead_worker_id.'],
+                    'lead_worker_id' => ['type' => 'integer'],
+                    'lead_pipeline_id' => ['type' => 'integer', 'description' => 'Воронка сделок; пусто — «Исходящие продажи».'],
                 ] + $campaignPurpose + $confirm, ['name', 'cms_comm_topic_id'])),
             $this->tool('cms_comm_campaign_recipient_add',
                 'Получатели черновика кампании с личной темой и текстом каждому (повторный вызов для того же клиента заменяет текст). {Ссылка} и {Отписаться} обязательны в письме — без них добавятся в конце; '
@@ -230,7 +240,8 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
     {
         $testMode = !empty($arguments['test_mode']);
         $result = $this->sender()->send((int)($arguments['draft_id'] ?? 0), (string)($arguments['check_token'] ?? ''),
-            (string)($arguments['idempotency_key'] ?? ''), self::confirmed($arguments), $testMode);
+            (string)($arguments['idempotency_key'] ?? ''), self::confirmed($arguments), $testMode,
+            (int)($arguments['cms_comm_campaign_id'] ?? 0) ?: null);
         $this->log('draft_send', [
             'draft_id' => (int)($arguments['draft_id'] ?? 0),
             'test_mode' => $testMode,

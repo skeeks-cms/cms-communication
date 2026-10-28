@@ -83,6 +83,8 @@ class CmsCommCampaignRecipient extends ActiveRecord
     public const REASON_RECENT = 'recent';
     public const REASON_QUIET = 'quiet';
     public const REASON_SAME_COMPANY = 'same_company';
+    /** П2д: a protected client of another main responsible (core CrmProtection). */
+    public const REASON_PROTECTED = 'protected';
 
     public const TEXT_BY_USER = 'user';
     public const TEXT_BY_AI = 'ai';
@@ -123,6 +125,7 @@ class CmsCommCampaignRecipient extends ActiveRecord
             self::REASON_RECENT => 'Недавно получал рассылку: не чаще одной в срок из настроек рассылок',
             self::REASON_QUIET => 'Недавно общались: не мешаем менеджеру',
             self::REASON_SAME_COMPANY => 'Письмо получит другой контакт этой компании',
+            self::REASON_PROTECTED => 'Клиент под защитой у другого менеджера: пишет только основной ответственный',
         ];
     }
 

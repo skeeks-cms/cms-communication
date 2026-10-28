@@ -318,13 +318,42 @@ JS);
                     'sender_mode' => ['class' => SelectField::class, 'items' => CmsCommCampaign::senderModes(), 'allowNull' => false],
                     'cms_comm_account_id' => ['class' => SelectField::class, 'items' => $accounts, 'allowNull' => true, 'nullLabel' => '— выберите ящик —'],
                     'channelHint' => ['class' => HtmlBlock::class, 'content' => $channelHints],
+                ]),
+            ],
+            // The flow (П2д): new companies, what makes a deal, who gets it; the defaults are «Исходящие продажи» of the CRM settings.
+            'flow' => [
+                'class' => FieldSet::class,
+                'name' => 'Сделки и новые компании',
+                'fields' => array_filter($model->hasFlow() ? [
+                    'new_card_owner' => ['class' => SelectField::class, 'items' => CmsCommCampaign::newCardOwners(), 'allowNull' => false],
+                    'new_card_worker_id' => ['class' => SelectField::class, 'items' => $workers = self::workerItems(), 'allowNull' => true],
+                    'task_on_reply' => ['class' => BoolField::class, 'allowNull' => false],
+                    'lead_on_view' => ['class' => BoolField::class, 'allowNull' => false],
+                    'lead_on_visit' => ['class' => BoolField::class, 'allowNull' => false],
                     'task_on_open' => ['class' => BoolField::class, 'allowNull' => false],
-                    // П2д, after the migration of lead_on_view.
+                    'lead_to' => ['class' => SelectField::class, 'items' => CmsCommCampaign::leadReceivers(), 'allowNull' => false],
+                    'lead_worker_id' => ['class' => SelectField::class, 'items' => $workers, 'allowNull' => true],
+                    'lead_pipeline_id' => CmsLead::pipelineReady() ? ['class' => SelectField::class, 'allowNull' => true, 'nullLabel' => '«Исходящие продажи»',
+                        'items' => ArrayHelper::map(\skeeks\cms\models\CmsLeadPipeline::forSite((int)$model->cms_site_id ?: null), 'id', 'name')] : null,
+                ] : [
+                    'task_on_open' => ['class' => BoolField::class, 'allowNull' => false],
                     'lead_on_view' => $model->hasAttribute('lead_on_view') ? ['class' => BoolField::class, 'allowNull' => false] : null,
                     'task_on_reply' => ['class' => BoolField::class, 'allowNull' => false],
                 ]),
             ],
         ];
+    }
+
+    /** Active employees, id => name: the employee of new companies or of deals of the flow. */
+    private static function workerItems(): array
+    {
+        $result = [];
+        foreach (CmsUser::find()->isWorker()->andWhere([CmsUser::tableName().'.is_active' => 1])->all() as $worker) {
+            $result[(int)$worker->id] = (string)$worker->shortDisplayName;
+        }
+        asort($result);
+
+        return $result;
     }
 
     /** "Настройки": rules of every mailing of the site, at the level the administration edits (component-settings.md). */

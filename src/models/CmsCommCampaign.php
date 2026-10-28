@@ -46,6 +46,12 @@ use yii\helpers\Json;
  * @property int|null    $offer_id
  * @property int         $task_on_open
  * @property int         $lead_on_view П2д: a deal when a recipient views the presentation or offer (CampaignTasks::onView())
+ * @property int         $lead_on_visit П2д: a deal when a recipient comes to the site by a link of the letter
+ * @property string      $new_card_owner the responsible of new companies of the flow: OWNER_NONE | OWNER_SENDER | OWNER_WORKER
+ * @property int|null    $new_card_worker_id
+ * @property string      $lead_to who gets a deal: LEAD_TO_UNSORTED | OWNER_SENDER | OWNER_WORKER
+ * @property int|null    $lead_worker_id
+ * @property int|null    $lead_pipeline_id the pipeline of its deals; null — «Исходящие продажи» (core OutboundSales)
  * @property int         $task_on_reply
  * @property int         $one_per_company one letter per company: the company and its people get one letter
  * @property int|null    $quiet_days "не мешать менеджеру": no letter to whom we talked to in so many days; null or 0 — off
@@ -87,6 +93,12 @@ class CmsCommCampaign extends ActiveRecord
     public const SENDER_RESPONSIBLE = 'responsible';
     /** One chosen mailbox. */
     public const SENDER_ACCOUNT = 'account';
+
+    /** The flow (П2д): who gets new companies and deals; the same strings as core CrmSettings. */
+    public const OWNER_NONE = 'none';
+    public const OWNER_SENDER = 'sender';
+    public const OWNER_WORKER = 'worker';
+    public const LEAD_TO_UNSORTED = 'unsorted';
 
     public const OFFER_NONE = 'none';
     /** One document for everybody (a presentation for everybody): every recipient gets their own link. */
@@ -168,9 +180,15 @@ class CmsCommCampaign extends ActiveRecord
                 'channel' => MailboxCampaignChannel::ID,
                 'sender_mode' => self::SENDER_RESPONSIBLE,
                 'offer_kind' => self::OFFER_NONE,
-                // «Исходящие продажи» of the CRM settings (П2д), the campaign may change them.
-                'task_on_open' => self::crmDefault('outgoingTaskOnView', 1),
-                'lead_on_view' => self::crmDefault('outgoingLeadOnView', 0),
+                // The flow (П2д): «Исходящие продажи» of the CRM settings, the campaign may change them.
+                'task_on_open' => (int)(bool)self::crmDefault('outgoingTaskOnView', 1),
+                'lead_on_view' => (int)(bool)self::crmDefault('outgoingLeadOnView', 1),
+                'lead_on_visit' => (int)(bool)self::crmDefault('outgoingLeadOnVisit', 0),
+                'new_card_owner' => (string)self::crmDefault('outgoingNewCardOwner', self::OWNER_NONE),
+                'new_card_worker_id' => self::crmDefault('outgoingNewCardWorkerId', null),
+                'lead_to' => (string)self::crmDefault('outgoingLeadTo', self::OWNER_SENDER),
+                'lead_worker_id' => self::crmDefault('outgoingLeadWorkerId', null),
+                'lead_pipeline_id' => self::crmDefault('outboundPipelineId', null),
                 'task_on_reply' => 1,
                 'one_per_company' => 1,
                 'quiet_days' => self::QUIET_DAYS_DEFAULT,
@@ -186,14 +204,34 @@ class CmsCommCampaign extends ActiveRecord
     }
 
     /** A default of a new campaign from the core CRM settings; an older core without the setting — $fallback. */
-    private static function crmDefault(string $property, int $fallback): int
+    private static function crmDefault(string $property, $fallback)
     {
         $app = \Yii::$app;
         if ($app && $app->has('crmSettings') && property_exists($app->crmSettings, $property)) {
-            return (int)(bool)$app->crmSettings->{$property};
+            $value = $app->crmSettings->{$property};
+
+            return $value === '' ? null : $value;
         }
 
         return $fallback;
+    }
+
+    /** "Ответственный за новые компании" of the flow (the strings of core CrmSettings::OWNER_*). */
+    public static function newCardOwners(): array
+    {
+        return [self::OWNER_NONE => 'Без ответственного — общий пул', self::OWNER_SENDER => 'Отправитель', self::OWNER_WORKER => 'Сотрудник'];
+    }
+
+    /** "Куда сделка". */
+    public static function leadReceivers(): array
+    {
+        return [self::LEAD_TO_UNSORTED => '«Неразобранное»', self::OWNER_SENDER => 'Отправитель', self::OWNER_WORKER => 'Сотрудник'];
+    }
+
+    /** The flow columns are migrated (m261109_110000). */
+    public function hasFlow(): bool
+    {
+        return $this->hasAttribute('lead_to');
     }
 
     public function afterFind()
@@ -222,7 +260,15 @@ class CmsCommCampaign extends ActiveRecord
             [['subject'], 'string', 'max' => 500],
             [['body_html'], 'string', 'max' => 500000],
             [['cms_site_id', 'cms_comm_topic_id', 'cms_comm_account_id', 'offer_id'], 'integer'],
-            [['task_on_open', 'task_on_reply', 'one_per_company', 'lead_on_view'], 'boolean'],
+            [['task_on_open', 'task_on_reply', 'one_per_company', 'lead_on_view', 'lead_on_visit'], 'boolean'],
+            [['new_card_owner'], 'in', 'range' => array_keys(self::newCardOwners())],
+            [['lead_to'], 'in', 'range' => array_keys(self::leadReceivers())],
+            [['new_card_worker_id', 'lead_worker_id', 'lead_pipeline_id'], 'default', 'value' => null],
+            [['new_card_worker_id', 'lead_worker_id', 'lead_pipeline_id'], 'integer'],
+            [['new_card_worker_id'], 'required', 'when' => static fn(self $m) => $m->hasFlow() && $m->new_card_owner === self::OWNER_WORKER,
+                'whenClient' => "function () { return $('#cmscommcampaign-new_card_owner').val() === '".self::OWNER_WORKER."'; }"],
+            [['lead_worker_id'], 'required', 'when' => static fn(self $m) => $m->hasFlow() && $m->lead_to === self::OWNER_WORKER,
+                'whenClient' => "function () { return $('#cmscommcampaign-lead_to').val() === '".self::OWNER_WORKER."'; }"],
             [['quiet_days'], 'integer', 'min' => 0, 'max' => 365],
             [['quiet_days'], 'default', 'value' => 0],
             [['audience_type'], 'in', 'range' => array_keys(self::audienceTypes())],
@@ -290,9 +336,15 @@ class CmsCommCampaign extends ActiveRecord
             'body_html' => 'Текст письма',
             'offer_kind' => 'Предложение',
             'offer_id' => 'Документ или шаблон',
-            'task_on_open' => 'Задача ответственному «Позвонить: смотрел Презентацию», когда получатель открыл Презентацию или КП или перешёл на сайт (сделка не создаётся)',
-            'task_on_reply' => 'Ответ клиента — в сделку: задача в открытой сделке или новая сделка у отправителя письма',
-            'lead_on_view' => 'Создавать сделку при просмотре Презентации или КП',
+            'task_on_open' => 'Задача «Позвонить: смотрел Презентацию», когда просмотр или переход по ссылке не создаёт сделку',
+            'task_on_reply' => 'Ответ клиента — в сделку: задача в открытой сделке или новая сделка',
+            'lead_on_view' => 'Сделка при просмотре Презентации или КП',
+            'lead_on_visit' => 'Сделка при переходе по ссылке из письма',
+            'new_card_owner' => 'Ответственный за новые компании',
+            'new_card_worker_id' => 'Сотрудник для новых компаний',
+            'lead_to' => 'Куда сделка',
+            'lead_worker_id' => 'Сотрудник для сделок',
+            'lead_pipeline_id' => 'Воронка сделок',
             'launched_at' => 'Запущена',
             'launched_by' => 'Запустил',
             'finished_at' => 'Завершена',
@@ -313,8 +365,11 @@ class CmsCommCampaign extends ActiveRecord
         return ArrayHelper::merge(parent::attributeHints(), [
             'cms_comm_topic_id' => 'Клиент может отписаться от темы; отписанные от неё и от всех рассылок не получат письмо.',
             'sender_mode' => 'Письмо уходит как обычное личное письмо из почтового ящика: ответ приходит туда же и попадает в ленту компании или контакта.',
-            'task_on_reply' => 'Ответ или заявка из письма: если у клиента есть открытая сделка — задача в ней; иначе новая сделка у того, от чьего имени ушло письмо. Письмо из общего ящика или клиент без основного ответственного — сделка в «Неразобранном».',
-            'lead_on_view' => 'По умолчанию нет: просмотр делает получателя «тёплым», а сделку создаёт его ответ. Включите, если просмотр уже повод вести сделку. Умолчание — в настройках CRM, «Исходящие продажи».',
+            'task_on_reply' => 'Ответ или заявка из письма (вопрос, «Принять» на странице КП): если у клиента есть открытая сделка — задача в ней; иначе новая сделка — по настройке «Куда сделка».',
+            'lead_on_view' => 'Ответ клиента создаёт сделку всегда. Отметьте, если и просмотр — повод вести сделку; иначе по просмотру ставится задача «Позвонить» (если она включена). Открытие письма сделку не создаёт.',
+            'new_card_owner' => 'Для компаний, которых ещё нет в CRM (их создаёт бот этой кампании). Существующие компании не меняются. Без ответственного — общий пул.',
+            'lead_to' => 'Отправитель — тот, от чьего имени ушло письмо. Если у компании нет основного ответственного, он им становится. Открытая сделка клиента дополняется, новая не создаётся.',
+            'lead_pipeline_id' => 'Пусто — «Исходящие продажи». Ответ ставит этап «Ответил», просмотр — «Смотрел».',
             'audienceStatuses' => 'Пусто — новые и в работе.',
             'audienceExcludeLists' => 'Например, «Действующие клиенты». Если в исключающем списке компания, письмо не получат и её люди, и её сделки.',
             'one_per_company' => 'Если в аудитории компания и её люди или сделки, письмо получит один контакт: добавленный по одному со своим адресом, '

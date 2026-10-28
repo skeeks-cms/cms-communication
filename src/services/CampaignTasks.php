@@ -19,24 +19,31 @@ use skeeks\cms\models\CmsUser;
 use yii\helpers\Html;
 
 /**
- * The rule "ответ клиента на рассылку — в сделку" (П2а, П2д). A reply of a
- * recipient (`task_on_reply`), a request from the letter (a question or an
- * acceptance on the page of its offer) and — when the campaign says so
- * (`lead_on_view`) — the first view of its presentation or offer go one way:
- * - the recipient's deal is open, or the recipient company/person has exactly
+ * The flow of a campaign (П2а, П2д: a bot through MCP/API, a mailing, a
+ * mailing service — always a campaign) makes deals. A reply of a recipient
+ * and a request from the letter (a question or an acceptance on the page of
+ * its offer; `task_on_reply`) always; the first view of its presentation or
+ * offer (`lead_on_view`) and the first visit by a link (`lead_on_visit`) when
+ * the campaign says so. Opening a letter is only a report mark.
+ * - The recipient's deal is open, or the recipient company/person has exactly
  *   one open deal — it continues: its responsible (else the sender) gets a
  *   core task "Ответить" / "Связаться" inside it for today within working
  *   hours, otherwise for the start of the nearest working period (the
- *   employee's schedule, Mon–Fri 9–18 without one); a view only writes into
- *   the deal's feed;
- * - otherwise a new deal (source mailing, "campaign-<kind>:<recipient>",
- *   the campaign letter and the reply linked): its responsible is the one the
- *   letter went from — when it went from his own mailbox (no other employee
- *   sends from it) and the client has a main responsible; a shared mailbox
- *   (promo@…) or a client of the common pool — «Неразобранное».
+ *   employee's schedule, Mon–Fri 9–18 without one); a view or a visit only
+ *   writes into the deal's feed. The deal moves forward to the stage of the
+ *   event when it is in the campaign pipeline.
+ * - Otherwise a new deal (source mailing, "campaign-<kind>:<recipient>",
+ *   the campaign letter and the reply linked) in the campaign pipeline
+ *   (empty — «Исходящие продажи», core OutboundSales) at the stage of the
+ *   event («Ответил» / «Смотрел»). Who gets it — `lead_to`: «Неразобранное»,
+ *   the sender of the letter, an employee. A protected client of another
+ *   main responsible goes to that main responsible; a client without a main
+ *   responsible gets the receiver as its main one («Взять в работу»).
  * Once per recipient and kind: the source reference never makes a second
- * deal. Opening a letter or a link creates no deal; the call task on viewing
- * the offer is the offer package's rule, it asks Campaigns::taskOnOpen().
+ * deal. The call task on a view or a visit that makes no deal is the offer
+ * package's and LinkVisits' rule, they ask Campaigns::taskOnOpen().
+ * Campaigns before the flow migration: the sender of his own mailbox when
+ * the client has a main responsible, otherwise «Неразобранное».
  */
 class CampaignTasks
 {
@@ -50,6 +57,7 @@ class CampaignTasks
     public const KIND_REPLY = 'reply';
     public const KIND_REQUEST = 'request';
     public const KIND_VIEW = 'view';
+    public const KIND_VISIT = 'visit';
 
     /**
      * A reply to a campaign letter.
@@ -89,6 +97,17 @@ class CampaignTasks
         return $result instanceof CmsLead ? $result : null;
     }
 
+    /** The first visit by a link of the letter, when the campaign creates a deal on a visit (`lead_on_visit`). */
+    public function onVisit(CmsCommCampaign $campaign, CmsCommCampaignRecipient $recipient, ?int $now = null): ?CmsLead
+    {
+        if (!$campaign->hasAttribute('lead_on_visit') || !$campaign->lead_on_visit) {
+            return null;
+        }
+        $result = $this->handle($campaign, $recipient, self::KIND_VISIT, null, '', $now);
+
+        return $result instanceof CmsLead ? $result : null;
+    }
+
     /** @return CmsTask|CmsLead|null */
     private function handle(CmsCommCampaign $campaign, CmsCommCampaignRecipient $recipient, string $kind, ?CmsCommMessage $message, string $what, ?int $now)
     {
@@ -100,16 +119,128 @@ class CampaignTasks
         if ($open === null) {
             return $this->leadFrom($campaign, $recipient, $kind, $message, $what, $record, $now);
         }
-        if ($kind === self::KIND_VIEW) {
-            // A view adds to the open deal: an entry of its feed, the call task is the offer package's setting.
+        self::moveForward($campaign, $open, $kind);
+        if ($kind === self::KIND_VIEW || $kind === self::KIND_VISIT) {
+            // A view or a visit adds to the open deal: an entry of its feed.
             if (method_exists($open, 'addSystemActivity')) {
-                $open->addSystemActivity('Получатель рассылки «'.Html::encode($campaign->name).'» открыл Презентацию или КП из письма.');
+                $open->addSystemActivity('Получатель рассылки «'.Html::encode($campaign->name).'» '
+                    .($kind === self::KIND_VIEW ? 'открыл Презентацию или КП из письма.' : 'перешёл на сайт по ссылке из письма.'));
             }
 
             return $open;
         }
 
         return $this->replyTask($campaign, $recipient, $kind, $message, $what, $open, $now);
+    }
+
+    /**
+     * Who gets a new deal of the flow: `lead_to` of the campaign («Неразобранное»
+     * — null, the sender, an employee); a protected client of another main
+     * responsible — that main responsible. Before the flow migration —
+     * senderResponsible().
+     */
+    public static function receiverOf(CmsCommCampaign $campaign, CmsCommCampaignRecipient $recipient, $record): ?int
+    {
+        if (!$campaign->hasFlow()) {
+            return self::senderResponsible($recipient, $record);
+        }
+        $receiverId = null;
+        if ($campaign->lead_to === CmsCommCampaign::OWNER_SENDER) {
+            $receiverId = (int)$recipient->sender_user_id ?: null;
+        } elseif ($campaign->lead_to === CmsCommCampaign::OWNER_WORKER) {
+            $receiverId = (int)$campaign->lead_worker_id ?: null;
+        }
+        [$code, $id] = self::clientOf($record);
+        $access = \skeeks\cms\crm\CrmAccess::class;
+        $protection = \skeeks\cms\crm\CrmProtection::class;
+        if ($code && class_exists($access) && class_exists($protection) && $protection::ready()
+            && $protection::state($code, $id) !== $protection::FREE) {
+            $mainId = $access::instance()->mainResponsibleId($code, $id);
+            if ($mainId && $mainId !== $receiverId) {
+                // Under protection: the deal is its main responsible's, the flow never takes it over.
+                return $mainId;
+            }
+        }
+        if ($receiverId && !CmsUser::find()->isWorker()->andWhere([CmsUser::tableName().'.id' => $receiverId, CmsUser::tableName().'.is_active' => 1])->exists()) {
+            return null;
+        }
+
+        return $receiverId;
+    }
+
+    /** ['company'|'client', id] of the recipient record (of a deal — its client), [null, 0] for none. */
+    private static function clientOf($record): array
+    {
+        if ($record instanceof CmsLead) {
+            $record = $record->cms_company_id ? $record->company : ($record->cms_user_id ? $record->client : null);
+        }
+        if ($record instanceof CmsCompany) {
+            return ['company', (int)$record->id];
+        }
+        if ($record instanceof CmsUser) {
+            return ['client', (int)$record->id];
+        }
+
+        return [null, 0];
+    }
+
+    /** The receiver of a deal of a client without a main responsible becomes its main one («Взять в работу», П2д). */
+    private static function takeIntoWork($record, int $userId): void
+    {
+        [$code, $id] = self::clientOf($record);
+        $access = \skeeks\cms\crm\CrmAccess::class;
+        if (!$code || !$userId || !class_exists($access) || !method_exists($access, 'canTakeIntoWork')) {
+            return;
+        }
+        if ($access::instance()->canTakeIntoWork($code, $id)) {
+            $access::instance()->setMain($code, $id, $userId);
+        }
+    }
+
+    /** The pipeline of the campaign's deals: its own, otherwise «Исходящие продажи» (core OutboundSales); null — none. */
+    private static function pipelineOf(CmsCommCampaign $campaign): ?\skeeks\cms\models\CmsLeadPipeline
+    {
+        if (!$campaign->hasFlow() || !CmsLead::pipelineReady() || !class_exists(\skeeks\cms\crm\OutboundSales::class)) {
+            return null;
+        }
+        foreach (\skeeks\cms\models\CmsLeadPipeline::forSite((int)$campaign->cms_site_id ?: null) as $pipeline) {
+            if ($campaign->lead_pipeline_id && (int)$pipeline->id === (int)$campaign->lead_pipeline_id) {
+                return $pipeline;
+            }
+        }
+
+        return \skeeks\cms\crm\OutboundSales::pipeline((int)$campaign->cms_site_id);
+    }
+
+    /** The stage of an event in the pipeline: «Ответил» for a reply or a request, «Смотрел» for a view or a visit. */
+    private static function stageOf(\skeeks\cms\models\CmsLeadPipeline $pipeline, string $kind): ?\skeeks\cms\models\CmsLeadStage
+    {
+        $sales = \skeeks\cms\crm\OutboundSales::class;
+        $role = $kind === self::KIND_VIEW || $kind === self::KIND_VISIT ? $sales::ROLE_VIEWED
+            : (defined($sales.'::ROLE_REPLIED') ? constant($sales.'::ROLE_REPLIED') : null);
+
+        return $role ? $sales::stage($pipeline, $role) : null;
+    }
+
+    /** An open deal in work of the campaign pipeline moves forward (never back) to the stage of the event. */
+    private static function moveForward(CmsCommCampaign $campaign, CmsLead $lead, string $kind): void
+    {
+        $pipeline = self::pipelineOf($campaign);
+        if (!$pipeline || $lead->status !== CmsLead::STATUS_IN_WORK) {
+            return;
+        }
+        $current = $lead->getEffectivePipeline();
+        $target = self::stageOf($pipeline, $kind);
+        if (!$current || (int)$current->id !== (int)$pipeline->id || !$target || (int)$lead->cms_lead_stage_id === (int)$target->id) {
+            return;
+        }
+        $order = array_map(static fn($stage) => (int)$stage->id, \skeeks\cms\models\CmsLeadStage::forPipeline($pipeline, (int)$lead->cms_site_id));
+        $from = $lead->cms_lead_stage_id ? array_search((int)$lead->cms_lead_stage_id, $order, true) : -1;
+        $to = array_search((int)$target->id, $order, true);
+        if ($to !== false && ($from === false || $from < $to)) {
+            $lead->cms_lead_stage_id = (int)$target->id;
+            $lead->save(false);
+        }
     }
 
     /**
@@ -206,8 +337,12 @@ class CampaignTasks
             self::KIND_REPLY => ['Ответ на рассылку: ', 'Клиент ответил на письмо рассылки «'.$campaign->name.'» '.$at.".\n".'Тема ответа: '.($message ? (string)$message->subject : '')],
             self::KIND_REQUEST => ['Заявка из рассылки: ', 'Клиент оставил заявку по письму рассылки «'.$campaign->name.'» '.$at.".\n".$what],
             self::KIND_VIEW => ['Смотрел Презентацию: ', 'Получатель рассылки «'.$campaign->name.'» открыл Презентацию или КП из письма '.$at.'.'],
+            self::KIND_VISIT => ['Перешёл на сайт: ', 'Получатель рассылки «'.$campaign->name.'» перешёл на сайт по ссылке из письма '.$at.'.'],
         ][$kind];
-        $executorId = self::senderResponsible($recipient, $record);
+        $executorId = self::receiverOf($campaign, $recipient, $record);
+        $pipeline = self::pipelineOf($campaign);
+        $stage = $pipeline && $executorId ? self::stageOf($pipeline, $kind) : null;
+        $place = $pipeline ? array_filter(['cms_lead_pipeline_id' => (int)$pipeline->id, 'cms_lead_stage_id' => $stage ? (int)$stage->id : null]) : [];
         $lead = (new \skeeks\cms\services\CmsLeadService())->createFromSource([
             'cms_site_id' => (int)$campaign->cms_site_id ?: null,
             'source_type' => CmsLead::SOURCE_MAILING,
@@ -224,10 +359,13 @@ class CampaignTasks
                 'recipient_id' => (int)$recipient->id,
                 'message_id' => $message ? (int)$message->id : null,
             ],
-            // The sender's own client — at once his deal; otherwise «Неразобранное».
+            // The receiver of the campaign — at once his deal; nobody — «Неразобранное».
             'executor_id' => $executorId,
             'status' => $executorId ? CmsLead::STATUS_IN_WORK : CmsLead::STATUS_NEW,
-        ]);
+        ] + $place);
+        if ($executorId) {
+            self::takeIntoWork($record, $executorId);
+        }
         // The history of this send: the campaign letter (with its personal offer) and the reply.
         $linker = new MessageLinker();
         if ($message) {

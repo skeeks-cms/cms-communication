@@ -232,6 +232,12 @@ class LinkVisits
                 \Yii::error('Отметка «тёплый» по переходу из письма не поставлена: '.$e->getMessage(), self::class);
             }
             try {
+                // The flow (П2д): a campaign may make a deal on a visit (`lead_on_visit`); then no call task.
+                Campaigns::onLinkVisit((int)$track->cms_comm_message_id, $now);
+            } catch (\Throwable $e) {
+                \Yii::error('Сделка по переходу из письма не создана: '.$e->getMessage(), self::class);
+            }
+            try {
                 // "Вам поставлена новая задача" of the call task is one entry with the visit.
                 \Yii::$app->notifications->group('link-visit:'.(int)$track->id.':'.(int)$visit->id, fn() => $this->callTask($track, $now));
             } catch (\Throwable $e) {
@@ -423,7 +429,7 @@ class LinkVisits
      */
     public function callTask(CmsCommTrack $track, ?int $now = null): ?CmsTask
     {
-        $byCampaign = Campaigns::taskOnOpen((int)$track->cms_comm_message_id);
+        $byCampaign = Campaigns::taskOnOpen((int)$track->cms_comm_message_id, 'visit');
         if ($byCampaign === false || ($byCampaign === null && !LinkTrackingSettings::forSite((int)$track->cms_site_id)['taskOnVisit'])) {
             return null;
         }
