@@ -567,6 +567,7 @@ JS);
         ] + $delivery + [
             'pending' => ['label' => 'Ждут отправки', 'where' => ['status' => [$r::STATUS_PENDING, $r::STATUS_SENDING]]],
             'failed' => ['label' => 'Ошибка', 'where' => ['status' => $r::STATUS_FAILED]],
+            'warm' => ['label' => 'Тёплые', 'where' => ['or', ['not', ['opened_at' => null]], ['not', ['visited_at' => null]]]],
             'opened' => ['label' => 'Открыли предложение', 'where' => ['not', ['opened_at' => null]]],
             'visited' => ['label' => 'Перешли на сайт', 'where' => ['not', ['visited_at' => null]]],
             'replied' => ['label' => 'Ответили', 'where' => ['not', ['replied_at' => null]]],

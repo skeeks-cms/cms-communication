@@ -34,6 +34,12 @@ class ListUi
         return !\Yii::$app->user->isGuest && \Yii::$app->user->can(AdminCmsCommCampaignController::PERMISSION);
     }
 
+    /** A base into a list (AudienceImport): rights to mailings and the migrated audience schema. */
+    public static function canImportAudience(): bool
+    {
+        return self::canUse() && \skeeks\cms\communication\models\CmsCommImport::audienceReady();
+    }
+
     /** onclick of a page of this package in the standard backend window. */
     public static function windowOnClick(array $route, ?string $size = null): string
     {

@@ -226,6 +226,12 @@ class LinkVisits
         }
         if ($first) {
             try {
+                // A signal of interest: the company or contact is warm now (never a deal).
+                Audience::warmByMessage((int)$track->cms_comm_message_id, \skeeks\cms\communication\models\CmsCommAudience::WARM_VISIT, $now);
+            } catch (\Throwable $e) {
+                \Yii::error('Отметка «тёплый» по переходу из письма не поставлена: '.$e->getMessage(), self::class);
+            }
+            try {
                 // "Вам поставлена новая задача" of the call task is one entry with the visit.
                 \Yii::$app->notifications->group('link-visit:'.(int)$track->id.':'.(int)$visit->id, fn() => $this->callTask($track, $now));
             } catch (\Throwable $e) {

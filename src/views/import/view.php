@@ -106,7 +106,7 @@ $who = static function (array $data): string {
                 <div class="sx-import__settings">
                     <label>
                         <span class="sx-import__label">Ответственный за новые сделки</span>
-                        <?= Html::dropDownList('executor_id', $import->executor_id, $executors, ['class' => 'form-control', 'prompt' => count($executors) > 1 ? '— выберите —' : null]) ?>
+                        <?= Html::dropDownList('executor_id', $import->executor_id, $executors, ['class' => 'form-control', 'prompt' => 'Никому — в «Неразобранное»']) ?>
                         <?php if (!empty($errors['executor_id'])) : ?><span class="sx-import__error"><?= Html::encode($errors['executor_id']) ?></span><?php endif; ?>
                     </label>
                     <label>

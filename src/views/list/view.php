@@ -26,6 +26,8 @@ use yii\helpers\Url;
 $formatter = \Yii::$app->formatter;
 $recordRoutes = [CrmRecords::LEAD => '/cms/admin-cms-lead/view', CrmRecords::COMPANY => '/cms/admin-cms-company/view', CrmRecords::CLIENT => '/cms/admin-user/view'];
 $addUrl = ['/cmsCommunication/admin-cms-comm-list/add', 'pk' => (int)$list->id];
+$addressesUrl = ['/cmsCommunication/admin-cms-comm-list/add-addresses', 'pk' => (int)$list->id];
+$importUrl = ['/cmsCommunication/admin-cms-comm-import/create', 'list' => (int)$list->id];
 $exportUrl = (string)BackendUrlHelper::createByParams(['/cmsCommunication/admin-cms-comm-list/export', 'pk' => (int)$list->id])->url;
 $filter = static fn(string $value, string $label) => Html::a(Html::encode($label), Url::current(['state' => $value ?: null, 'page' => null]),
     ['class' => 'sx-import__filter'.($state === $value ? ' is-active' : ''), 'data-pjax' => 0]);
@@ -38,20 +40,25 @@ $pages = (int)ceil($total / 100);
     <?php endif; ?>
 
     <div class="sx-list__stats">
-        <div class="sx-list__stat"><strong><?= (int)$stats['members'] ?></strong><span>участников</span></div>
+        <div class="sx-list__stat"><strong><?= (int)$stats['members'] ?></strong><span>получателей</span></div>
         <div class="sx-list__stat sx-list__stat--ok"><strong><?= (int)$stats['email'] ?></strong><span>можно отправить письмом</span></div>
-        <div class="sx-list__stat sx-list__stat--warn"><strong><?= (int)$stats['stopped'] ?></strong><span>отписаны от всех рассылок или в стоп-листе</span></div>
+        <div class="sx-list__stat sx-list__stat--warn"><strong><?= (int)$stats['stopped'] ?></strong><span>отписались от всех рассылок или в стоп-листе</span></div>
         <div class="sx-list__stat"><strong><?= (int)$stats['noEmail'] ?></strong><span>без email</span></div>
     </div>
     <p class="sx-import__muted">Отписку от отдельной темы и остальные правила (частота, «не мешать менеджеру», одна компания — одно письмо)
         проверит сводка кампании перед запуском.</p>
 
     <div class="sx-import__actions">
-        <?= Html::a('+ Добавить', Url::to($addUrl), ['class' => 'btn btn-primary', 'data-pjax' => 0, 'onclick' => ListUi::windowOnClick($addUrl, 'small')]) ?>
+        <?= Html::a('+ Добавить из CRM', Url::to($addUrl), ['class' => 'btn btn-primary', 'data-pjax' => 0, 'onclick' => ListUi::windowOnClick($addUrl, 'small')]) ?>
+        <?php if (ListUi::canImportAudience()) : ?>
+        <?= Html::a('Добавить адреса', Url::to($addressesUrl), ['class' => 'btn btn-default', 'data-pjax' => 0, 'onclick' => ListUi::windowOnClick($addressesUrl)]) ?>
+        <?= Html::a('Импорт в список', Url::to($importUrl), ['class' => 'btn btn-default', 'data-pjax' => 0,
+            'onclick' => \skeeks\cms\communication\helpers\MailingUi::importUploadOnClick(['list' => (int)$list->id])]) ?>
+        <?php endif; ?>
         <?= Html::a('Выгрузить CSV', $exportUrl, ['class' => 'btn btn-default', 'data-pjax' => 0, 'target' => '_blank']) ?>
     </div>
-    <p class="sx-import__muted">Много записей сразу — массовым действием «В список рассылки» в разделах «Компании», «Сделки», «Клиенты»
-        (отметьте записи или «для всех» по фильтру) или при импорте таблицы в сделки.</p>
+    <p class="sx-import__muted">Много записей сразу — «Импорт в список» (таблица CSV или из Excel: компании и контакты без сделок, повторы найдутся
+        сами), «Добавить адреса» (вставить email и телефоны) или массовым действием «В список рассылки» в разделах «Компании», «Сделки», «Клиенты».</p>
 
     <div class="sx-import__card">
         <h2 class="sx-import__title">Правила пополнения</h2>

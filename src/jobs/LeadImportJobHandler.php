@@ -8,6 +8,7 @@
 namespace skeeks\cms\communication\jobs;
 
 use skeeks\cms\communication\models\CmsCommImport;
+use skeeks\cms\communication\services\AudienceImport;
 use skeeks\cms\communication\services\LeadImport;
 use skeeks\cms\job\contracts\JobReporterInterface;
 use skeeks\cms\job\handlers\AbstractJobHandler;
@@ -26,6 +27,6 @@ class LeadImportJobHandler extends AbstractJobHandler
         if (!$import || $import->status === CmsCommImport::STATUS_DONE) {
             return;
         }
-        LeadImport::run($import, $reporter);
+        $import->isAudience() ? AudienceImport::run($import, $reporter) : LeadImport::run($import, $reporter);
     }
 }

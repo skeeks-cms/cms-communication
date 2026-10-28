@@ -199,7 +199,7 @@ campaignExpect(Campaigns::companyName($lead, 'Иван') === 'ООО «Тест�
 // The campaign form: audience conditions and the offer.
 $topic = new CmsCommTopic(['cms_site_id' => 1, 'name' => 'Акции', 'is_active' => 1]);
 $topic->save(false);
-$campaign = new CmsCommCampaign(['cms_site_id' => 1, 'name' => 'Плитка', 'cms_comm_topic_id' => $topic->id]);
+$campaign = new CmsCommCampaign(['cms_site_id' => 1, 'name' => 'Плитка', 'cms_comm_topic_id' => $topic->id, 'audience_type' => CmsCommCampaign::AUDIENCE_LEADS]);
 campaignExpect($campaign->status === CmsCommCampaign::STATUS_DRAFT && $campaign->channel === MailboxCampaignChannel::ID
     && $campaign->sender_mode === CmsCommCampaign::SENDER_RESPONSIBLE && strpos($campaign->body_html, '{Имя}') !== false, 'A new campaign starts with sensible defaults.');
 $campaign->audienceStatuses = ['new', ''];

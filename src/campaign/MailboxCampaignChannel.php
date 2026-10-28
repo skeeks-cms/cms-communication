@@ -69,7 +69,7 @@ class MailboxCampaignChannel implements CampaignChannelInterface
                 return 'Выбранный ящик отправляет через сервис рассылок: выберите канал «Сервис рассылок» — он пишет только тем, кто дал согласие.';
             }
             if (!(new MailComposeService($user, (int)$campaign->cms_site_id))->canSendFrom((int)$account->id)) {
-                return 'Вам нельзя отправлять письма с выбранного ящика: выберите свой ящик или «Ящик ответственного за сделку».';
+                return 'Вам нельзя отправлять письма с выбранного ящика: выберите свой ящик или «Ящик ответственного за получателя».';
             }
         }
 

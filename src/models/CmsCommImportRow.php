@@ -27,6 +27,8 @@ use yii\helpers\Json;
  * @property string|null $match_code
  * @property int|null    $match_id
  * @property string|null $matched_by
+ * @property string|null $record_type the CRM record an audience row became or matched (company, client)
+ * @property int|null    $record_id
  *
  * @property CmsCommImport $import
  * @property CmsLead|null  $lead
@@ -36,17 +38,28 @@ class CmsCommImportRow extends ActiveRecord
     public const STATUS_CREATED = 'created';
     public const STATUS_DUPLICATE = 'duplicate';
     public const STATUS_SKIPPED = 'skipped';
+    /** An audience row left out by a rule: a current client, a recent refusal, an opt-out, a client of another manager, a conflict. */
+    public const STATUS_EXCLUDED = 'excluded';
 
     public static function tableName()
     {
         return '{{%cms_comm_import_row}}';
     }
 
-    public static function statuses(): array
+    public static function statuses(?string $mode = null): array
     {
+        if ($mode === CmsCommImport::MODE_AUDIENCE) {
+            return [
+                self::STATUS_CREATED => 'Новый',
+                self::STATUS_DUPLICATE => 'Найден в CRM',
+                self::STATUS_EXCLUDED => 'Исключён',
+                self::STATUS_SKIPPED => 'Пропущено',
+            ];
+        }
+
         return [
             self::STATUS_CREATED => 'Создана сделка',
-            self::STATUS_DUPLICATE => 'Уже есть в CRM',
+            self::STATUS_DUPLICATE => 'Дополнит открытую сделку',
             self::STATUS_SKIPPED => 'Пропущено',
         ];
     }

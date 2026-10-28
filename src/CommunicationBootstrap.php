@@ -92,6 +92,20 @@ class CommunicationBootstrap implements BootstrapInterface
             ];
             \Yii::$container->set($leads, $definition);
         }
+        // "Импорт в список" — a tab of "Компании": a cold base becomes companies and contacts of a list, without deals.
+        $companies = \skeeks\cms\controllers\AdminCmsCompanyController::class;
+        if (class_exists($companies)) {
+            $definition = \Yii::$container->getDefinitions()[$companies] ?? [];
+            $definition['actionsMap']['comm-import'] = [
+                'class' => \skeeks\cms\backend\ViewBackendAction::class,
+                'name' => 'Импорт в список',
+                'icon' => 'fas fa-file-import',
+                'priority' => 900,
+                'accessCallback' => [\skeeks\cms\communication\helpers\ListUi::class, 'canImportAudience'],
+                'callback' => [\skeeks\cms\communication\controllers\AdminCmsCommImportController::class, 'renderCompaniesTab'],
+            ];
+            \Yii::$container->set($companies, $definition);
+        }
 
         // Lists of recipients: the bulk action "В список рассылки" of the core sections over their own filters
         // (marked rows or "для всех"), added the same way; the leads table gets its checkbox column by default.

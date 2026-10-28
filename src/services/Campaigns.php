@@ -161,6 +161,10 @@ class Campaigns
     public function imports(User $user, int $siteId): array
     {
         $query = CmsCommImport::find()->andWhere(['cms_site_id' => $siteId, 'status' => CmsCommImport::STATUS_DONE])->orderBy(['id' => SORT_DESC])->limit(100);
+        if (CmsCommImport::getTableSchema()->getColumn('mode')) {
+            // A base imported into a list is the audience "Списки"; this audience is the deals of an import of requests.
+            $query->andWhere(['mode' => CmsCommImport::MODE_LEADS]);
+        }
         if (!\Yii::$app->authManager->checkAccess($user->id, CmsManager::PERMISSION_ROLE_ADMIN_ACCESS)) {
             $query->andWhere(['created_by' => (int)$user->id]);
         }
@@ -1342,6 +1346,8 @@ class Campaigns
         foreach (['opened' => 'opened_at', 'visited' => 'visited_at', 'replied' => 'replied_at', 'accepted' => 'accepted_at', 'unsubscribed' => 'unsubscribed_at'] as $key => $field) {
             $result[$key] = (int)(clone $sentQuery)->andWhere(['not', [$field => null]])->count();
         }
+        // "Тёплые": a signal of interest — opened the presentation or offer, or came to the site (Audience::warm()).
+        $result['warm'] = (int)(clone $sentQuery)->andWhere(['or', ['not', ['opened_at' => null]], ['not', ['visited_at' => null]]])->count();
         // Delivery confirmed or refused by a mailing service (stage 4C): managers' mailboxes report neither.
         $result['delivered'] = $result['bounced'] = 0;
         if ((new CmsCommCampaignRecipient())->hasAttribute('delivered_at')) {

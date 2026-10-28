@@ -67,10 +67,13 @@ class MailingUi
         return 'new sx.classes.backend.widgets.Action('.Json::encode(['isOpenNewWindow' => true, 'url' => $url]).').go(); return false;';
     }
 
-    /** onclick of "Загрузить таблицу": step 1 of an import in the standard backend window. */
-    public static function importUploadOnClick(): string
+    /**
+     * onclick of "Загрузить таблицу": step 1 of an import in the standard backend window.
+     * @param array $params mode (CmsCommImport::MODE_*), list (a list of recipients chosen in advance)
+     */
+    public static function importUploadOnClick(array $params = []): string
     {
-        $url = (string)BackendUrlHelper::createByParams(['/cmsCommunication/admin-cms-comm-import/create'])->enableEmptyLayout()->url;
+        $url = (string)BackendUrlHelper::createByParams(['/cmsCommunication/admin-cms-comm-import/create'] + $params)->enableEmptyLayout()->url;
 
         return 'new sx.classes.backend.widgets.Action('.Json::encode(['isOpenNewWindow' => true, 'url' => $url]).').go(); return false;';
     }
@@ -84,12 +87,23 @@ class MailingUi
             return '';
         }
         $contacts = MailingContacts::ofRecord($record);
-        if (!$contacts) {
+        $audience = \skeeks\cms\communication\services\Audience::of($siteId, $record);
+        if (!$contacts && !$audience) {
             return '';
         }
         $topics = CmsCommTopic::forSite($siteId);
         $items = [];
         $anyMarks = false;
+        if ($audience) {
+            // The state of the base: where the card came from, cold or warm (a link of a letter, a presentation).
+            $anyMarks = true;
+            $items[] = [
+                'label' => 'Получатель рассылок',
+                'value' => Html::tag('span', Html::encode($audience->isWarm() ? 'Тёплый' : 'Холодный, согласия нет'),
+                    ['style' => $audience->isWarm() ? 'color: var(--sx-color-warning, #c77700); font-weight: 600' : null]),
+                'note' => \skeeks\cms\communication\services\Audience::text($audience),
+            ];
+        }
         foreach ($contacts as $row) {
             $contact = MailingContacts::find($siteId, $row['kind'], $row['value']);
             $lines = MailingConsents::summary($contact, $topics);

@@ -96,7 +96,7 @@ class CmsCommCampaign extends ActiveRecord
     /** Placeholders of the subject and the text. */
     public const PLACEHOLDERS = [
         '{Имя}' => 'имя контакта (если неизвестно — убирается вместе с запятой перед ним)',
-        '{Компания}' => 'компания сделки',
+        '{Компания}' => 'компания получателя',
         '{Менеджер}' => 'имя менеджера, от которого письмо',
         '{Ссылка}' => 'кнопка с личной ссылкой на предложение (без неё кнопка встанет в конце)',
         '{Отписаться}' => 'ссылка отписки (без неё строка отписки встанет в конце)',
@@ -131,7 +131,7 @@ class CmsCommCampaign extends ActiveRecord
     public static function audienceTypes(): array
     {
         return [
-            self::AUDIENCE_LISTS => 'Списки получателей',
+            self::AUDIENCE_LISTS => 'Списки рассылки',
             self::AUDIENCE_LEADS => 'Сделки по фильтру',
             self::AUDIENCE_IMPORT => 'Сделки из импорта',
             self::AUDIENCE_MANUAL => 'Только добавленные получатели',
@@ -141,7 +141,7 @@ class CmsCommCampaign extends ActiveRecord
     public static function senderModes(): array
     {
         return [
-            self::SENDER_RESPONSIBLE => 'Ящик ответственного за сделку',
+            self::SENDER_RESPONSIBLE => 'Ящик ответственного за получателя',
             self::SENDER_ACCOUNT => 'Выбранный ящик',
         ];
     }
@@ -162,7 +162,8 @@ class CmsCommCampaign extends ActiveRecord
         if ($this->isNewRecord) {
             $defaults = [
                 'status' => self::STATUS_DRAFT,
-                'audience_type' => self::AUDIENCE_LEADS,
+                // The new model (П5): an audience is a list of companies and contacts, not deals.
+                'audience_type' => self::AUDIENCE_LISTS,
                 'channel' => MailboxCampaignChannel::ID,
                 'sender_mode' => self::SENDER_RESPONSIBLE,
                 'offer_kind' => self::OFFER_NONE,
@@ -275,7 +276,7 @@ class CmsCommCampaign extends ActiveRecord
             'body_html' => 'Текст письма',
             'offer_kind' => 'Предложение',
             'offer_id' => 'Документ или шаблон',
-            'task_on_open' => 'Задача менеджеру, когда клиент открыл предложение или перешёл на сайт',
+            'task_on_open' => 'Задача ответственному «Позвонить: смотрел Презентацию», когда получатель открыл Презентацию или КП или перешёл на сайт (сделка не создаётся)',
             'task_on_reply' => 'Задача менеджеру, когда клиент ответил',
             'launched_at' => 'Запущена',
             'launched_by' => 'Запустил',
@@ -296,7 +297,7 @@ class CmsCommCampaign extends ActiveRecord
     {
         return ArrayHelper::merge(parent::attributeHints(), [
             'cms_comm_topic_id' => 'Клиент может отписаться от темы; отписанные от неё и от всех рассылок не получат письмо.',
-            'sender_mode' => 'Письмо уходит как обычное личное письмо из почтового ящика: ответ приходит туда же и попадает в ленту сделки.',
+            'sender_mode' => 'Письмо уходит как обычное личное письмо из почтового ящика: ответ приходит туда же и попадает в ленту компании или контакта.',
             'audienceStatuses' => 'Пусто — новые и в работе.',
             'audienceExcludeLists' => 'Например, «Действующие клиенты». Если в исключающем списке компания, письмо не получат и её люди, и её сделки.',
             'one_per_company' => 'Если в аудитории компания и её люди или сделки, письмо получит один контакт: добавленный по одному со своим адресом, '

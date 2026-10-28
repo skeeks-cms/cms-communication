@@ -26,6 +26,8 @@ use yii\helpers\Json;
  * @property int|null    $updated_at
  * @property int         $cms_site_id
  * @property string|null $file_name
+ * @property string      $mode MODE_AUDIENCE — a base into a list, without deals (services\AudienceImport); MODE_LEADS — requests into deals
+ * @property int         $excluded_count rows of an audience import left out by the rules
  * @property string      $status
  * @property string|null $columns JSON: header titles of the table
  * @property string|null $mapping JSON: column number => field
@@ -54,6 +56,11 @@ class CmsCommImport extends ActiveRecord
     public const STATUS_RUNNING = 'running';
     public const STATUS_DONE = 'done';
     public const STATUS_FAILED = 'failed';
+
+    /** A base for mailings: companies and contacts of a list, no deals (services\AudienceImport). */
+    public const MODE_AUDIENCE = 'audience';
+    /** Real requests: a deal in «Неразобранное» or an addition to an open one (services\LeadImport). */
+    public const MODE_LEADS = 'leads';
 
     /** The choice of the form before the import starts: a list id, "new" (made at the start) or "" — no list. */
     public $listChoice;
@@ -92,6 +99,8 @@ class CmsCommImport extends ActiveRecord
             'created_count' => 'Создано сделок',
             'duplicate_count' => 'Повторов',
             'skipped_count' => 'Пропущено',
+            'excluded_count' => 'Исключено',
+            'mode' => 'Что загружаем',
             'created_at' => 'Загружен',
             'created_by' => 'Загрузил',
         ]);
@@ -115,6 +124,36 @@ class CmsCommImport extends ActiveRecord
         }
 
         return $result;
+    }
+
+    public static function modes(): array
+    {
+        return [
+            self::MODE_AUDIENCE => 'База в список рассылки',
+            self::MODE_LEADS => 'Заявки в сделки',
+        ];
+    }
+
+    public function isAudience(): bool
+    {
+        return self::audienceReady() && $this->mode === self::MODE_AUDIENCE;
+    }
+
+    /**
+     * The audience schema is migrated (cms_comm_import.mode, cms_comm_audience):
+     * the code may be deployed before the migrations, then every import stays a
+     * leads one and the audience actions are off.
+     */
+    public static function audienceReady(): bool
+    {
+        static $ready = null;
+        if ($ready === null) {
+            $db = static::getDb();
+            $ready = static::getTableSchema()->getColumn('mode') !== null
+                && $db->getTableSchema(CmsCommAudience::tableName(), true) !== null;
+        }
+
+        return $ready;
     }
 
     public function isFinished(): bool
@@ -144,6 +183,6 @@ class CmsCommImport extends ActiveRecord
 
     public function asText()
     {
-        return 'Импорт №'.$this->id.($this->file_name ? ' — '.$this->file_name : '');
+        return ($this->isAudience() ? 'Импорт в список №' : 'Импорт №').$this->id.($this->file_name ? ' — '.$this->file_name : '');
     }
 }

@@ -263,7 +263,7 @@ if ($campaign->offer_id && $source) {
             <div class="sx-import__counts">
                 <?= Html::a('Все: '.(int)$stats['total'], Url::current(['state' => null, 'page' => null]), ['class' => 'sx-import__filter'.($filter === '' ? ' is-active' : ''), 'data-pjax' => 0]) ?>
                 <?php foreach (AdminCmsCommCampaignController::reportFilters() as $key => $item) :
-                    $count = ['sent' => $stats['sent'], 'delivered' => $stats['delivered'] ?? 0, 'bounced' => $stats['bounced'] ?? 0, 'pending' => $stats['pending'], 'failed' => $stats['failed'], 'opened' => $stats['opened'], 'visited' => $stats['visited'],
+                    $count = ['sent' => $stats['sent'], 'delivered' => $stats['delivered'] ?? 0, 'bounced' => $stats['bounced'] ?? 0, 'pending' => $stats['pending'], 'failed' => $stats['failed'], 'warm' => $stats['warm'] ?? 0, 'opened' => $stats['opened'], 'visited' => $stats['visited'],
                         'replied' => $stats['replied'], 'accepted' => $stats['accepted'], 'unsubscribed' => $stats['unsubscribed'],
                         'excluded' => $stats['excluded'], 'cancelled' => $stats['cancelled'], 'personal' => $stats['personal']][$key];
                     if (!$count && $filter !== $key) {

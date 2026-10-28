@@ -43,7 +43,7 @@ class AdminCmsCommListController extends BackendModelStandartController
 {
     public function init()
     {
-        $this->name = 'Списки получателей';
+        $this->name = 'Списки рассылки';
         $this->modelShowAttribute = 'asText';
         $this->modelClassName = CmsCommList::class;
         $this->modelDefaultAction = 'view';
@@ -78,7 +78,7 @@ class AdminCmsCommListController extends BackendModelStandartController
                     'icon' => 'fas fa-list-ul',
                     'action' => $create,
                 ],
-                'pageHeader' => ['title' => 'Списки получателей', 'actions' => [$create]],
+                'pageHeader' => ['title' => 'Списки рассылки', 'actions' => [$create]],
                 'filters' => false,
                 'grid' => [
                     'on init' => static function (Event $event) {
@@ -91,9 +91,9 @@ class AdminCmsCommListController extends BackendModelStandartController
                             'class' => BackendEntityLinkColumn::class,
                             'controllerId' => '/cmsCommunication/admin-cms-comm-list',
                         ],
-                        'members' => ['label' => 'Участников', 'value' => static fn(CmsCommList $l) => $statsOf($l)['members']],
+                        'members' => ['label' => 'Получателей', 'value' => static fn(CmsCommList $l) => $statsOf($l)['members']],
                         'email' => ['label' => 'Можно отправить письмом', 'value' => static fn(CmsCommList $l) => $statsOf($l)['email']],
-                        'stopped' => ['label' => 'Отписаны от всех / стоп-лист', 'value' => static fn(CmsCommList $l) => $statsOf($l)['stopped']],
+                        'stopped' => ['label' => 'Отписались / стоп-лист', 'value' => static fn(CmsCommList $l) => $statsOf($l)['stopped']],
                         'noEmail' => ['label' => 'Без email', 'value' => static fn(CmsCommList $l) => $statsOf($l)['noEmail']],
                         'created_at' => ['class' => DateTimeColumnData::class],
                         'created_by' => ['value' => static fn(CmsCommList $l) => $l->createdBy ? $l->createdBy->shortDisplayName : ''],
@@ -120,6 +120,13 @@ class AdminCmsCommListController extends BackendModelStandartController
                 'name' => 'Добавить',
                 'isVisible' => false,
                 'callback' => [$this, 'add'],
+            ],
+            // "Добавить адреса": pasted emails, phones or lines become contacts of the list (services\AudienceImport::fromLines()).
+            'add-addresses' => [
+                'class' => BackendModelAction::class,
+                'name' => 'Добавить адреса',
+                'isVisible' => false,
+                'callback' => [$this, 'addAddresses'],
             ],
             'export' => [
                 'class' => BackendModelAction::class,
@@ -289,6 +296,39 @@ class AdminCmsCommListController extends BackendModelStandartController
             'recent' => CmsCommListMember::find()->andWhere(['cms_comm_list_id' => (int)$list->id, 'removed_at' => null])
                 ->andWhere(['>=', 'created_at', time() - 3600])->andWhere(['added_by' => (int)$user->id])->orderBy(['id' => SORT_DESC])->limit(10)->all(),
         ]);
+    }
+
+    /**
+     * "Добавить адреса": a line per recipient — an email, a phone or
+     * «Ромашка, Иван, info@…, +7 …». The lines become an audience import of
+     * the list: the same check by the CRM, the same preview and exclusions;
+     * a new address gets a contact card (and a company when the line names
+     * one), so a list never holds a bare address.
+     */
+    public function addAddresses()
+    {
+        /** @var CmsCommList $list */
+        $list = $this->model;
+        $request = \Yii::$app->request;
+        $error = null;
+        $text = (string)$request->post('lines', '');
+        if ($request->isPost) {
+            try {
+                if (!\skeeks\cms\communication\models\CmsCommImport::audienceReady()) {
+                    throw new \DomainException('Добавление адресов станет доступно после обновления базы данных.');
+                }
+                $import = \skeeks\cms\communication\services\AudienceImport::fromLines($list, $text, \Yii::$app->user->identity);
+
+                // The preview at once: the import card shows new, found and excluded addresses before anything is added.
+                return $this->redirect((string)BackendUrlHelper::createByParams(['/cmsCommunication/admin-cms-comm-import/view', 'pk' => (int)$import->id, 'preview' => 1])
+                    ->setBackendParamsByCurrentRequest()->url);
+            } catch (\DomainException $e) {
+                $error = $e->getMessage();
+            }
+        }
+        MailingAsset::register($this->view);
+
+        return $this->render('@skeeks/cms/communication/views/list/add-addresses', ['list' => $list, 'error' => $error, 'text' => $text]);
     }
 
     /** The members as CSV (Excel opens it: UTF-8 with BOM, semicolons). */
