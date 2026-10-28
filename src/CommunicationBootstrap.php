@@ -139,6 +139,14 @@ class CommunicationBootstrap implements BootstrapInterface
                 $event->priority['comm-lists'] = 155;
             });
         }
+        // «Каналы связи» of a client person ("Сделка как услуга"): mailing state of emails and phones, chats with bots.
+        if (defined(\skeeks\cms\widgets\admin\ClientChannelsWidget::class.'::EVENT_CHANNELS')) {
+            Event::on(\skeeks\cms\widgets\admin\ClientChannelsWidget::class, \skeeks\cms\widgets\admin\ClientChannelsWidget::EVENT_CHANNELS, static function ($event) {
+                if (!\Yii::$app->user->isGuest && \Yii::$app->user->can(CmsManager::PERMISSION_ADMIN_ACCESS)) {
+                    \skeeks\cms\communication\helpers\ClientChannels::fill($event);
+                }
+            });
+        }
         // "Добавить в список рассылки" in the menu "Действие" of the lead card; an older core has no actions event.
         if (defined(CrmCardBlocksWidget::class.'::EVENT_ACTIONS')) {
             Event::on(CrmCardBlocksWidget::class, CrmCardBlocksWidget::EVENT_ACTIONS, static function (CrmCardBlocksEvent $event) {
