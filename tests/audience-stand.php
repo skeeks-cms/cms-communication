@@ -344,6 +344,78 @@ try {
     $visitLead = $tasks->onVisit($campaign, $quiet);
     $check($visitLead instanceof CmsLead && strpos($visitLead->name, 'Перешёл на сайт') === 0, '«сделка при переходе по ссылке»');
 
+    // F04: the pool is decided BEFORE the deal (the deal itself is a history): a free client gets the receiver
+    // as its main responsible, a client with a history or with a main one keeps its owner, a protected one goes
+    // to its main responsible — for every event and every receiver; a repeated event changes nothing.
+    $matrixCampaign = static function (string $to) use ($siteId, $u, $admin) {
+        $c = new \skeeks\cms\communication\models\CmsCommCampaign(['name' => 'Матрица П2д '.$to.' '.$u, 'cms_site_id' => $siteId,
+            'lead_to' => $to, 'lead_worker_id' => $to === 'worker' ? (int)$admin->id : null, 'lead_on_view' => 1, 'lead_on_visit' => 1]);
+        $c->save(false);
+
+        return $c;
+    };
+    $fire = static function (string $kind, $c, CmsCommCampaignRecipient $r) use ($tasks, $replyLetter) {
+        switch ($kind) {
+            case 'reply': return $tasks->onReply($c, $r, $replyLetter);
+            case 'request': return $tasks->onRequest($c, $r, 'Вопрос: сколько стоит?');
+            case 'view': return $tasks->onView($c, $r);
+            default: return $tasks->onVisit($c, $r);
+        }
+    };
+    $recipientOf = static function ($c, CmsCompany $company) use ($manager, $own, $sentLetter, $u) {
+        $r = new CmsCommCampaignRecipient(['cms_comm_campaign_id' => (int)$c->id, 'record_type' => 'company', 'record_id' => (int)$company->id,
+            'address' => 'm-'.$company->id.'-'.$u.'@skeeks.com', 'sender_user_id' => (int)$manager->id, 'cms_comm_account_id' => (int)$own->id,
+            'cms_comm_message_id' => (int)$sentLetter->id, 'status' => CmsCommCampaignRecipient::STATUS_SENT]);
+        $r->save(false);
+
+        return $r;
+    };
+    $leadsOf = static fn(CmsCompany $company) => CmsLead::find()->andWhere(['cms_company_id' => (int)$company->id])->all();
+    $n = 0;
+    foreach (['sender' => (int)$manager->id, 'worker' => (int)$admin->id, 'unsorted' => null] as $to => $receiverId) {
+        $c = $matrixCampaign($to);
+        foreach (['reply', 'request', 'view', 'visit'] as $kind) {
+            $n++;
+            // A free client of the pool.
+            $free = new CmsCompany(['name' => 'Пул '.$to.' '.$kind.' '.$u]);
+            $free->save(false);
+            $r = $recipientOf($c, $free);
+            $fire($kind, $c, $r);
+            $leads = $leadsOf($free);
+            $main = $access->mainResponsibleId('company', (int)$free->id);
+            $check(count($leads) === 1 && (int)$leads[0]->executor_id === (int)$receiverId && $main === $receiverId,
+                'free client, '.$kind.' → '.$to.': one deal of the receiver, the receiver is the main one ('.json_encode([count($leads), $leads[0]->executor_id ?? null, $main]).')');
+            // The same event again: still one deal, the same main.
+            $fire($kind, $c, $r);
+            $check(count($leadsOf($free)) === 1 && $access->mainResponsibleId('company', (int)$free->id) === $receiverId, 'free client, '.$kind.' → '.$to.': a repeat changes nothing');
+
+            // A client with a history (an earlier closed deal) and no main: not of the pool, never taken by the flow.
+            $old = new CmsCompany(['name' => 'История '.$to.' '.$kind.' '.$u]);
+            $old->save(false);
+            Yii::$app->db->createCommand()->insert(CmsLead::tableName(), ['cms_site_id' => $siteId, 'name' => 'Старая сделка '.$u, 'status' => CmsLead::STATUS_REJECTED,
+                'cms_company_id' => (int)$old->id, 'source_type' => CmsLead::SOURCE_MANUAL, 'created_at' => time() - 86400 * 400, 'updated_at' => time() - 86400 * 400])->execute();
+            $fire($kind, $c, $recipientOf($c, $old));
+            $check($access->mainResponsibleId('company', (int)$old->id) === null, 'a client with a history, '.$kind.' → '.$to.': the flow sets no main responsible');
+
+            // A client with a main responsible (the administrator): it stays.
+            if ($to !== 'worker') {
+                $owned = $makeCompany('Свой у админа '.$to.' '.$kind.' '.$u, $mail('m-'.$n), (int)$admin->id);
+                $fire($kind, $c, $recipientOf($c, $owned));
+                $check($access->mainResponsibleId('company', (int)$owned->id) === (int)$admin->id, 'a client with a main responsible, '.$kind.' → '.$to.': the main one stays');
+            }
+
+            // A protected client of the administrator: its deal is the administrator's.
+            if (class_exists($protection) && $protection::ready() && $to !== 'unsorted') {
+                $guarded2 = $makeCompany('Защита '.$to.' '.$kind.' '.$u, $mail('g-'.$n), (int)$admin->id);
+                (new $protection())->setAlways('company', (int)$guarded2->id, true);
+                $fire($kind, $c, $recipientOf($c, $guarded2));
+                $gl = $leadsOf($guarded2);
+                $check(count($gl) === 1 && (int)$gl[0]->executor_id === (int)$admin->id && $access->mainResponsibleId('company', (int)$guarded2->id) === (int)$admin->id,
+                    'a protected client, '.$kind.' → '.$to.': the deal is its main responsible\'s');
+            }
+        }
+    }
+
     // The responsible of new companies of the flow (a bot creates them with the campaign).
     $check($campaigns::newCardOwnerId((int)$campaign->id, (int)$manager->id) === null, 'new companies: the pool by default');
     $campaign->new_card_owner = 'sender';
@@ -360,12 +432,12 @@ try {
         $madeId = (int)($made['company']['id'] ?? 0);
         $check($madeId && CmsCompany2manager::find()->andWhere(['cms_company_id' => $madeId])->select('cms_user_id')->column() == [(int)$admin->id],
             'cms_company_create_full with the campaign: the responsible of new companies of the campaign');
-        // A company of the pool: created, the manager has no access — the answer says so instead of failing.
+        // A company of the pool: every CRM employee reads it (П2а), so the bot gets its card.
         $pool = (new \skeeks\cms\mcp\services\CmsCompanyService())->companyCreateFull(['name' => 'Бот пул П2д '.$u]);
         $check(!CmsCompany2manager::find()->andWhere(['cms_company_id' => (int)($pool['company']['id'] ?? 0)])->exists(),
             'cms_company_create_full without a campaign: the CRM default — the pool');
-        $check($made['created'] && ($made['company']['visible'] ?? true) === false && ($pool['company']['visible'] ?? true) === false,
-            'a company the bot may not open is reported created without access');
+        $check($made['created'] && ($made['company']['visible'] ?? true) === false && $pool['created'] && !isset($pool['company']['visible']),
+            'a company of another responsible is reported created without access; the pool is readable by every CRM employee');
     }
 
     // The defaults of a new campaign come from the CRM settings «Исходящие продажи».

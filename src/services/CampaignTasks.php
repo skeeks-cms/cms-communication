@@ -115,10 +115,37 @@ class CampaignTasks
         if (!$record) {
             return null;
         }
-        $open = $this->openLeadOf($record, (int)$campaign->cms_site_id);
-        if ($open === null) {
-            return $this->leadFrom($campaign, $recipient, $kind, $message, $what, $record, $now);
+        // One event of a client at a time: the client row is locked, so two events (a reply and a view, two
+        // workers) never make two deals or two main responsibles; the state is read under the lock.
+        $transaction = \Yii::$app->db->beginTransaction();
+        try {
+            self::lockClient($record);
+            $open = $this->openLeadOf($record, (int)$campaign->cms_site_id);
+            $result = $open === null
+                ? $this->leadFrom($campaign, $recipient, $kind, $message, $what, $record, $now)
+                : $this->continueLead($campaign, $recipient, $kind, $message, $what, $open, $now);
+            $transaction->commit();
+        } catch (\Throwable $e) {
+            $transaction->rollBack();
+            throw $e;
         }
+
+        return $result;
+    }
+
+    /** SELECT … FOR UPDATE of the recipient company or person (of a deal — its client). */
+    private static function lockClient($record): void
+    {
+        [$code, $id] = self::clientOf($record);
+        if ($code) {
+            $table = $code === 'company' ? CmsCompany::tableName() : CmsUser::tableName();
+            \Yii::$app->db->createCommand('SELECT id FROM '.$table.' WHERE id = :id FOR UPDATE', [':id' => $id])->queryScalar();
+        }
+    }
+
+    /** @return CmsTask|CmsLead|null an event of a client with an open deal */
+    private function continueLead(CmsCommCampaign $campaign, CmsCommCampaignRecipient $recipient, string $kind, ?CmsCommMessage $message, string $what, CmsLead $open, ?int $now)
+    {
         self::moveForward($campaign, $open, $kind);
         if ($kind === self::KIND_VIEW || $kind === self::KIND_VISIT) {
             // A view or a visit adds to the open deal: an entry of its feed.
@@ -184,17 +211,21 @@ class CampaignTasks
         return [null, 0];
     }
 
-    /** The receiver of a deal of a client without a main responsible becomes its main one («Взять в работу», П2д). */
-    private static function takeIntoWork($record, int $userId): void
+    /**
+     * Whether the client is in the common pool BEFORE its deal is made (П2д):
+     * the new deal is a history of the client itself, so after it the client
+     * is never «free» any more. Read under the lock of handle(); a client with
+     * a main responsible or with a history is not taken.
+     */
+    private static function poolClient($record): ?array
     {
         [$code, $id] = self::clientOf($record);
         $access = \skeeks\cms\crm\CrmAccess::class;
-        if (!$code || !$userId || !class_exists($access) || !method_exists($access, 'canTakeIntoWork')) {
-            return;
+        if (!$code || !class_exists($access) || !method_exists($access, 'canTakeIntoWork')) {
+            return null;
         }
-        if ($access::instance()->canTakeIntoWork($code, $id)) {
-            $access::instance()->setMain($code, $id, $userId);
-        }
+
+        return $access::instance()->canTakeIntoWork($code, $id) ? [$code, $id] : null;
     }
 
     /** The pipeline of the campaign's deals: its own, otherwise «Исходящие продажи» (core OutboundSales); null — none. */
@@ -343,6 +374,8 @@ class CampaignTasks
         $pipeline = self::pipelineOf($campaign);
         $stage = $pipeline && $executorId ? self::stageOf($pipeline, $kind) : null;
         $place = $pipeline ? array_filter(['cms_lead_pipeline_id' => (int)$pipeline->id, 'cms_lead_stage_id' => $stage ? (int)$stage->id : null]) : [];
+        // Before the deal: afterwards the deal itself is the client's history and the client is not «free».
+        $pool = $executorId ? self::poolClient($record) : null;
         $lead = (new \skeeks\cms\services\CmsLeadService())->createFromSource([
             'cms_site_id' => (int)$campaign->cms_site_id ?: null,
             'source_type' => CmsLead::SOURCE_MAILING,
@@ -363,8 +396,13 @@ class CampaignTasks
             'executor_id' => $executorId,
             'status' => $executorId ? CmsLead::STATUS_IN_WORK : CmsLead::STATUS_NEW,
         ] + $place);
-        if ($executorId) {
-            self::takeIntoWork($record, $executorId);
+        // A client of the pool: the receiver of its deal becomes its main responsible («Взять в работу»), in the
+        // same transaction and under the lock; a main responsible set meanwhile (the core) is never replaced.
+        if ($pool) {
+            $access = \skeeks\cms\crm\CrmAccess::instance();
+            if ($access->mainResponsibleId($pool[0], $pool[1]) === null) {
+                $access->setMain($pool[0], $pool[1], $executorId);
+            }
         }
         // The history of this send: the campaign letter (with its personal offer) and the reply.
         $linker = new MessageLinker();

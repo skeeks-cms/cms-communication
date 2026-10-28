@@ -18,8 +18,19 @@ class m261109_100000__alter_table__cms_comm_campaign_lead_on_view extends Migrat
         }
     }
 
+    /** Refuses while a campaign makes deals on a view: dropping the column would erase that setting silently. */
     public function safeDown()
     {
+        $table = $this->db->getTableSchema('{{%cms_comm_campaign}}', true);
+        if (!$table || !$table->getColumn('lead_on_view')) {
+            return;
+        }
+        $count = (int)(new \yii\db\Query())->from('{{%cms_comm_campaign}}')->andWhere(['lead_on_view' => 1])->count('*', $this->db);
+        if ($count) {
+            echo '    > refused: '.$count." campaign(s) make a deal on a view; dropping lead_on_view would erase it. Restore the database backup instead.\n";
+
+            return false;
+        }
         $this->dropColumn('{{%cms_comm_campaign}}', 'lead_on_view');
     }
 }
