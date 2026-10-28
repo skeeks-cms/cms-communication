@@ -108,6 +108,8 @@ class CommunicationBootstrap implements BootstrapInterface
                 'accessCallback' => [\skeeks\cms\communication\helpers\ListUi::class, 'canImportAudience'],
                 'callback' => [\skeeks\cms\communication\controllers\AdminCmsCommImportController::class, 'renderCompaniesTab'],
             ];
+            // «Список», «Импорт», «Добавить»: "create" has no priority of its own (0, as "index").
+            $definition['actionsMap']['create']['priority'] = $definition['actionsMap']['create']['priority'] ?? 1000;
             \Yii::$container->set($companies, $definition);
         }
 
