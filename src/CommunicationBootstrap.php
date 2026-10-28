@@ -78,15 +78,19 @@ class CommunicationBootstrap implements BootstrapInterface
             return;
         }
 
+        // The line icon of the backend set; an older cms-backend without it keeps the font icon.
+        $importIcon = class_exists(\skeeks\cms\backend\helpers\BackendIcon::class) && \skeeks\cms\backend\helpers\BackendIcon::supports('upload')
+            ? 'svg:upload' : 'fa fa-upload';
+
         // "Импорт" — a tab of the core section "Лиды" beside "Отчёт": BackendController::$actionsMap through
         // the container definition of the controller, so core knows nothing of imports.
-        $leads = \skeeks\cms\controllers\AdminCmsLeadController::class;
+        $leads =\skeeks\cms\controllers\AdminCmsLeadController::class;
         if (class_exists($leads)) {
             $definition = \Yii::$container->getDefinitions()[$leads] ?? [];
             $definition['actionsMap']['comm-import'] = [
                 'class' => \skeeks\cms\backend\ViewBackendAction::class,
                 'name' => 'Импорт',
-                'icon' => 'fa fa-upload',
+                'icon' => $importIcon,
                 'priority' => 28,
                 'callback' => [\skeeks\cms\communication\controllers\AdminCmsCommImportController::class, 'renderLeadsTab'],
             ];
@@ -99,7 +103,7 @@ class CommunicationBootstrap implements BootstrapInterface
             $definition['actionsMap']['comm-import'] = [
                 'class' => \skeeks\cms\backend\ViewBackendAction::class,
                 'name' => 'Импорт',
-                'icon' => 'fa fa-upload',
+                'icon' => $importIcon,
                 'priority' => 900,
                 'accessCallback' => [\skeeks\cms\communication\helpers\ListUi::class, 'canImportAudience'],
                 'callback' => [\skeeks\cms\communication\controllers\AdminCmsCommImportController::class, 'renderCompaniesTab'],
