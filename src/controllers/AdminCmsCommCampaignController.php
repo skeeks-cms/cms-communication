@@ -319,6 +319,8 @@ JS);
                     'cms_comm_account_id' => ['class' => SelectField::class, 'items' => $accounts, 'allowNull' => true, 'nullLabel' => '— выберите ящик —'],
                     'channelHint' => ['class' => HtmlBlock::class, 'content' => $channelHints],
                     'task_on_open' => ['class' => BoolField::class, 'allowNull' => false],
+                    // П2д, after the migration of lead_on_view.
+                    'lead_on_view' => $model->hasAttribute('lead_on_view') ? ['class' => BoolField::class, 'allowNull' => false] : null,
                     'task_on_reply' => ['class' => BoolField::class, 'allowNull' => false],
                 ]),
             ],

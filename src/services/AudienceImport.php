@@ -41,7 +41,8 @@ use yii\helpers\Json;
  * - one company or one contact by email, phone or INN — that card joins the
  *   list; the import does not change its responsible, contacts or details;
  * - nothing found — a company (when the row names one) and a contact are
- *   created, linked, with the importing manager responsible, the source
+ *   created, linked, with the responsible chosen in the import (none by
+ *   default: the common pool, П2д), the source
  *   «Рассылка: база …» and the cold state (Audience::origin(); the contacts
  *   get the topic with the basis of the file, «холодный, согласия нет»);
  * - rows left out with the reason (STATUS_EXCLUDED): several cards match,
@@ -70,11 +71,12 @@ class AudienceImport
     /**
      * "Добавить адреса": each line ("Ромашка, Иван, info@…, +7 …" or just an
      * email) is split by the core parser (CrmContactParser) into the columns
-     * of a new audience import of the list.
+     * of a new audience import of the list; $executorId — the responsible of
+     * new cards, null — none (the common pool, П2д).
      *
      * @throws \DomainException
      */
-    public static function fromLines(CmsCommList $list, string $text, User $user): CmsCommImport
+    public static function fromLines(CmsCommList $list, string $text, User $user, ?int $executorId = null): CmsCommImport
     {
         $rows = [];
         foreach (preg_split('/\r\n|\r|\n/', $text) as $line) {
@@ -109,7 +111,7 @@ class AudienceImport
         $import = LeadImport::create((int)$list->cms_site_id, $content, null, true);
         $import->mode = CmsCommImport::MODE_AUDIENCE;
         $import->cms_comm_list_id = (int)$list->id;
-        $import->executor_id = (int)$user->id;
+        $import->executor_id = $executorId ?: null;
         $import->mapping = Json::encode(['company', 'name', 'email', 'phone', 'inn', 'website']);
         $import->save(false, ['mode', 'cms_comm_list_id', 'executor_id', 'mapping', 'updated_at']);
 
@@ -418,14 +420,14 @@ class AudienceImport
     /**
      * A new company (when the row names one) and a contact person linked to
      * it; the contacts go to the person, or to the company without one. The
-     * responsible is the employee of the import; no password, no invitation.
+     * responsible is the one of the import (none — no link); no password, no invitation.
      *
      * @return CmsCompany|CmsUser the card that joins the list: the company, else the person
      */
     private static function createCards(CmsCommImport $import, array $data, ?int $companyId): \yii\db\ActiveRecord
     {
         $siteId = (int)$import->cms_site_id;
-        $managerId = (int)($import->executor_id ?: $import->created_by);
+        $managerId = (int)$import->executor_id;
         $source = 'Рассылка: база '.($import->file_name ? '«'.$import->file_name.'»' : ($import->list ? '«'.$import->list->name.'»' : '№'.(int)$import->id));
         $company = $companyId ? CmsCompany::findOne($companyId) : null;
         if (!$company && $data['company'] !== '') {

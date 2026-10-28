@@ -45,6 +45,7 @@ use yii\helpers\Json;
  * @property string|null $offer_type
  * @property int|null    $offer_id
  * @property int         $task_on_open
+ * @property int         $lead_on_view П2д: a deal when a recipient views the presentation or offer (CampaignTasks::onView())
  * @property int         $task_on_reply
  * @property int         $one_per_company one letter per company: the company and its people get one letter
  * @property int|null    $quiet_days "не мешать менеджеру": no letter to whom we talked to in so many days; null or 0 — off
@@ -167,7 +168,9 @@ class CmsCommCampaign extends ActiveRecord
                 'channel' => MailboxCampaignChannel::ID,
                 'sender_mode' => self::SENDER_RESPONSIBLE,
                 'offer_kind' => self::OFFER_NONE,
-                'task_on_open' => 1,
+                // «Исходящие продажи» of the CRM settings (П2д), the campaign may change them.
+                'task_on_open' => self::crmDefault('outgoingTaskOnView', 1),
+                'lead_on_view' => self::crmDefault('outgoingLeadOnView', 0),
                 'task_on_reply' => 1,
                 'one_per_company' => 1,
                 'quiet_days' => self::QUIET_DAYS_DEFAULT,
@@ -180,6 +183,17 @@ class CmsCommCampaign extends ActiveRecord
                 }
             }
         }
+    }
+
+    /** A default of a new campaign from the core CRM settings; an older core without the setting — $fallback. */
+    private static function crmDefault(string $property, int $fallback): int
+    {
+        $app = \Yii::$app;
+        if ($app && $app->has('crmSettings') && property_exists($app->crmSettings, $property)) {
+            return (int)(bool)$app->crmSettings->{$property};
+        }
+
+        return $fallback;
     }
 
     public function afterFind()
@@ -208,7 +222,7 @@ class CmsCommCampaign extends ActiveRecord
             [['subject'], 'string', 'max' => 500],
             [['body_html'], 'string', 'max' => 500000],
             [['cms_site_id', 'cms_comm_topic_id', 'cms_comm_account_id', 'offer_id'], 'integer'],
-            [['task_on_open', 'task_on_reply', 'one_per_company'], 'boolean'],
+            [['task_on_open', 'task_on_reply', 'one_per_company', 'lead_on_view'], 'boolean'],
             [['quiet_days'], 'integer', 'min' => 0, 'max' => 365],
             [['quiet_days'], 'default', 'value' => 0],
             [['audience_type'], 'in', 'range' => array_keys(self::audienceTypes())],
@@ -277,7 +291,8 @@ class CmsCommCampaign extends ActiveRecord
             'offer_kind' => 'Предложение',
             'offer_id' => 'Документ или шаблон',
             'task_on_open' => 'Задача ответственному «Позвонить: смотрел Презентацию», когда получатель открыл Презентацию или КП или перешёл на сайт (сделка не создаётся)',
-            'task_on_reply' => 'Ответ клиента — в сделку: задача в открытой сделке или новая сделка в «Неразобранном»',
+            'task_on_reply' => 'Ответ клиента — в сделку: задача в открытой сделке или новая сделка у отправителя письма',
+            'lead_on_view' => 'Создавать сделку при просмотре Презентации или КП',
             'launched_at' => 'Запущена',
             'launched_by' => 'Запустил',
             'finished_at' => 'Завершена',
@@ -298,6 +313,8 @@ class CmsCommCampaign extends ActiveRecord
         return ArrayHelper::merge(parent::attributeHints(), [
             'cms_comm_topic_id' => 'Клиент может отписаться от темы; отписанные от неё и от всех рассылок не получат письмо.',
             'sender_mode' => 'Письмо уходит как обычное личное письмо из почтового ящика: ответ приходит туда же и попадает в ленту компании или контакта.',
+            'task_on_reply' => 'Ответ или заявка из письма: если у клиента есть открытая сделка — задача в ней; иначе новая сделка у того, от чьего имени ушло письмо. Письмо из общего ящика или клиент без основного ответственного — сделка в «Неразобранном».',
+            'lead_on_view' => 'По умолчанию нет: просмотр делает получателя «тёплым», а сделку создаёт его ответ. Включите, если просмотр уже повод вести сделку. Умолчание — в настройках CRM, «Исходящие продажи».',
             'audienceStatuses' => 'Пусто — новые и в работе.',
             'audienceExcludeLists' => 'Например, «Действующие клиенты». Если в исключающем списке компания, письмо не получат и её люди, и её сделки.',
             'one_per_company' => 'Если в аудитории компания и её люди или сделки, письмо получит один контакт: добавленный по одному со своим адресом, '

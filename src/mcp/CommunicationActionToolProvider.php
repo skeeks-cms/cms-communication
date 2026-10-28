@@ -186,7 +186,7 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                     'cms_comm_account_id' => ['type' => 'integer'],
                     'subject' => ['type' => 'string', 'description' => 'Тема шаблона для получателей без личной темы; по умолчанию название.'],
                     'body_html' => ['type' => 'string', 'description' => 'Шаблон для получателей без личного текста: {Имя}, {Компания}, {Менеджер}, {Ссылка}, {Отписаться}.'],
-                    'task_on_open' => ['type' => 'boolean'], 'task_on_reply' => ['type' => 'boolean'],
+                    'task_on_open' => ['type' => 'boolean'], 'lead_on_view' => ['type' => 'boolean'], 'task_on_reply' => ['type' => 'boolean'],
                 ] + $campaignPurpose + $confirm, ['name', 'cms_comm_topic_id'])),
             $this->tool('cms_comm_campaign_recipient_add',
                 'Получатели черновика кампании с личной темой и текстом каждому (повторный вызов для того же клиента заменяет текст). {Ссылка} и {Отписаться} обязательны в письме — без них добавятся в конце; '

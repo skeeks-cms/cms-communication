@@ -221,8 +221,8 @@ class AdminCmsCommImportController extends BackendModelStandartController
                 } else {
                     throw new \DomainException('Выберите файл или вставьте таблицу.');
                 }
-                // New cards of a base are the importing manager's; requests go to «Неразобранное» unless a responsible is chosen.
-                $import->executor_id = $mode === CmsCommImport::MODE_AUDIENCE ? (int)\Yii::$app->user->id : null;
+                // Nobody by default: requests go to «Неразобранное», a base is the common pool (П2д) unless a responsible is chosen.
+                $import->executor_id = null;
                 if (CmsCommImport::audienceReady()) {
                     $import->mode = $mode;
                 }
@@ -375,7 +375,7 @@ class AdminCmsCommImportController extends BackendModelStandartController
             'errors' => $errors,
             'listName' => (string)$request->post('list_name', ''),
             'sample' => CmsCommImportRow::find()->andWhere(['cms_comm_import_id' => (int)$import->id])->orderBy(['row_num' => SORT_ASC])->limit(3)->all(),
-            'executors' => $this->executors(),
+            'executors' => self::responsibleOptions(),
             'topics' => CmsCommTopic::forSite($siteId, true),
             'lists' => CmsCommList::forSite($siteId),
             'rows' => (clone $rowsQuery)->offset(($page - 1) * 100)->limit(100)->all(),
@@ -431,11 +431,8 @@ class AdminCmsCommImportController extends BackendModelStandartController
         $executor = (int)($post['executor_id'] ?? 0);
         if ($executor && !isset($this->executors()[$executor])) {
             $errors['executor_id'] = 'Выберите ответственного.';
-        } elseif (!$executor && $import->isAudience()) {
-            // New cards of a base are the importing manager's.
-            $executor = (int)\Yii::$app->user->id;
         }
-        // Requests without a responsible go to «Неразобранное».
+        // Requests without a responsible go to «Неразобранное»; new cards of a base without one — the common pool (П2д).
         $import->executor_id = $executor ?: null;
 
         $topicId = (int)($post['cms_comm_topic_id'] ?? 0);
@@ -457,10 +454,34 @@ class AdminCmsCommImportController extends BackendModelStandartController
     }
 
     /** @return string[] id => name: the responsible employees the importer may choose */
-    private function executors(): array
+    /**
+     * "Ответственный" of new cards of a base (П2д): «Без ответственного» (the
+     * default, the common pool), «Я», another employee (an administrator).
+     * Also "Добавить адреса" of a list.
+     *
+     * @return string[] '' | id => label
+     */
+    public static function responsibleOptions(): array
     {
         $me = \Yii::$app->user->identity;
-        if (!$this->isAdmin()) {
+        $result = ['' => 'Без ответственного', (int)$me->id => 'Я — '.$me->shortDisplayName];
+        foreach (self::workers() as $id => $name) {
+            $result[$id] = $result[$id] ?? $name;
+        }
+
+        return $result;
+    }
+
+    private function executors(): array
+    {
+        return self::workers();
+    }
+
+    /** Employees an import may give its records to: the importing one, an administrator — any with deals. */
+    private static function workers(): array
+    {
+        $me = \Yii::$app->user->identity;
+        if (!\Yii::$app->user->can(CmsManager::PERMISSION_ROLE_ADMIN_ACCESS)) {
             return [(int)$me->id => (string)$me->shortDisplayName];
         }
         $result = [];

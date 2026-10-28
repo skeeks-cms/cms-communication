@@ -120,8 +120,9 @@ $fields['name'] = 'Контакт (имя)';
                     </label>
                     <label>
                         <span class="sx-import__label">Ответственный за новые компании и контакты</span>
-                        <?= Html::dropDownList('executor_id', $import->executor_id, $executors, ['class' => 'form-control']) ?>
+                        <?= Html::dropDownList('executor_id', $import->executor_id ?: '', $executors, ['class' => 'form-control']) ?>
                         <?php if (!empty($errors['executor_id'])) : ?><span class="sx-import__error"><?= Html::encode($errors['executor_id']) ?></span><?php endif; ?>
+                        <span class="sx-import__muted">Без ответственного — общий пул: компанию берёт в работу первый менеджер. Найденные в CRM карточки не меняются.</span>
                     </label>
                     <label>
                         <span class="sx-import__label">Тема рассылки</span>
@@ -149,6 +150,8 @@ $fields['name'] = 'Контакт (имя)';
                             <span><?= $badge($status) ?> <?= (int)$count ?></span>
                         <?php endforeach; ?>
                     </div>
+                    <p class="sx-import__muted">Новые компании и контакты: <?= $import->executor
+                            ? 'ответственный — '.Html::encode($import->executor->shortDisplayName) : 'без ответственного, в общий пул' ?>.</p>
                     <?php if ($preview['reasons']) : ?>
                         <p class="sx-import__muted">Исключены: <?= Html::encode(implode(', ', array_map(static fn($r, $n) => mb_strtolower($r, 'UTF-8').' — '.$n,
                                 array_keys($preview['reasons']), $preview['reasons']))) ?>.</p>
@@ -233,7 +236,7 @@ JS);
                     <span>Список: <strong><?= Html::a(Html::encode($import->list->name), Url::to(['/cmsCommunication/admin-cms-comm-list/view', 'pk' => (int)$import->list->id]),
                                 ['target' => '_blank', 'data-pjax' => 0]) ?></strong></span>
                 <?php endif; ?>
-                <span>Ответственный за новые: <strong><?= Html::encode($import->executor ? $import->executor->shortDisplayName : '—') ?></strong></span>
+                <span>Ответственный за новые: <strong><?= Html::encode($import->executor ? $import->executor->shortDisplayName : 'без ответственного') ?></strong></span>
                 <span>Тема: <strong><?= Html::encode($import->topic ? $import->topic->name : 'без темы') ?></strong></span>
             </div>
             <div class="sx-import__counts">

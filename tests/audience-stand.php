@@ -227,6 +227,86 @@ try {
     $check($activities() === $before && $made && !$made->executor_id && $made->status === CmsLead::STATUS_NEW,
         'the foreign deal is untouched, the request waits in «Неразобранное» without the import executor');
 
+    // П2д: a base without a responsible is the common pool — new cards get no manager («Добавить адреса» by default).
+    $pool = AudienceImport::fromLines($list, $mail('pool').', Пул Пулов', $manager);
+    $check(!$pool->executor_id, '"Добавить адреса": no responsible by default');
+    AudienceImport::run($pool);
+    $poolRow = CmsCommImportRow::find()->andWhere(['cms_comm_import_id' => (int)$pool->id])->one();
+    $check($poolRow && $poolRow->record_type === 'client' && !\skeeks\cms\models\CmsUser2manager::find()->andWhere(['client_id' => (int)$poolRow->record_id])->exists(),
+        'a card of the pool has no manager');
+    $mine = AudienceImport::fromLines($list, $mail('mine'), $manager, (int)$manager->id);
+    AudienceImport::run($mine);
+    $mineRow = CmsCommImportRow::find()->andWhere(['cms_comm_import_id' => (int)$mine->id])->one();
+    $check($mineRow && \skeeks\cms\models\CmsUser2manager::find()->andWhere(['client_id' => (int)$mineRow->record_id, 'worker_id' => (int)$manager->id])->exists(),
+        '«Я»: the card is the manager\'s');
+
+    // П2д: a reply makes a deal of the sender — his own mailbox, a client with a main responsible; else «Неразобранное».
+    $sentLetter = CmsCommMessage::find()->andWhere(['direction' => CmsCommMessage::DIRECTION_OUT, 'cms_site_id' => $siteId])->orderBy(['id' => SORT_DESC])->one();
+    $replyLetter = CmsCommMessage::find()->andWhere(['direction' => CmsCommMessage::DIRECTION_IN, 'cms_site_id' => $siteId])->orderBy(['id' => SORT_DESC])->one();
+    $check($sentLetter && $replyLetter, 'the stand needs an incoming and an outgoing letter');
+    $mailbox = static function (array $senders) use ($siteId, $u) {
+        $account = new \skeeks\cms\communication\models\CmsCommAccount(['cms_site_id' => $siteId, 'channel' => 'email',
+            'address' => 'p2d-'.count($senders).'-'.$u.'@skeeks.com', 'is_active' => 1]);
+        $account->save(false);
+        foreach ($senders as $id) {
+            (new \skeeks\cms\communication\models\CmsCommAccountAccess(['cms_comm_account_id' => (int)$account->id, 'cms_user_id' => $id,
+                'read_level' => 'all', 'send_level' => 'own']))->save(false);
+        }
+
+        return $account;
+    };
+    $own = $mailbox([(int)$manager->id]);
+    $shared = $mailbox([(int)$manager->id, (int)$admin->id]);
+    $campaign = new \skeeks\cms\communication\models\CmsCommCampaign(['name' => 'Тест П2д '.$u, 'cms_site_id' => $siteId]);
+    $campaign->save(false);
+    $replyOf = static function (CmsCompany $company, $account) use ($campaign, $manager, $sentLetter, $u) {
+        $recipient = new CmsCommCampaignRecipient(['cms_comm_campaign_id' => (int)$campaign->id, 'record_type' => 'company', 'record_id' => (int)$company->id,
+            'address' => 'r-'.$company->id.'-'.$u.'@skeeks.com', 'sender_user_id' => (int)$manager->id, 'cms_comm_account_id' => (int)$account->id,
+            'cms_comm_message_id' => (int)$sentLetter->id, 'status' => CmsCommCampaignRecipient::STATUS_SENT]);
+        $recipient->save(false);
+
+        return $recipient;
+    };
+    $tasks = new \skeeks\cms\communication\services\CampaignTasks();
+    $client = $makeCompany('Свой клиент П2д '.$u, $mail('p2d-own'), (int)$manager->id);
+    $sentOwn = $replyOf($client, $own);
+    $lead = $tasks->onReply($campaign, $sentOwn, $replyLetter);
+    $check($lead instanceof CmsLead && (int)$lead->executor_id === (int)$manager->id && $lead->status === CmsLead::STATUS_IN_WORK,
+        'a reply to the own mailbox: the deal is the sender\'s at once');
+    $client2 = $makeCompany('Общий ящик П2д '.$u, $mail('p2d-shared'), (int)$manager->id);
+    $lead2 = $tasks->onReply($campaign, $replyOf($client2, $shared), $replyLetter);
+    $check($lead2 instanceof CmsLead && !$lead2->executor_id && $lead2->status === CmsLead::STATUS_NEW, 'a shared mailbox: «Неразобранное»');
+    $poolCompany = new CmsCompany(['name' => 'Пул П2д '.$u]);
+    $poolCompany->save(false);
+    $poolRecipient = $replyOf($poolCompany, $own);
+    $lead3 = $tasks->onReply($campaign, $poolRecipient, $replyLetter);
+    $check($lead3 instanceof CmsLead && !$lead3->executor_id, 'a company of the pool: «Неразобранное»');
+
+    // A request from the letter continues the open deal; a view makes a deal only by the campaign setting.
+    $task = $tasks->onRequest($campaign, $sentOwn, 'Вопрос: сколько стоит?');
+    $check($task instanceof \skeeks\cms\models\CmsTask && (int)$task->cms_lead_id === (int)$lead->id && strpos($task->name, 'Связаться:') === 0,
+        'a request of a client with an open deal: a task in it');
+    $viewCompany = $makeCompany('Просмотр П2д '.$u, $mail('p2d-view'), (int)$manager->id);
+    $viewer = $replyOf($viewCompany, $own);
+    $check($tasks->onView($campaign, $viewer) === null, 'a view makes no deal by default');
+    $campaign->lead_on_view = 1;
+    $viewLead = $tasks->onView($campaign, $viewer);
+    $check($viewLead instanceof CmsLead && (int)$viewLead->executor_id === (int)$manager->id && strpos($viewLead->name, 'Смотрел Презентацию') === 0,
+        '«Создавать сделку при просмотре»: a deal of the sender');
+    $check($tasks->onView($campaign, $viewer) instanceof CmsLead && CmsLead::find()->andWhere(['cms_company_id' => (int)$viewCompany->id])->count() == 1,
+        'a second view adds to the open deal');
+
+    // The defaults of a new campaign come from the CRM settings «Исходящие продажи».
+    if (Yii::$app->has('crmSettings') && property_exists(Yii::$app->crmSettings, 'outgoingLeadOnView')) {
+        $was = Yii::$app->crmSettings->outgoingLeadOnView;
+        Yii::$app->crmSettings->outgoingLeadOnView = 1;
+        Yii::$app->crmSettings->outgoingTaskOnView = 0;
+        $fresh = new \skeeks\cms\communication\models\CmsCommCampaign(['name' => 'x']);
+        $check((int)$fresh->lead_on_view === 1 && (int)$fresh->task_on_open === 0, 'a new campaign takes the CRM defaults');
+        Yii::$app->crmSettings->outgoingLeadOnView = $was;
+        Yii::$app->crmSettings->outgoingTaskOnView = 1;
+    }
+
     // The audience schema of this stand is migrated: imports keep their mode.
     $check(CmsCommImport::audienceReady() && $import->isAudience() && !$theirs->isAudience() && strpos($theirs->asText(), 'Импорт №') === 0,
         'the audience schema is detected; a leads import stays one');

@@ -1386,6 +1386,37 @@ class Campaigns
     }
 
     /**
+     * The first counted view of the presentation or offer of a campaign
+     * letter (the offer package calls it): a deal when the campaign says so
+     * (`lead_on_view`, П2д), see CampaignTasks::onView().
+     */
+    public static function onOfferView(int $messageId, ?int $now = null): ?CmsLead
+    {
+        $recipient = $messageId ? CmsCommCampaignRecipient::find()->andWhere(['cms_comm_message_id' => $messageId])->one() : null;
+        $campaign = $recipient ? $recipient->campaign : null;
+
+        return $campaign ? (new CampaignTasks())->onView($campaign, $recipient, $now) : null;
+    }
+
+    /**
+     * A request from a campaign letter (a question or an acceptance on the
+     * page of its offer; the offer package calls it): the same rule as a
+     * reply (`task_on_reply`), see CampaignTasks::onRequest().
+     *
+     * @return CmsTask|CmsLead|null
+     */
+    public static function onOfferRequest(int $messageId, string $what, ?CmsCommMessage $message = null)
+    {
+        $recipient = $messageId ? CmsCommCampaignRecipient::find()->andWhere(['cms_comm_message_id' => $messageId])->one() : null;
+        $campaign = $recipient ? $recipient->campaign : null;
+        if (!$campaign || !$campaign->task_on_reply) {
+            return null;
+        }
+
+        return (new CampaignTasks())->onRequest($campaign, $recipient, $what, $message);
+    }
+
+    /**
      * New incoming letters of a mail receive: a reply to a campaign letter
      * marks its recipient "ответил" and, by the campaign setting, gives the
      * sender a task.

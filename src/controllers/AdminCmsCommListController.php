@@ -312,12 +312,18 @@ class AdminCmsCommListController extends BackendModelStandartController
         $request = \Yii::$app->request;
         $error = null;
         $text = (string)$request->post('lines', '');
+        // New cards: nobody by default (the common pool, П2д), «Я» or another employee.
+        $responsibles = AdminCmsCommImportController::responsibleOptions();
+        $executorId = (int)$request->post('executor_id', 0);
         if ($request->isPost) {
             try {
                 if (!\skeeks\cms\communication\models\CmsCommImport::audienceReady()) {
                     throw new \DomainException('Добавление адресов станет доступно после обновления базы данных.');
                 }
-                $import = \skeeks\cms\communication\services\AudienceImport::fromLines($list, $text, \Yii::$app->user->identity);
+                if ($executorId && !isset($responsibles[$executorId])) {
+                    throw new \DomainException('Выберите ответственного.');
+                }
+                $import = \skeeks\cms\communication\services\AudienceImport::fromLines($list, $text, \Yii::$app->user->identity, $executorId ?: null);
 
                 // The preview at once: the import card shows new, found and excluded addresses before anything is added.
                 return $this->redirect((string)BackendUrlHelper::createByParams(['/cmsCommunication/admin-cms-comm-import/view', 'pk' => (int)$import->id, 'preview' => 1])
@@ -328,7 +334,8 @@ class AdminCmsCommListController extends BackendModelStandartController
         }
         MailingAsset::register($this->view);
 
-        return $this->render('@skeeks/cms/communication/views/list/add-addresses', ['list' => $list, 'error' => $error, 'text' => $text]);
+        return $this->render('@skeeks/cms/communication/views/list/add-addresses', ['list' => $list, 'error' => $error, 'text' => $text,
+            'executorId' => $executorId ?: null, 'responsibles' => $responsibles]);
     }
 
     /** The members as CSV (Excel opens it: UTF-8 with BOM, semicolons). */

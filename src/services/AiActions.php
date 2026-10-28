@@ -502,7 +502,7 @@ class AiActions
      * It is never launched here: an employee launches it in "Рассылки".
      *
      * @param array $args name, cms_comm_topic_id, offer ("proposal:10" — one document for all) or offer_template_id
-     *                    (a КП from the template for each), cms_comm_account_id, subject, body_html, task_on_open, task_on_reply
+     *                    (a КП from the template for each), cms_comm_account_id, subject, body_html, task_on_open, lead_on_view, task_on_reply
      */
     public function createCampaign(array $args, bool $apply): array
     {
@@ -517,6 +517,9 @@ class AiActions
         ]);
         if (array_key_exists('task_on_open', $args)) {
             $campaign->task_on_open = (int)(bool)$args['task_on_open'];
+        }
+        if (array_key_exists('lead_on_view', $args) && $campaign->hasAttribute('lead_on_view')) {
+            $campaign->lead_on_view = (int)(bool)$args['lead_on_view'];
         }
         if (array_key_exists('task_on_reply', $args)) {
             $campaign->task_on_reply = (int)(bool)$args['task_on_reply'];
