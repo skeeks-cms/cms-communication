@@ -18,7 +18,7 @@
     ],
     "require": {
         "php": ">=8.0",
-        "skeeks/cms": "^6.4.9.70",
+        "skeeks/cms": "^6.4.9.75",
         "skeeks/cms-backend": "^2.1.1.22",
         "skeeks/cms-job": "^1.4.0",
         "symfony/mime": "^6.4 || ^7.0",
