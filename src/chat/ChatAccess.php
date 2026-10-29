@@ -22,11 +22,13 @@ use yii\db\Expression;
  * rules as mailboxes (a bot is an account with access rows):
  * - all chats of a bot where the employee reads everything;
  * - chats the employee took ("Взять диалог") or wrote to from the CRM;
- * - chats linked to a lead, company, client, deal or task the employee sees
- *   (`forManager()`), unless the bot hides linked access.
+ * - chats linked to a lead, company, client, deal or task whose communication
+ *   the employee reads (CrmRecords::communicationQuery(): a company or a person
+ *   only when seen in full), unless the bot hides linked access.
  * Writing: "any" on the bot — every visible chat; "own" — chats the employee
- * took or that are linked to records they see. Administrators follow their
- * own access rows, as in mail.
+ * took, or linked to an open deal he works on or to a client seen in full:
+ * «Свои сделки» and "edit" write only through their open deals (owner's
+ * decision 29.10.2026). Administrators follow their own access rows, as in mail.
  */
 class ChatAccess
 {
@@ -83,20 +85,27 @@ class ChatAccess
 
     public function canSend(CmsCommConversation $conversation): bool
     {
+        return $this->sendRefusal($conversation) === null;
+    }
+
+    /** Why the employee may not write to the chat (one sentence), null — he may. */
+    public function sendRefusal(CmsCommConversation $conversation): ?string
+    {
         $row = $this->rowOf($conversation);
-        if (!$row || $row->send_level === CmsCommAccountAccess::SEND_NONE) {
-            return false;
-        }
-        if (!$this->canRead($conversation)) {
-            return false;
+        if (!$row || $row->send_level === CmsCommAccountAccess::SEND_NONE || !$this->canRead($conversation)) {
+            return 'Писать в этот чат вам нельзя: нужен доступ к боту на отправку.';
         }
         if ($row->send_level === CmsCommAccountAccess::SEND_ANY) {
-            return true;
+            return null;
         }
 
-        // "Own": chats the employee took or that belong to their clients.
-        return (int)$conversation->assigned_user_id === (int)$this->user->id
-            || CmsCommConversation::find()->andWhere(['id' => (int)$conversation->id])->andWhere($this->linkedCondition())->exists();
+        // "Own": chats the employee took, or linked to an open deal he works on or to a client seen in full.
+        if ((int)$conversation->assigned_user_id === (int)$this->user->id
+            || CmsCommConversation::find()->andWhere(['id' => (int)$conversation->id])->andWhere($this->sendLinkedCondition())->exists()) {
+            return null;
+        }
+
+        return 'С этим клиентом вы работаете только через свои сделки: привяжите чат к своей открытой сделке («Привязать»), тогда сможете отвечать.';
     }
 
     /** Bots (accounts) the employee has an access row on. */
@@ -136,18 +145,38 @@ class ChatAccess
         return $this->rows;
     }
 
-    /** The chat is linked to a CRM record the employee sees. */
+    /** The chat is linked to a CRM record whose communication the employee reads (CrmRecords::communicationQuery()). */
     private function linkedCondition(): array
     {
-        $conversationId = new Expression(CmsCommConversation::tableName().'.id');
         $conditions = ['or'];
         foreach (CrmRecords::types() as $type => $config) {
             $class = $config['class'];
-            $conditions[] = ['exists', CmsCommConversationLink::find()
-                ->andWhere([CmsCommConversationLink::tableName().'.cms_comm_conversation_id' => $conversationId])
-                ->andWhere(['model_code' => $class, 'model_id' => CrmRecords::visibleQuery($type, $this->user)->select($class::tableName().'.id')])];
+            $conditions[] = $this->linkedTo($class, CrmRecords::communicationQuery($type, $this->user)->select($class::tableName().'.id'));
         }
 
         return $conditions;
+    }
+
+    /**
+     * Where "own" sending may write: a chat linked to an open deal the employee works on
+     * (CrmRecords::workingLeadsQuery()) or to a company or a person seen in full.
+     */
+    private function sendLinkedCondition(): array
+    {
+        $lead = \skeeks\cms\models\CmsLead::class;
+        $conditions = ['or', $this->linkedTo($lead, CrmRecords::workingLeadsQuery($this->user)->select($lead::tableName().'.id'))];
+        foreach ([CrmRecords::COMPANY, CrmRecords::CLIENT] as $type) {
+            $class = CrmRecords::codeOf($type);
+            $conditions[] = $this->linkedTo($class, CrmRecords::communicationQuery($type, $this->user)->select($class::tableName().'.id'));
+        }
+
+        return $conditions;
+    }
+
+    private function linkedTo(string $modelCode, ActiveQuery $ids): array
+    {
+        return ['exists', CmsCommConversationLink::find()
+            ->andWhere([CmsCommConversationLink::tableName().'.cms_comm_conversation_id' => new Expression(CmsCommConversation::tableName().'.id')])
+            ->andWhere(['model_code' => $modelCode, 'model_id' => $ids])];
     }
 }

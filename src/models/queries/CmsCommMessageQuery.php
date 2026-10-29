@@ -156,11 +156,12 @@ class CmsCommMessageQuery extends ActiveQuery
                 ->andWhere(['model_code' => $modelCode, 'model_id' => $visibleIds])];
         };
 
-        // Leads, companies, clients, deals and tasks (a task or deal created from the letter, too).
+        // Leads, companies, clients, deals and tasks (a task or deal created from the letter, too) whose
+        // communication the employee reads: a company or a person only when seen in full (CrmRecords::communicationQuery()).
         $conditions = ['or'];
         foreach (CrmRecords::types() as $type => $config) {
             $class = $config['class'];
-            $conditions[] = $linkedTo($class, CrmRecords::visibleQuery($type, $user)->select($class::tableName().'.id'));
+            $conditions[] = $linkedTo($class, CrmRecords::communicationQuery($type, $user)->select($class::tableName().'.id'));
         }
 
         return $conditions;

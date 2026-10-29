@@ -85,6 +85,78 @@ final class CrmRecords
         return $query;
     }
 
+    /**
+     * Records whose communication — letters, chats linked to them — the employee reads (owner's decision
+     * 29.10.2026, ARCHITECTURE.md п. 11): «Свои сделки» and "edit" work only through their deals, so a
+     * company or a person opens its letters and chats only when seen in full (CrmAccess::seesWholeClient():
+     * "full", the main one, a leader through a "full" subordinate, an administrator); a person — also as data
+     * of a company seen in full (as CrmAccess::feedCondition()). Deals, services and tasks keep their own
+     * scope: it already gives the employee his deals ("своё") and everything of a client seen in full.
+     * visibleQuery() stays for choosing and linking records.
+     */
+    public static function communicationQuery(string $type, User $user): ActiveQuery
+    {
+        $query = self::visibleQuery($type, $user);
+        if (!in_array($type, [self::COMPANY, self::CLIENT], true) || ($fullCompanies = self::fullCompanyIds($user)) === null) {
+            return $query;
+        }
+        if ($type === self::COMPANY) {
+            return $query->andWhere([CmsCompany::tableName().'.id' => $fullCompanies]);
+        }
+
+        return $query->andWhere(['or',
+            [CmsUser::tableName().'.id' => self::fullPeopleIds($user)],
+            [CmsUser::tableName().'.id' => \skeeks\cms\models\CmsCompany2user::find()->select('cms_user_id')->andWhere(['cms_company_id' => $fullCompanies])],
+        ]);
+    }
+
+    /**
+     * Open deals the employee works on (CrmAccess::isLeadWorker() in SQL, open only): his and his
+     * subordinates' deals, every deal of a company seen in full, a personal deal of a person he has in full.
+     * Writing to a client goes through them for «Свои сделки» and "edit".
+     */
+    public static function workingLeadsQuery(User $user): ActiveQuery
+    {
+        $t = CmsLead::tableName();
+        $query = CmsLead::find()->forManager($user)->andWhere([$t.'.status' => [CmsLead::STATUS_NEW, CmsLead::STATUS_IN_WORK]]);
+        $access = self::access();
+        if (($fullCompanies = self::fullCompanyIds($user)) === null) {
+            return $query;
+        }
+
+        return $query->andWhere(['or',
+            [$t.'.executor_id' => $access->ownerIds($user)],
+            [$t.'.cms_company_id' => $fullCompanies],
+            ['and', [$t.'.cms_company_id' => null], [$t.'.cms_user_id' => self::fullPeopleIds($user)]],
+        ]);
+    }
+
+    /** Companies seen in full; null — no limit (an administrator, levels off, an older skeeks/cms). */
+    private static function fullCompanyIds(User $user): ?ActiveQuery
+    {
+        $access = self::access();
+        if ($access === null || $access->isAdmin($user) || ($limited = $access->dealOnlyCompanyIds($user)) === null) {
+            return null;
+        }
+
+        return CmsCompany::find()->forManager($user)->select(CmsCompany::tableName().'.id')
+            ->andWhere(['not in', CmsCompany::tableName().'.id', $limited]);
+    }
+
+    /** People the employee or his subordinate has a "full" link to (their personal orders and records). */
+    private static function fullPeopleIds(User $user): ActiveQuery
+    {
+        return \skeeks\cms\models\CmsUser2manager::find()->select('client_id')
+            ->andWhere(['worker_id' => self::access()->ownerIds($user), 'access_level' => \skeeks\cms\crm\CrmAccess::LEVEL_FULL]);
+    }
+
+    private static function access(): ?\skeeks\cms\crm\CrmAccess
+    {
+        $class = \skeeks\cms\crm\CrmAccess::class;
+
+        return class_exists($class) && method_exists($class, 'ownerIds') ? $class::instance() : null;
+    }
+
     /** A record the employee sees, or null. */
     public static function find(string $type, int $id, User $user): ?ActiveRecord
     {

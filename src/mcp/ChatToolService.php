@@ -412,8 +412,8 @@ class ChatToolService
         };
         $chat = $this->visibleChat((int)($a['id'] ?? 0));
         $access = new ChatAccess($this->user);
-        if (!$access->canSend($chat)) {
-            $problem(self::REASON_NO_ACCESS, 'Вам нельзя писать в этот чат: нужен доступ к боту на отправку (или чат должен быть вашим).');
+        if (($refusal = $access->sendRefusal($chat)) !== null) {
+            $problem(self::REASON_NO_ACCESS, $refusal);
         }
         if ($chat->bot_status === CmsCommConversation::BOT_LEFT) {
             $problem(self::REASON_BOT_LEFT, 'Бота нет в этом чате.');

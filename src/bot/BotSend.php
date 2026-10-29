@@ -60,6 +60,14 @@ class BotSend
         if ($text === '' && !$files) {
             throw new SendException(['text' => 'Напишите сообщение.']);
         }
+        // The last check right before the queue (UI, REST/MCP, a repeat by a token): the employee of the session
+        // writes only where he may (ChatAccess::sendRefusal()); system replies, notifications and the console go
+        // without an acting employee (CrmAccess::actingWorker()).
+        $acting = method_exists(\skeeks\cms\crm\CrmAccess::class, 'actingWorker') ? \skeeks\cms\crm\CrmAccess::actingWorker() : null;
+        if ($user && $acting && (int)$acting->id === (int)$user->id
+            && ($refusal = (new \skeeks\cms\communication\chat\ChatAccess($acting))->sendRefusal($conversation)) !== null) {
+            throw new SendException(['conversation' => $refusal]);
+        }
         foreach ($files as $file) {
             if ($file->size() > MailFiles::MAX_SIZE) {
                 throw new SendException(['files' => 'Файл «'.$file->name.'» больше 25 МБ.']);

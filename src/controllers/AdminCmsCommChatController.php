@@ -352,8 +352,8 @@ class AdminCmsCommChatController extends BackendModelStandartController
         }
         /** @var CmsCommConversation $conversation */
         $conversation = $this->model;
-        if (!$this->access()->canSend($conversation)) {
-            return ['success' => false, 'error' => 'Писать в этот чат вам нельзя: нужен доступ к боту на отправку.'];
+        if (($refusal = $this->access()->sendRefusal($conversation)) !== null) {
+            return ['success' => false, 'error' => $refusal];
         }
         $files = [];
         foreach (UploadedFile::getInstancesByName('files') as $upload) {
