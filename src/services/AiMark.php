@@ -114,7 +114,7 @@ class AiMark
     }
 
     /**
-     * "Подготовлено ИИ (Claude Code) по запросу Семенов А. · изменено перед отправкой".
+     * "Подготовлено ИИ (Claude Code) по запросу Петрова А. · изменено перед отправкой".
      *
      * @param int|null $sentBy the employee who sent the letter, when it left
      */
