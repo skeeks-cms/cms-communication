@@ -261,6 +261,8 @@ $db->createCommand()->createTable('cms_comm_message', ['id' => 'pk', 'created_at
     'from_name' => 'string', 'subject' => 'string', 'message_at' => 'integer', 'sent_by_user_id' => 'integer'])->execute();
 $db->createCommand()->createTable('cms_comm_message_mailbox', ['id' => 'pk', 'cms_comm_message_id' => 'integer', 'cms_comm_account_id' => 'integer'])->execute();
 $db->createCommand()->createTable('cms_comm_message_read', ['id' => 'pk', 'cms_comm_message_id' => 'integer', 'cms_user_id' => 'integer', 'read_at' => 'integer'])->execute();
+// Main responsibles of linked clients are notified too (MailNotifier::mainResponsibleOf()); these letters are not linked.
+$db->createCommand()->createTable('cms_comm_link', ['id' => 'pk', 'created_at' => 'integer', 'created_by' => 'integer', 'cms_comm_message_id' => 'integer', 'model_code' => 'string', 'model_id' => 'integer', 'link_type' => 'string', 'cms_log_id' => 'integer'])->execute();
 $db->createCommand()->batchInsert('cms_user', ['id', 'username', 'is_worker', 'is_active'], [[3, 'fired', 1, 0], [4, 'muted', 1, 1], [5, 'reader', 1, 1]])->execute();
 foreach ([[1, 'all', 1], [3, 'all', 1], [4, 'all', 0], [5, 'all', 1]] as [$userId, $level, $notify]) {
     $db->createCommand()->insert('cms_comm_account_access', ['cms_comm_account_id' => $info->id, 'cms_user_id' => $userId,

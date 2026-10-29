@@ -65,7 +65,7 @@ function run(string $tool, array $arguments) {
     return Yii::$app->cmsMcp->executeTool($tool, $arguments, $token, ['transport' => 'test']);
 }
 function testLead(string $email, int $executor): CmsLead {
-    $lead = new CmsLead(['name' => 'Тест ИИ '.$email, 'executor_id' => $executor]);
+    $lead = new CmsLead(['cms_site_id' => (int)Yii::$app->skeeks->site->id, 'name' => 'Тест ИИ '.$email, 'executor_id' => $executor]);
     check($lead->save(false), 'Test lead saved');
     (new CmsLeadEmail(['cms_lead_id' => (int)$lead->id, 'value' => $email]))->save(false);
     return $lead;
