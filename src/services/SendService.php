@@ -146,6 +146,13 @@ class SendService
         if ($reason = $channel->unavailableReason($this->user, $this->siteId)) {
             throw new SendException(['channel' => $reason]);
         }
+        // From a company or a person card: «Свои сделки» and "edit" send only within their deal (core CrmAccess).
+        $record = $request->record;
+        $access = \skeeks\cms\crm\CrmAccess::class;
+        if (($record instanceof \skeeks\cms\models\CmsCompany || ($record instanceof \skeeks\cms\models\CmsUser && !$record->is_worker))
+            && method_exists($access, 'canActOnClient') && !$access::instance()->canActOnClient($this->user, $record)) {
+            throw new SendException(['record' => $access::OWN_LEAD_REQUIRED]);
+        }
 
         return $channel->send($request);
     }

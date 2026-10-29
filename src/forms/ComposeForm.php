@@ -145,7 +145,32 @@ class ComposeForm extends Model
             [['cms_comm_account_id'], 'validateAccount'],
             [['body'], 'validateText', 'skipOnEmpty' => false],
             [['purpose'], 'validatePurpose', 'skipOnEmpty' => true],
+            [['context_model_id'], 'validateContext', 'skipOnEmpty' => false],
         ];
+    }
+
+    /**
+     * A letter from a company or a person card (core CrmAccess, owner's decision 29.10.2026): «Свои сделки»
+     * and "edit" write only from their deal — the deal is the context, so the reply follows it.
+     */
+    public function validateContext($attribute)
+    {
+        $access = \skeeks\cms\crm\CrmAccess::class;
+        if (!method_exists($access, 'clientActionError')) {
+            return;
+        }
+        $record = $this->record instanceof \yii\db\ActiveRecord ? $this->record
+            : ($this->service && $this->context_model_code && $this->context_model_id
+                ? $this->service->contextRecord((string)$this->context_model_code, (int)$this->context_model_id) : null);
+        $error = null;
+        if ($record instanceof \skeeks\cms\models\CmsCompany) {
+            $error = $access::instance()->clientActionError((int)$record->id, null, null);
+        } elseif ($record instanceof \skeeks\cms\models\CmsUser && !$record->is_worker) {
+            $error = $access::instance()->clientActionError(null, (int)$record->id, null);
+        }
+        if ($error) {
+            $this->addError($attribute, $error);
+        }
     }
 
     /** A letter AI prepared: what its purpose needs (a topic, a dialog, cooperation; no complaint or dead address). */
