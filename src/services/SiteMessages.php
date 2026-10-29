@@ -69,6 +69,7 @@ class SiteMessages
         $linker = new MessageLinker();
         $linker->link($message, array_filter($records), CmsCommLink::TYPE_CONTEXT);
         $linker->inheritFromConversation($message);
+        InboundLeads::route($message, 'написал');
 
         return $message;
     }

@@ -47,6 +47,11 @@ class ChatFeed
                 self::digest($conversation, $link->model_code, (int)$link->model_id, (int)$message->message_at ?: time());
             }
         }
+        // A dialog of a client not linked to a deal: the client's one open deal gets the message (core CrmInbound),
+        // with several the executors are asked once per dialog.
+        if ($conversation->chat_type === CmsCommConversation::CHAT_PRIVATE) {
+            \skeeks\cms\communication\services\InboundLeads::route($message, 'написал в чат', 'chat:'.(int)$conversation->id);
+        }
     }
 
     /** A chat linked to a record: its messages (a dialog) or its days (a group) go to the record's feed. */

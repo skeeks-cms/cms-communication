@@ -17,6 +17,12 @@ return [
     'on crm.leadTriaged' => [\skeeks\cms\communication\services\TriageLinks::class, 'onTriaged'],
 
     'components' => [
+        // Core crm\CrmInbound: an incoming letter or chat message of a client goes to his one open deal.
+        'crmInbound' => [
+            'attachers' => [
+                \skeeks\cms\communication\services\InboundLeads::TYPE => \skeeks\cms\communication\services\InboundLeads::class,
+            ],
+        ],
         'communication' => [
             'class' => \skeeks\cms\communication\CommunicationComponent::class,
             'secretKey' => $secretKey,

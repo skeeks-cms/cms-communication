@@ -125,6 +125,10 @@ class MailIngestService
         if ($external) {
             $this->linker->link($message, $this->addresses->findRecords($external, $siteId), CmsCommLink::TYPE_AUTO);
             $this->linker->inheritFromConversation($message);
+            // Not in a deal yet: the one open deal of its client (core CrmInbound), several — their executors are asked.
+            if (!$history) {
+                InboundLeads::route($message, 'написал');
+            }
         }
 
         return $message;
