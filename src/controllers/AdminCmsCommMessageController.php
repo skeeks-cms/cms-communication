@@ -47,6 +47,9 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     /** Letters per portion of the list ("Показать ещё" loads the next one). */
     public const PAGE_SIZE = 30;
 
+    /** The "Написать" window of an employee without a mailbox that may send. */
+    public const NO_MAILBOX_TEXT = 'У вас нет почтового ящика для отправки. Попросите администратора дать доступ к ящику.';
+
     public function init()
     {
         $this->name = 'Почта';
@@ -135,7 +138,7 @@ class AdminCmsCommMessageController extends BackendModelStandartController
                 'class' => \skeeks\cms\backend\ViewBackendAction::class,
                 'name' => 'Написать письмо',
                 'icon' => 'far fa-envelope',
-                'accessCallback' => fn() => (bool)$this->composeService()->sendableAccounts(),
+                // Opens for every employee: without a mailbox that may send it explains why (compose()).
                 'callback' => [$this, 'compose'],
             ],
 
@@ -968,6 +971,25 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $request = \Yii::$app->request;
         $service = $this->composeService();
         $form = new ComposeForm(['service' => $service]);
+
+        // No mailbox that may send (own or shared, CmsCommAccountAccess::send_level): the window
+        // explains it instead of the form, and nothing is sent.
+        if (!$service->sendableAccounts()) {
+            if ($request->isPost) {
+                \Yii::$app->response->format = Response::FORMAT_JSON;
+
+                return ['success' => false, 'errors' => ['cms_comm_account_id' => self::NO_MAILBOX_TEXT]];
+            }
+            $params = [
+                'text' => self::NO_MAILBOX_TEXT,
+                'settingsUrl' => \Yii::$app->user->can(AdminCmsCommSettingsController::PERMISSION)
+                    ? \yii\helpers\Url::to(['/cmsCommunication/admin-cms-comm-account']) : null,
+            ];
+
+            return $request->get('inline')
+                ? $this->renderPartial('@skeeks/cms/communication/views/message/_no-mailbox', $params)
+                : $this->render('@skeeks/cms/communication/views/message/no-mailbox', $params);
+        }
 
         if ($request->isPost) {
             \Yii::$app->response->format = Response::FORMAT_JSON;

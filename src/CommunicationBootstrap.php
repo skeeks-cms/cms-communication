@@ -172,15 +172,11 @@ class CommunicationBootstrap implements BootstrapInterface
             }
         });
 
-        $canSend = null;
-        Event::on(CrmContactBlockWidget::class, CrmContactBlockWidget::EVENT_CONTACT_ACTIONS, static function (CrmContactActionsEvent $event) use (&$canSend) {
-            if ($event->contactType !== CrmContactBlockWidget::CONTACT_EMAIL || \Yii::$app->user->isGuest || !\Yii::$app->skeeks->site) {
-                return;
-            }
-            if ($canSend === null) {
-                $canSend = (bool)(new MailComposeService(\Yii::$app->user->identity))->sendableAccounts();
-            }
-            if (!$canSend) {
+        // The letter of an email row (and «Письмо» of the card actions) is always our "Написать" window,
+        // never mailto: without a mailbox that may send, the window says so (AdminCmsCommMessageController::compose()).
+        Event::on(CrmContactBlockWidget::class, CrmContactBlockWidget::EVENT_CONTACT_ACTIONS, static function (CrmContactActionsEvent $event) {
+            if ($event->contactType !== CrmContactBlockWidget::CONTACT_EMAIL || \Yii::$app->user->isGuest || !\Yii::$app->skeeks->site
+                || !\Yii::$app->user->can(CmsManager::PERMISSION_ADMIN_ACCESS)) {
                 return;
             }
 
