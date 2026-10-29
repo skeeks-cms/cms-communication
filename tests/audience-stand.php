@@ -298,6 +298,8 @@ try {
     // п. 13а: a deal of the flow never changes the main responsible (old data without one keeps none — the core assigns it).
     $poolCompany = new CmsCompany(['name' => 'Без основного П2д '.$u]);
     $poolCompany->save(false);
+    // Old data: a new company gets its creator as the main one (core п. 13а), the fixture has none.
+    \skeeks\cms\models\CmsCompany2manager::deleteAll(['cms_company_id' => $poolCompany->id]);
     $lead3 = $tasks->onReply($campaign, $replyOf($poolCompany, $own), $replyLetter);
     $check($lead3 instanceof CmsLead && (int)$lead3->executor_id === (int)$manager->id && $access->mainResponsibleId('company', (int)$poolCompany->id) === null,
         'a company without a main responsible: the deal is the sender\'s, the flow sets no main responsible');
@@ -392,6 +394,7 @@ try {
             // A client with a history (an earlier closed deal) and no main (old data): the flow sets no main responsible.
             $old = new CmsCompany(['name' => 'История '.$to.' '.$kind.' '.$u]);
             $old->save(false);
+            CmsCompany2manager::deleteAll(['cms_company_id' => $old->id]);
             Yii::$app->db->createCommand()->insert(CmsLead::tableName(), ['cms_site_id' => $siteId, 'name' => 'Старая сделка '.$u, 'status' => CmsLead::STATUS_REJECTED,
                 'cms_company_id' => (int)$old->id, 'source_type' => CmsLead::SOURCE_MANUAL, 'created_at' => time() - 86400 * 400, 'updated_at' => time() - 86400 * 400])->execute();
             $fire($kind, $c, $recipientOf($c, $old));
