@@ -1,7 +1,7 @@
 <?php
 /**
  * Two events of one free client at once (П2д, F04): two processes — a reply
- * and a view of the same recipient — must make one deal and one main
+ * and a view of the same recipient — must make one deal and keep one main
  * responsible. Runs against the database of the local stand and COMMITS
  * (a lock is seen only between connections), then removes what it made.
  *
@@ -44,6 +44,8 @@ if ($step === 'setup') {
     $u = (string)mt_rand(100000, 999999);
     $company = new CmsCompany(['name' => 'Гонка П2д '.$u]);
     $company->save(false);
+    // п. 13а: a CRM client always has a main responsible; the events must not change it.
+    (new \skeeks\cms\models\CmsCompany2manager(['cms_company_id' => (int)$company->id, 'cms_user_id' => (int)$worker->id]))->save(false);
     $campaign = new CmsCommCampaign(['name' => 'Гонка П2д '.$u, 'cms_site_id' => $siteId, 'lead_to' => 'sender', 'lead_on_view' => 1, 'lead_on_visit' => 1]);
     $campaign->save(false);
     $recipient = new CmsCommCampaignRecipient(['cms_comm_campaign_id' => (int)$campaign->id, 'record_type' => 'company', 'record_id' => (int)$company->id,

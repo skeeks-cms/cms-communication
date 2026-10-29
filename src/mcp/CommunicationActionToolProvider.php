@@ -192,7 +192,7 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                     'task_on_reply' => ['type' => 'boolean'],
                     'lead_on_view' => ['type' => 'boolean', 'description' => 'Сделка при просмотре Презентации или КП (ответ создаёт сделку всегда).'],
                     'lead_on_visit' => ['type' => 'boolean', 'description' => 'Сделка при переходе по ссылке из письма.'],
-                    'new_card_owner' => ['type' => 'string', 'enum' => ['none', 'sender', 'worker'], 'description' => 'Ответственный за новые компании потока: none — общий пул, sender — вы, worker — new_card_worker_id.'],
+                    'new_card_owner' => ['type' => 'string', 'enum' => ['sender', 'worker'], 'description' => 'Ответственный за новые компании потока: sender — вы (по умолчанию), worker — new_card_worker_id.'],
                     'new_card_worker_id' => ['type' => 'integer'],
                     'lead_to' => ['type' => 'string', 'enum' => ['unsorted', 'sender', 'worker'], 'description' => 'Куда сделка: «Неразобранное», отправитель письма, сотрудник lead_worker_id.'],
                     'lead_worker_id' => ['type' => 'integer'],

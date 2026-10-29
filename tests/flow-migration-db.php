@@ -17,6 +17,7 @@ require ROOT_DIR.'/vendor/yiisoft/yii2/Yii.php';
 $dir = dirname(__DIR__).'/src/migrations/';
 require_once $dir.'m261109_100000__alter_table__cms_comm_campaign_lead_on_view.php';
 require_once $dir.'m261109_110000__alter_table__cms_comm_campaign_flow.php';
+require_once $dir.'m261109_130000__update_cms_comm_no_pool.php';
 
 $name = getenv('FLOW_MIGRATION_DB') ?: 'skeeks_flow_migration_test';
 $host = getenv('FLOW_MIGRATION_HOST') ?: 'db';
@@ -95,6 +96,29 @@ try {
     $db->createCommand()->update('cms_comm_campaign', ['lead_on_view' => 0], [])->execute();
     $check($quiet(fn() => $view->down()) !== false && $db->getTableSchema('cms_comm_campaign', true)->getColumn('lead_on_view') === null,
         'safeDown of lead_on_view drops the column otherwise');
+
+    // п. 13а, no pool: «без ответственного» of old campaigns and base imports becomes the sender / the author.
+    $quiet(fn() => $view->up());
+    $quiet(fn() => $flow->up());
+    $db->createCommand()->update('cms_comm_campaign', ['new_card_owner' => 'none'], ['id' => 1])->execute();
+    $db->createCommand()->update('cms_comm_campaign', ['new_card_owner' => 'worker', 'new_card_worker_id' => 7], ['id' => 2])->execute();
+    $db->createCommand('CREATE TABLE cms_comm_import (id INT AUTO_INCREMENT PRIMARY KEY, mode VARCHAR(16) NOT NULL DEFAULT \'leads\', executor_id INT NULL, created_by INT NULL)')->execute();
+    $db->createCommand()->batchInsert('cms_comm_import', ['mode', 'executor_id', 'created_by'],
+        [['audience', null, 5], ['audience', 9, 5], ['leads', null, 5], ['audience', null, null]])->execute();
+    $pool = $migration('m261109_130000__update_cms_comm_no_pool');
+    $quiet(fn() => $pool->up());
+    $imports = (new yii\db\Query())->from('cms_comm_import')->orderBy('id')->all($db);
+    $check($row(1)['new_card_owner'] === 'sender' && $row(2)['new_card_owner'] === 'worker' && (int)$row(2)['new_card_worker_id'] === 7,
+        'no pool: «без ответственного» of a campaign becomes «Отправитель», a chosen employee stays');
+    $check((int)$imports[0]['executor_id'] === 5 && (int)$imports[1]['executor_id'] === 9 && $imports[2]['executor_id'] === null && $imports[3]['executor_id'] === null,
+        'no pool: a base import without a responsible gets its author; a chosen one, a requests import and an import without an author stay');
+    $db->createCommand()->insert('cms_comm_campaign', ['name' => 'После 13а'])->execute();
+    $check((new yii\db\Query())->from('cms_comm_campaign')->orderBy(['id' => SORT_DESC])->one($db)['new_card_owner'] === 'sender', 'no pool: a new campaign defaults to «Отправитель»');
+    $db->createCommand()->update('cms_comm_campaign', ['new_card_owner' => 'worker'], ['id' => 1])->execute();
+    $quiet(fn() => $pool->up());
+    $check($row(1)['new_card_owner'] === 'worker', 'no pool: a repeated run changes no setting');
+    $check($quiet(fn() => $pool->down()) !== false && $row(1)['new_card_owner'] === 'worker' && (int)(new yii\db\Query())->from('cms_comm_import')->andWhere(['id' => 1])->one($db)['executor_id'] === 5,
+        'no pool: safeDown keeps the data');
 
     echo 'OK flow-migration-db: '.$checks." checks\n";
 } finally {

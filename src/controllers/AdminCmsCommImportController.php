@@ -221,8 +221,8 @@ class AdminCmsCommImportController extends BackendModelStandartController
                 } else {
                     throw new \DomainException('Выберите файл или вставьте таблицу.');
                 }
-                // Nobody by default: requests go to «Неразобранное», a base is the common pool (П2д) unless a responsible is chosen.
-                $import->executor_id = null;
+                // Requests: nobody by default («Неразобранное»); a base: the importing employee (п. 13а — no pool).
+                $import->executor_id = $mode === CmsCommImport::MODE_AUDIENCE ? (int)\Yii::$app->user->id : null;
                 if (CmsCommImport::audienceReady()) {
                     $import->mode = $mode;
                 }
@@ -431,8 +431,11 @@ class AdminCmsCommImportController extends BackendModelStandartController
         $executor = (int)($post['executor_id'] ?? 0);
         if ($executor && !isset($this->executors()[$executor])) {
             $errors['executor_id'] = 'Выберите ответственного.';
+        } elseif (!$executor && $import->isAudience()) {
+            // New cards of a base always have a main responsible (п. 13а): the importing employee.
+            $executor = (int)\Yii::$app->user->id;
         }
-        // Requests without a responsible go to «Неразобранное»; new cards of a base without one — the common pool (П2д).
+        // Requests without a responsible go to «Неразобранное».
         $import->executor_id = $executor ?: null;
 
         $topicId = (int)($post['cms_comm_topic_id'] ?? 0);
@@ -455,16 +458,16 @@ class AdminCmsCommImportController extends BackendModelStandartController
 
     /** @return string[] id => name: the responsible employees the importer may choose */
     /**
-     * "Ответственный" of new cards of a base (П2д): «Без ответственного» (the
-     * default, the common pool), «Я», another employee (an administrator).
-     * Also "Добавить адреса" of a list.
+     * "Ответственный" of new cards of a base: «Я» (the default) or another
+     * employee (an administrator). No «без ответственного»: a CRM client
+     * always has a main responsible (п. 13а). Also "Добавить адреса" of a list.
      *
-     * @return string[] '' | id => label
+     * @return string[] id => label
      */
     public static function responsibleOptions(): array
     {
         $me = \Yii::$app->user->identity;
-        $result = ['' => 'Без ответственного', (int)$me->id => 'Я — '.$me->shortDisplayName];
+        $result = [(int)$me->id => 'Я — '.$me->shortDisplayName];
         foreach (self::workers() as $id => $name) {
             $result[$id] = $result[$id] ?? $name;
         }

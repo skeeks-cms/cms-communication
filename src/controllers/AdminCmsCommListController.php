@@ -312,9 +312,9 @@ class AdminCmsCommListController extends BackendModelStandartController
         $request = \Yii::$app->request;
         $error = null;
         $text = (string)$request->post('lines', '');
-        // New cards: nobody by default (the common pool, П2д), «Я» or another employee.
+        // New cards: «Я» by default or another employee (п. 13а: a CRM client always has a main responsible).
         $responsibles = AdminCmsCommImportController::responsibleOptions();
-        $executorId = (int)$request->post('executor_id', 0);
+        $executorId = (int)$request->post('executor_id', 0) ?: (int)\Yii::$app->user->id;
         if ($request->isPost) {
             try {
                 if (!\skeeks\cms\communication\models\CmsCommImport::audienceReady()) {

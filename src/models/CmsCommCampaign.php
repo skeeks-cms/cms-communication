@@ -47,7 +47,7 @@ use yii\helpers\Json;
  * @property int         $task_on_open
  * @property int         $lead_on_view П2д: a deal when a recipient views the presentation or offer (CampaignTasks::onView())
  * @property int         $lead_on_visit П2д: a deal when a recipient comes to the site by a link of the letter
- * @property string      $new_card_owner the responsible of new companies of the flow: OWNER_NONE | OWNER_SENDER | OWNER_WORKER
+ * @property string      $new_card_owner the responsible of new companies of the flow: OWNER_SENDER | OWNER_WORKER (OWNER_NONE — only campaigns before п. 13а, migrated)
  * @property int|null    $new_card_worker_id
  * @property string      $lead_to who gets a deal: LEAD_TO_UNSORTED | OWNER_SENDER | OWNER_WORKER
  * @property int|null    $lead_worker_id
@@ -184,7 +184,7 @@ class CmsCommCampaign extends ActiveRecord
                 'task_on_open' => (int)(bool)self::crmDefault('outgoingTaskOnView', 1),
                 'lead_on_view' => (int)(bool)self::crmDefault('outgoingLeadOnView', 1),
                 'lead_on_visit' => (int)(bool)self::crmDefault('outgoingLeadOnVisit', 0),
-                'new_card_owner' => (string)self::crmDefault('outgoingNewCardOwner', self::OWNER_NONE),
+                'new_card_owner' => (string)self::crmDefault('outgoingNewCardOwner', self::OWNER_SENDER),
                 'new_card_worker_id' => self::crmDefault('outgoingNewCardWorkerId', null),
                 'lead_to' => (string)self::crmDefault('outgoingLeadTo', self::OWNER_SENDER),
                 'lead_worker_id' => self::crmDefault('outgoingLeadWorkerId', null),
@@ -216,10 +216,10 @@ class CmsCommCampaign extends ActiveRecord
         return $fallback;
     }
 
-    /** "Ответственный за новые компании" of the flow (the strings of core CrmSettings::OWNER_*). */
+    /** "Ответственный за новые компании" of the flow: the sender or an employee, never none (п. 13а; the strings of core CrmSettings::OWNER_*). */
     public static function newCardOwners(): array
     {
-        return [self::OWNER_NONE => 'Без ответственного — общий пул', self::OWNER_SENDER => 'Отправитель', self::OWNER_WORKER => 'Сотрудник'];
+        return [self::OWNER_SENDER => 'Отправитель', self::OWNER_WORKER => 'Сотрудник'];
     }
 
     /** "Куда сделка". */
@@ -367,7 +367,7 @@ class CmsCommCampaign extends ActiveRecord
             'sender_mode' => 'Письмо уходит как обычное личное письмо из почтового ящика: ответ приходит туда же и попадает в ленту компании или контакта.',
             'task_on_reply' => 'Ответ или заявка из письма (вопрос, «Принять» на странице КП): если у клиента есть открытая сделка — задача в ней; иначе новая сделка — по настройке «Куда сделка».',
             'lead_on_view' => 'Ответ клиента создаёт сделку всегда. Отметьте, если и просмотр — повод вести сделку; иначе по просмотру ставится задача «Позвонить» (если она включена). Открытие письма сделку не создаёт.',
-            'new_card_owner' => 'Для компаний, которых ещё нет в CRM (их создаёт бот этой кампании). Существующие компании не меняются. Без ответственного — общий пул.',
+            'new_card_owner' => 'Для компаний, которых ещё нет в CRM (их создаёт бот этой кампании). Существующие компании не меняются. Отправитель — тот, под чьей авторизацией бот создаёт компанию.',
             'lead_to' => 'Отправитель — тот, от чьего имени ушло письмо. Если у компании нет основного ответственного, он им становится. Открытая сделка клиента дополняется, новая не создаётся.',
             'lead_pipeline_id' => 'Пусто — «Исходящие продажи». Ответ ставит этап «Ответил», просмотр — «Смотрел».',
             'audienceStatuses' => 'Пусто — новые и в работе.',

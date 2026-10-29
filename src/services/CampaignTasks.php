@@ -37,8 +37,8 @@ use yii\helpers\Html;
  *   (empty — «Исходящие продажи», core OutboundSales) at the stage of the
  *   event («Ответил» / «Смотрел»). Who gets it — `lead_to`: «Неразобранное»,
  *   the sender of the letter, an employee. A protected client of another
- *   main responsible goes to that main responsible; a client without a main
- *   responsible gets the receiver as its main one («Взять в работу»).
+ *   main responsible goes to that main responsible. The deal never changes
+ *   the main responsible of the client: a CRM client always has one (п. 13а).
  * Once per recipient and kind: the source reference never makes a second
  * deal. The call task on a view or a visit that makes no deal is the offer
  * package's and LinkVisits' rule, they ask Campaigns::taskOnOpen().
@@ -211,23 +211,6 @@ class CampaignTasks
         return [null, 0];
     }
 
-    /**
-     * Whether the client is in the common pool BEFORE its deal is made (П2д):
-     * the new deal is a history of the client itself, so after it the client
-     * is never «free» any more. Read under the lock of handle(); a client with
-     * a main responsible or with a history is not taken.
-     */
-    private static function poolClient($record): ?array
-    {
-        [$code, $id] = self::clientOf($record);
-        $access = \skeeks\cms\crm\CrmAccess::class;
-        if (!$code || !class_exists($access) || !method_exists($access, 'canTakeIntoWork')) {
-            return null;
-        }
-
-        return $access::instance()->canTakeIntoWork($code, $id) ? [$code, $id] : null;
-    }
-
     /** The pipeline of the campaign's deals: its own, otherwise «Исходящие продажи» (core OutboundSales); null — none. */
     private static function pipelineOf(CmsCommCampaign $campaign): ?\skeeks\cms\models\CmsLeadPipeline
     {
@@ -278,7 +261,7 @@ class CampaignTasks
      * Who gets a new deal of a reply or a request: the one the letter went
      * from, when it went from his own mailbox (no other employee may send
      * from it) and the client has a main responsible. Null — «Неразобранное»:
-     * a shared mailbox, a client of the common pool (П2д).
+     * a shared mailbox, a client without a main responsible (old data).
      */
     public static function senderResponsible(CmsCommCampaignRecipient $recipient, $record): ?int
     {
@@ -301,7 +284,7 @@ class CampaignTasks
             ? $senderId : null;
     }
 
-    /** The recipient company or person (of a deal — its client) has a main responsible; nobody — the common pool. */
+    /** The recipient company or person (of a deal — its client) has a main responsible; nobody — old data before п. 13а. */
     private static function hasMainResponsible($record): bool
     {
         if ($record instanceof CmsLead) {
@@ -374,8 +357,6 @@ class CampaignTasks
         $pipeline = self::pipelineOf($campaign);
         $stage = $pipeline && $executorId ? self::stageOf($pipeline, $kind) : null;
         $place = $pipeline ? array_filter(['cms_lead_pipeline_id' => (int)$pipeline->id, 'cms_lead_stage_id' => $stage ? (int)$stage->id : null]) : [];
-        // Before the deal: afterwards the deal itself is the client's history and the client is not «free».
-        $pool = $executorId ? self::poolClient($record) : null;
         $lead = (new \skeeks\cms\services\CmsLeadService())->createFromSource([
             'cms_site_id' => (int)$campaign->cms_site_id ?: null,
             'source_type' => CmsLead::SOURCE_MAILING,
@@ -396,14 +377,6 @@ class CampaignTasks
             'executor_id' => $executorId,
             'status' => $executorId ? CmsLead::STATUS_IN_WORK : CmsLead::STATUS_NEW,
         ] + $place);
-        // A client of the pool: the receiver of its deal becomes its main responsible («Взять в работу»), in the
-        // same transaction and under the lock; a main responsible set meanwhile (the core) is never replaced.
-        if ($pool) {
-            $access = \skeeks\cms\crm\CrmAccess::instance();
-            if ($access->mainResponsibleId($pool[0], $pool[1]) === null) {
-                $access->setMain($pool[0], $pool[1], $executorId);
-            }
-        }
         // The history of this send: the campaign letter (with its personal offer) and the reply.
         $linker = new MessageLinker();
         if ($message) {

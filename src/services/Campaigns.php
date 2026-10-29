@@ -1427,9 +1427,11 @@ class Campaigns
 
     /**
      * The responsible of a NEW company the flow of a campaign creates (a bot
-     * through MCP/API, П2д): its «Ответственный за новые компании» — none
-     * (the common pool), the sender ($senderId, the API user), an employee.
-     * An existing company is never changed.
+     * through MCP/API, П2д): its «Ответственный за новые компании» — the
+     * sender ($senderId, the API user) or an employee; a CRM client always
+     * has a main responsible (п. 13а), so the sender also stands for a
+     * campaign before the flow or an employee no longer set. An existing
+     * company is never changed.
      *
      * @throws \DomainException an unknown campaign
      */
@@ -1439,11 +1441,11 @@ class Campaigns
         if (!$campaign || ($campaign->cms_site_id && \Yii::$app->skeeks->site && (int)$campaign->cms_site_id !== (int)\Yii::$app->skeeks->site->id)) {
             throw new \DomainException('Кампания №'.$campaignId.' не найдена.');
         }
-        if (!$campaign->hasFlow() || $campaign->new_card_owner === CmsCommCampaign::OWNER_NONE) {
-            return null;
+        if ($campaign->hasFlow() && $campaign->new_card_owner === CmsCommCampaign::OWNER_WORKER && $campaign->new_card_worker_id) {
+            return (int)$campaign->new_card_worker_id;
         }
 
-        return $campaign->new_card_owner === CmsCommCampaign::OWNER_SENDER ? ($senderId ?: null) : ((int)$campaign->new_card_worker_id ?: null);
+        return $senderId ?: null;
     }
 
     /** The first counted visit by a link of a campaign letter (LinkVisits): a deal when the campaign says so (`lead_on_visit`). */
