@@ -153,6 +153,11 @@ class SendService
             && method_exists($access, 'canActOnClient') && !$access::instance()->canActOnClient($this->user, $record)) {
             throw new SendException(['record' => $access::OWN_LEAD_REQUIRED]);
         }
+        // From a deal: who works on it (core CrmAccess::isLeadWorker()), as comments and the stage.
+        if ($record instanceof \skeeks\cms\models\CmsLead && method_exists($access, 'isLeadWorker')
+            && !$access::instance()->isLeadWorker($this->user, $record)) {
+            throw new SendException(['record' => $access::LEAD_WORK_DENIED]);
+        }
 
         return $channel->send($request);
     }

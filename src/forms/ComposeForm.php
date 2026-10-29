@@ -167,6 +167,10 @@ class ComposeForm extends Model
             $error = $access::instance()->clientActionError((int)$record->id, null, null);
         } elseif ($record instanceof \skeeks\cms\models\CmsUser && !$record->is_worker) {
             $error = $access::instance()->clientActionError(null, (int)$record->id, null);
+        } elseif ($record instanceof \skeeks\cms\models\CmsLead && method_exists($access, 'isLeadWorker')
+            && ($worker = $access::actingWorker()) && !$access::instance()->isLeadWorker($worker, $record)) {
+            // From a deal: who works on it (core CrmAccess::isLeadWorker()), as comments and the stage.
+            $error = $access::LEAD_WORK_DENIED;
         }
         if ($error) {
             $this->addError($attribute, $error);
