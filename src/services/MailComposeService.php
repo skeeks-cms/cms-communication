@@ -212,8 +212,13 @@ class MailComposeService
     {
         $sends = new SendService($this->user, $this->siteId);
         foreach ((array)$form->sendables as $ref) {
-            if (!$sends->findRef((string)$ref)) {
+            if (!($sendable = $sends->findRef((string)$ref))) {
                 return 'Документ для отправки не найден или у вас нет к нему доступа.';
+            }
+            // A document of a deal goes only from a deal the employee may act in (LeadActions); the console is not limited.
+            if (method_exists(\skeeks\cms\crm\CrmAccess::class, 'actingWorker') && \skeeks\cms\crm\CrmAccess::actingWorker()
+                && ($error = $sends->leadsError($sendable))) {
+                return $error;
             }
         }
 

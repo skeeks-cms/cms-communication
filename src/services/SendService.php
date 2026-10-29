@@ -153,13 +153,28 @@ class SendService
             && method_exists($access, 'canActOnClient') && !$access::instance()->canActOnClient($this->user, $record)) {
             throw new SendException(['record' => $access::OWN_LEAD_REQUIRED]);
         }
-        // From a deal: who works on it (core CrmAccess::isLeadWorker()), as comments and the stage.
-        if ($record instanceof \skeeks\cms\models\CmsLead && method_exists($access, 'isLeadWorker')
-            && !$access::instance()->isLeadWorker($this->user, $record)) {
-            throw new SendException(['record' => $access::LEAD_WORK_DENIED]);
+        // From a deal, or a document of a deal: who works on it, a closed one only for who acts on its client.
+        if ($error = $this->leadsError($request->sendable, $record)) {
+            throw new SendException(['record' => $error]);
         }
 
         return $channel->send($request);
+    }
+
+    /**
+     * The first refusal of a new action from the deals of a send — the card
+     * it is sent from and the sendable's own records (LeadActions), null when
+     * allowed.
+     */
+    public function leadsError(SendableInterface $sendable, ?ActiveRecord $record = null): ?string
+    {
+        foreach (array_merge($record ? [$record] : [], $sendable->getSendRecords()) as $item) {
+            if ($item instanceof \skeeks\cms\models\CmsLead && ($error = LeadActions::error($this->user, $item))) {
+                return $error;
+            }
+        }
+
+        return null;
     }
 
     /** Puts the send into the feeds of its CRM records. The caller owns the transaction. */
