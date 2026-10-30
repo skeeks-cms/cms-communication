@@ -78,7 +78,12 @@ List-Unsubscribe headers); the opt-out page and RFC 8058 one click are
 `controllers\UnsubscribeController` (`/~unsub/<code>`). Mailings reach CRM
 cards only through core places (`CrmCardBlocksWidget`, `CrmContactBlockWidget`).
 Imports into leads are `services\LeadImport` + `services\CrmDuplicates`, the
-job `comm.import.leads` for large files; leads get no notification each. Its
+job `comm.import.leads` for large files; leads get no notification each.
+П2г: an imported lead always has a client — a new one gets its cards
+(`AudienceImport::newClient()`), a known one the author sees is linked as
+found, another manager's client or an old lead without a client makes no
+lead (the row is a duplicate with the reason); test
+`tests/lead-import-stand.php`. Its
 entry is the tab "Импорт" of the core leads section, added by the bootstrap
 through the container definition (`actionsMap`), not a menu item.
 Campaigns (4B) are `services\Campaigns` (audience by `forManager()` of the
