@@ -4,8 +4,8 @@
  * and a view of the same recipient — must make one deal and keep one main
  * responsible. Runs against the database of the local stand and COMMITS
  * (a lock is seen only between connections), then removes what it made —
- * also the notifications of its records and their deliveries, by the pair
- * model_code + model_id — and checks that nothing of it is left. Its records
+ * also the feed, the journal of the access, the notifications and their
+ * deliveries of its records, by exact pairs — and checks that nothing of it is left. Its records
  * are named «Проверка: гонка П2д …».
  *
  * FLOW_RACE_TEST=local php tests/flow-race-stand.php setup        → prints "<recipient id> <start time>"
@@ -90,16 +90,37 @@ if ($step === 'check') {
         $ok = count($leads) === 1 && (int)$mains === 1;
         echo ($ok ? 'OK flow-race-stand' : 'FAIL flow-race-stand').': deals '.count($leads).', main responsibles '.$mains."\n";
     } finally {
-        // Remove what the test made: its deals (with their tasks, links and feed), the recipient, the campaign, the company.
-        foreach (CmsLead::find()->andWhere(['cms_company_id' => $companyId])->all() as $lead) {
-            foreach ([CmsLead::class, $lead->skeeksModelCode] as $code) {
-                $made[$code][] = (int)$lead->id;
+        // Remove what the test made: its deals (with their tasks, links and feed), the recipient, the campaign, the
+        // company; then their feed, journal of the access, notifications and deliveries by exact pairs only.
+        $leadIds = array_map('intval', CmsLead::find()->select('id')->andWhere(['cms_company_id' => $companyId])->column());
+        $taskIds = $leadIds ? array_map('intval', (new \yii\db\Query())->select('id')->from('{{%cms_task}}')->andWhere(['cms_lead_id' => $leadIds])->column()) : [];
+        $made[CmsCompany::class][] = $companyId;
+        $made[(new CmsCompany())->skeeksModelCode][] = $companyId;
+        foreach ([CmsLead::class, (new CmsLead())->skeeksModelCode] as $code) {
+            $made[$code] = array_merge($made[$code] ?? [], $leadIds);
+        }
+        foreach ([\skeeks\cms\models\CmsTask::class, (new \skeeks\cms\models\CmsTask())->skeeksModelCode] as $code) {
+            $made[$code] = array_merge($made[$code] ?? [], $taskIds);
+        }
+        $pairs = ['or'];
+        foreach ($made as $code => $ids) {
+            if ($ids = array_values(array_unique(array_filter($ids)))) {
+                $pairs[] = ['model_code' => $code, 'model_id' => $ids];
             }
-            $taskIds = array_map('intval', (new \yii\db\Query())->select('id')->from('{{%cms_task}}')->andWhere(['cms_lead_id' => (int)$lead->id])->column());
-            $made[\skeeks\cms\models\CmsTask::class] = array_merge($made[\skeeks\cms\models\CmsTask::class] ?? [], $taskIds);
+        }
+        $access = ['or', ['record_code' => 'company', 'record_id' => $companyId], ['cms_lead_id' => $leadIds ?: [0]]];
+        $deliveriesReady = $db->getTableSchema('{{%cms_comm_notify_delivery}}', true) !== null;
+        $accessReady = $db->getTableSchema('{{%cms_crm_access_log}}', true) !== null;
+        $notifyIds = static fn() => array_map('intval', (new \yii\db\Query())->select('id')->from('{{%cms_web_notify}}')->andWhere($pairs)->column());
+        $deliveryIds = static fn(array $notify) => $deliveriesReady && $notify
+            ? array_map('intval', (new \yii\db\Query())->select('id')->from('{{%cms_comm_notify_delivery}}')->andWhere(['cms_web_notify_id' => $notify])->column()) : [];
+        // Collected before the models go: a delivery outlives its notification (ON DELETE SET NULL).
+        $notifies = $notifyIds();
+        $sends = $deliveryIds($notifies);
+
+        foreach (CmsLead::find()->andWhere(['id' => $leadIds ?: [0]])->all() as $lead) {
             $db->createCommand()->delete('{{%cms_task}}', ['cms_lead_id' => (int)$lead->id])->execute();
             $db->createCommand()->delete('{{%cms_comm_link}}', ['model_code' => [CmsLead::class, $lead->skeeksModelCode], 'model_id' => (int)$lead->id])->execute();
-            $db->createCommand()->delete('{{%cms_log}}', ['model_code' => $lead->skeeksModelCode, 'model_id' => (int)$lead->id])->execute();
             $lead->delete();
         }
         $db->createCommand()->delete('{{%cms_company2manager}}', ['cms_company_id' => $companyId])->execute();
@@ -109,29 +130,37 @@ if ($step === 'check') {
             $company->delete();
         }
 
-        // Notifications of those records and their deliveries: only by the exact pair model_code + model_id.
-        $pairs = ['or'];
-        foreach ($made as $code => $ids) {
-            if ($ids = array_values(array_unique(array_filter($ids)))) {
-                $pairs[] = ['model_code' => $code, 'model_id' => $ids];
-            }
+        // After the models: their delete() writes its own entries.
+        $db->createCommand()->delete('{{%cms_log}}', $pairs)->execute();
+        if ($accessReady) {
+            $db->createCommand()->delete('{{%cms_crm_access_log}}', $access)->execute();
         }
-        $notifyIds = static fn() => array_map('intval', (new \yii\db\Query())->select('id')->from('{{%cms_web_notify}}')->andWhere($pairs)->column());
-        $deliveries = $db->getTableSchema('{{%cms_comm_notify_delivery}}', true) !== null;
-        $removed = 0;
-        if ($ids = $notifyIds()) {
-            $removed = count($ids);
-            if ($deliveries) {
-                $db->createCommand()->delete('{{%cms_comm_notify_delivery}}', ['cms_web_notify_id' => $ids])->execute();
-            }
-            $db->createCommand()->delete('{{%cms_web_notify}}', ['id' => $ids])->execute();
+        $notifies = array_values(array_unique(array_merge($notifies, $notifyIds())));
+        $sends = array_values(array_unique(array_merge($sends, $deliveryIds($notifies))));
+        if ($sends) {
+            $db->createCommand()->delete('{{%cms_comm_notify_delivery}}', ['id' => $sends])->execute();
         }
-        $left = count($notifyIds()) + (int)CmsLead::find()->andWhere(['cms_company_id' => $companyId])->count() + (CmsCompany::findOne($companyId) ? 1 : 0);
+        if ($notifies) {
+            $db->createCommand()->delete('{{%cms_web_notify}}', ['id' => $notifies])->execute();
+        }
+
+        $count = static fn(string $table, array $where) => (int)(new \yii\db\Query())->from($table)->andWhere($where)->count();
+        $left = array_filter([
+            'deals' => (int)CmsLead::find()->andWhere(['cms_company_id' => $companyId])->count(),
+            'company' => CmsCompany::findOne($companyId) ? 1 : 0,
+            'campaign' => $count('{{%cms_comm_campaign}}', ['id' => (int)$campaign->id]) + $count('{{%cms_comm_campaign_recipient}}', ['id' => (int)$recipient->id]),
+            'links' => $count('{{%cms_company2manager}}', ['cms_company_id' => $companyId]) + ($leadIds ? $count('{{%cms_comm_link}}', ['model_code' => [CmsLead::class, (new CmsLead())->skeeksModelCode], 'model_id' => $leadIds]) : 0),
+            'cms_log' => $count('{{%cms_log}}', $pairs),
+            'cms_crm_access_log' => $accessReady ? $count('{{%cms_crm_access_log}}', $access) : 0,
+            'cms_web_notify' => count($notifyIds()),
+            'cms_comm_notify_delivery' => $sends ? $count('{{%cms_comm_notify_delivery}}', ['id' => $sends]) : 0,
+        ]);
         if ($left) {
-            echo "FAIL flow-race-stand: {$left} records of the test are left after cleaning up\n";
+            echo 'FAIL flow-race-stand: left after cleaning up '.json_encode($left)."\n";
             $ok = false;
         } else {
-            echo "Cleaned up: no deals, company or notifications of the test are left (notifications removed: {$removed})\n";
+            echo 'Cleaned up: no deals, company, links, feed, access journal, notifications or deliveries of the test are left'
+                .' (notifications removed: '.count($notifies).', deliveries: '.count($sends).")\n";
         }
     }
     exit($ok ? 0 : 1);
