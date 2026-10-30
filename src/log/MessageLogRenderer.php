@@ -31,9 +31,6 @@ use yii\helpers\Html;
  */
 class MessageLogRenderer extends CmsLogEntryRenderer
 {
-    /** @var CmsCommMessage[]|null[] "employee:message" => the message he may read, within one web request */
-    private array $messages = [];
-
     public function entry(CmsLog $log): CmsLogEntry
     {
         $id = (int)ArrayHelper::getValue($log->data, 'id');
@@ -43,16 +40,9 @@ class MessageLogRenderer extends CmsLogEntryRenderer
             $query->forManager();
             $userId = (int)\Yii::$app->user->id;
         }
-        // A letter written to a client and to its deal is in a feed twice (audit final4): read it once
-        // per employee in a web request; the console and workers read it every time.
-        $key = $userId.':'.$id;
-        if (!\skeeks\cms\crm\CrmAccess::keepsAnswers()) {
-            $message = $query->one();
-        } elseif (array_key_exists($key, $this->messages)) {
-            $message = $this->messages[$key];
-        } else {
-            $message = $this->messages[$key] = $query->one();
-        }
+        // A letter written to a client and to its deal is in a feed twice (audit final4): read once per
+        // employee in the request memo of CrmAccess, dropped with resetMemo() (FeedAnswers, audit F5-01).
+        $message = FeedAnswers::remember('message:'.$userId.':'.$id, static fn() => $query->one());
         if (!$message) {
             return new CmsLogEntry([
                 'icon'    => 'mail',

@@ -23,11 +23,6 @@ use yii\helpers\Html;
  */
 class ChatDigestLogRenderer extends CmsLogEntryRenderer
 {
-    /** @var CmsCommConversation[]|null[] conversation id => chat, within one web request */
-    private array $conversations = [];
-    /** @var bool[] "employee:conversation" => may read, within one web request */
-    private array $readable = [];
-
     public function entry(CmsLog $log): CmsLogEntry
     {
         $data = (array)$log->data;
@@ -60,29 +55,18 @@ class ChatDigestLogRenderer extends CmsLogEntryRenderer
 
     /*
      * A group chat gives a digest a day, so a feed shows the same chat many times (audit final4: 40
-     * identical checks on a company card). The renderer lives one request; the answer is keyed by the
-     * employee and is not kept by the console and workers (CrmAccess::keepsAnswers()).
+     * identical checks on a company card): the chat and the answer are kept in the request memo of
+     * CrmAccess, keyed by the employee and dropped with resetMemo() (FeedAnswers, audit F5-01).
      */
     private function conversation(int $id): ?CmsCommConversation
     {
-        if (!\skeeks\cms\crm\CrmAccess::keepsAnswers()) {
-            return CmsCommConversation::findOne($id);
-        }
-        if (!array_key_exists($id, $this->conversations)) {
-            $this->conversations[$id] = CmsCommConversation::findOne($id);
-        }
-
-        return $this->conversations[$id];
+        return FeedAnswers::remember('chat:'.$id, static fn() => CmsCommConversation::findOne($id));
     }
 
     private function canRead($user, CmsCommConversation $conversation): bool
     {
-        if (!\skeeks\cms\crm\CrmAccess::keepsAnswers()) {
-            return (new ChatAccess($user))->canRead($conversation);
-        }
-        $key = (int)$user->id.':'.(int)$conversation->id;
-
-        return $this->readable[$key] ??= (new ChatAccess($user))->canRead($conversation);
+        return FeedAnswers::remember('chatRead:'.(int)$user->id.':'.(int)$conversation->id,
+            static fn() => (new ChatAccess($user))->canRead($conversation));
     }
 
     private static function plural(int $n, string $one, string $few, string $many): string
