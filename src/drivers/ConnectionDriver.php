@@ -31,6 +31,19 @@ abstract class ConnectionDriver extends Model implements IHasConfigForm
     /** Secrets must be entered: there are no stored ones yet. */
     public bool $requireSecrets = false;
 
+    /** The connection the driver was made from (CmsCommConnection::createDriver()); not a setting. */
+    private ?int $connectionId = null;
+
+    public function getConnectionId(): ?int
+    {
+        return $this->connectionId;
+    }
+
+    public function setConnectionId(?int $id): void
+    {
+        $this->connectionId = $id;
+    }
+
     /** @return string[] attributes stored encrypted */
     public function secretAttributes(): array
     {

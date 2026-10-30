@@ -115,6 +115,7 @@ class CmsCommConnection extends ActiveRecord
     public function createDriver(bool $withSecrets = false): ConnectionDriver
     {
         $driver = static::component()->createDriver((string)$this->driver);
+        $driver->setConnectionId($this->id ? (int)$this->id : null);
         $driver->setAttributes($this->getPublicConfig(), false);
         if ($withSecrets && $this->hasSecret()) {
             $driver->setAttributes($this->decryptSecrets(), false);
