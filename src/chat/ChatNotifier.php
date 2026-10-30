@@ -28,6 +28,8 @@ use skeeks\cms\models\CmsWebNotify;
  *   without a bell: groups are noisy.
  * Messages of our employees and history never notify. One unread
  * notification per employee and chat: later messages update its text.
+ * A notification that cannot be written is logged and skipped: it runs in
+ * the transaction of the received message and must never lose the message.
  */
 class ChatNotifier implements BotEventHandlerInterface
 {
@@ -40,7 +42,12 @@ class ChatNotifier implements BotEventHandlerInterface
         }
         $conversation = $context->conversation;
         foreach ($this->recipients($conversation, (int)$context->account->id) as $userId) {
-            $this->notify($userId, $conversation, $message);
+            try {
+                $this->notify($userId, $conversation, $message);
+            } catch (\Throwable $e) {
+                // A failed statement does not end a MySQL transaction: the message is kept.
+                \Yii::error('Уведомление о сообщении чата #'.(int)$message->id.' для пользователя #'.$userId.' не записано: '.$e->getMessage(), self::class);
+            }
         }
     }
 
