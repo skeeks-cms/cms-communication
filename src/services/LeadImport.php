@@ -35,6 +35,12 @@ use yii\helpers\Json;
  *   with an older core), the responsible employee, the file values in the
  *   description and the source data, and a stable source_ref per row, so a
  *   repeated run creates nothing twice.
+ * - П2г (owner's decision 30.10.2026): a lead keeps no contacts of its own. A
+ *   row of a new client makes its company or person first
+ *   (AudienceImport::newClient(), the contacts go to the cards) and the lead
+ *   is linked to it; a row of a client already in the CRM (or of another
+ *   manager's client) becomes an unsorted lead with the contacts of the row
+ *   as its request data — sorting links the client.
  * - The topic and the consent basis of the file are put on the contacts of
  *   every new and duplicate row (MailingConsents: an opt-out of a client is
  *   never undone, a real consent is never weakened to a cold mark).
@@ -446,7 +452,7 @@ class LeadImport
             $row->status = $outcome['status'];
             $row->reason = $outcome['reason'] !== null ? mb_substr($outcome['reason'], 0, 500) : null;
             if ($outcome['status'] === CmsCommImportRow::STATUS_CREATED) {
-                $lead = self::createLead($import, $row, $data, !empty($outcome['foreign']));
+                $lead = self::createLead($import, $row, $data, !empty($outcome['foreign']), $outcome['match'] !== null);
                 $row->cms_lead_id = (int)$lead->id;
                 $seen['lead:'.$lead->id] = (int)$row->row_num;
                 $duplicates->remember((int)$lead->id, $data['phones']);
@@ -502,8 +508,12 @@ class LeadImport
         }
     }
 
-    /** @param bool $unsorted another manager's client: no executor of the import, the deal waits in «Неразобранное» */
-    private static function createLead(CmsCommImport $import, CmsCommImportRow $row, array $data, bool $unsorted = false): CmsLead
+    /**
+     * @param bool $unsorted another manager's client: no executor of the import, the deal waits in «Неразобранное»
+     * @param bool $known the row matched a client of the CRM: the deal waits in «Неразобранное» with the import's
+     *                    executor (sorting links that client), its contacts stay request data
+     */
+    private static function createLead(CmsCommImport $import, CmsCommImportRow $row, array $data, bool $unsorted = false, bool $known = false): CmsLead
     {
         $executorId = $unsorted ? 0 : (int)$import->executor_id;
         $sourceType = defined(CmsLead::class.'::SOURCE_MAILING') ? CmsLead::SOURCE_MAILING : CmsLead::SOURCE_IMPORT;
@@ -549,17 +559,29 @@ class LeadImport
             // In a job there is no web user: the lead is the importing employee's.
             $blameable->value = (int)$import->created_by;
         }
+        // П2г: a new client gets its cards first, the deal is linked to them and keeps no contacts of its own.
+        $newClient = !$unsorted && !$known && class_exists(\skeeks\cms\crm\LeadTriage::class);
+        if ($newClient) {
+            $cards = AudienceImport::newClient($import, $data);
+            $lead->cms_company_id = $cards['company'] ? (int)$cards['company']->id : null;
+            $lead->cms_user_id = $cards['person'] ? (int)$cards['person']->id : null;
+        }
+        $inWork = $executorId && ($newClient || !class_exists(\skeeks\cms\crm\LeadTriage::class));
         if ($executorId && $quiet) {
-            // Through the normal save: the first stage, the creation entry, the lifecycle (core П2а).
+            // Through the normal save: the first stage, the creation entry, the lifecycle (core П2а);
+            // a known client's request waits in «Неразобранное» with the employee of the import.
             $lead->executor_id = $executorId;
-            $lead->status = CmsLead::STATUS_IN_WORK;
+            $lead->status = $inWork ? CmsLead::STATUS_IN_WORK : CmsLead::STATUS_NEW;
         }
         if (!$lead->save()) {
             throw new \RuntimeException('Не удалось создать сделку из строки '.(int)$row->row_num.': '.implode('; ', $lead->getFirstErrors()));
         }
         if ($executorId && !$quiet) {
             // An older core: assigning in save() would notify per lead.
-            $lead->updateAttributes(['executor_id' => $executorId, 'status' => CmsLead::STATUS_IN_WORK]);
+            $lead->updateAttributes(['executor_id' => $executorId, 'status' => $inWork ? CmsLead::STATUS_IN_WORK : CmsLead::STATUS_NEW]);
+        }
+        if ($newClient) {
+            return $lead;
         }
         $person = $data['name'] !== '' ? $data['name'] : null;
         (new CmsLeadService())->syncContacts($lead,

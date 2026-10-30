@@ -426,6 +426,18 @@ class AudienceImport
      */
     private static function createCards(CmsCommImport $import, array $data, ?int $companyId): \yii\db\ActiveRecord
     {
+        $cards = self::newClient($import, $data, $companyId);
+
+        return $cards['company'] ?: $cards['person'];
+    }
+
+    /**
+     * The cards of createCards() (also for LeadImport: a deal of an import is made with its client, П2г).
+     *
+     * @return array company (CmsCompany|null), person (CmsUser|null); at least one of them
+     */
+    public static function newClient(CmsCommImport $import, array $data, ?int $companyId = null): array
+    {
         $siteId = (int)$import->cms_site_id;
         // A CRM client always has a main responsible (п. 13а): an import without a chosen one — its author.
         $managerId = (int)($import->executor_id ?: $import->created_by);
@@ -496,7 +508,7 @@ class AudienceImport
             }
         }
 
-        return $company ?: $person;
+        return ['company' => $company, 'person' => $person];
     }
 
     /** "Андрей Смирнов" → first, last; "Иванов Иван Иванович" → last, first, patronymic. */
