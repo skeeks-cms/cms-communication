@@ -204,7 +204,7 @@ try {
     $check(strpos((string)$byRow[8]['reason'], 'ответственный '.trim((string)$admin->shortDisplayName)) !== false
         && strpos((string)$byRow[8]['reason'], 'Array') === false, 'a foreign client names its responsible: '.$byRow[8]['reason']);
 
-    // An open deal of another manager's client is not added to by an import of requests: a new deal in «Неразобранное».
+    // An open deal of another manager's client is not added to by an import of requests; П2г: no deal without a client is made either.
     $foreignLead = new CmsLead(['cms_site_id' => $siteId, 'name' => 'Чужая сделка '.$u, 'cms_company_id' => (int)$foreign->id, 'source_type' => CmsLead::SOURCE_MANUAL]);
     $foreignLead->detachBehaviors();
     $foreignLead->status = CmsLead::STATUS_IN_WORK;
@@ -217,15 +217,15 @@ try {
     $theirs->executor_id = (int)$manager->id;
     $theirs->save(false, ['created_by', 'executor_id']);
     $t = LeadImport::preview($theirs);
-    $check($t['counts']['created'] === 1 && $t['counts']['duplicate'] === 0 && strpos((string)$t['rows'][0]['reason'], 'Клиент другого менеджера') === 0,
+    $check($t['counts']['created'] === 0 && $t['counts']['duplicate'] === 1 && strpos((string)$t['rows'][0]['reason'], 'Клиент другого менеджера') === 0,
         'requests: a foreign open deal is not added to: '.json_encode($t['counts']));
     $activities = static fn() => (int)(new \yii\db\Query())->from('{{%cms_log}}')->andWhere(['model_code' => $foreignLead->skeeksModelCode, 'model_id' => (int)$foreignLead->id])->count();
     $before = $activities();
     LeadImport::run($theirs);
     $theirs->refresh();
     $made = CmsLead::find()->andWhere(['source_ref' => 'comm-import:'.(int)$theirs->id.':2'])->one();
-    $check($activities() === $before && $made && !$made->executor_id && $made->status === CmsLead::STATUS_NEW,
-        'the foreign deal is untouched, the request waits in «Неразобранное» without the import executor');
+    $check($activities() === $before && !$made && (int)$theirs->duplicate_count === 1,
+        'the foreign deal is untouched, the row makes no deal');
 
     // п. 13а, no pool: a new card of a base always has a main responsible — «Я» by default («Добавить адреса»).
     $pool = AudienceImport::fromLines($list, $mail('pool').', Пул Пулов', $manager);

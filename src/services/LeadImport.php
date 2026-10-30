@@ -38,9 +38,10 @@ use yii\helpers\Json;
  * - П2г (owner's decision 30.10.2026): a lead keeps no contacts of its own. A
  *   row of a new client makes its company or person first
  *   (AudienceImport::newClient(), the contacts go to the cards) and the lead
- *   is linked to it; a row of a client already in the CRM (or of another
- *   manager's client) becomes an unsorted lead with the contacts of the row
- *   as its request data — sorting links the client.
+ *   is linked to it; a row of a client already in the CRM that the author of
+ *   the import sees makes a deal linked to that client (the row's contacts
+ *   are not written anywhere). Another manager's client, or an old deal
+ *   without a client, makes no deal: the row reports the match.
  * - The topic and the consent basis of the file are put on the contacts of
  *   every new and duplicate row (MailingConsents: an opt-out of a client is
  *   never undone, a real consent is never weakened to a cold mark).
@@ -371,20 +372,41 @@ class LeadImport
                 $outcome['match'] = $match;
                 $outcome['reason'] = 'Повтор строки '.$earlier.' этого файла';
             } elseif ($match && ($open = self::openLeadOf($match, (int)$import->cms_site_id)) && !self::canAddTo($import, $open)) {
-                // The open deal is another manager's: not touched, the request becomes a deal in «Неразобранное» (no executor).
-                $outcome['match'] = $match;
-                $outcome['foreign'] = true;
-                $outcome['reason'] = 'Клиент другого менеджера — новая сделка в «Неразобранное»';
-                foreach ($keys as $key) {
-                    $seen[$key] = (int)$row->row_num;
+                if (class_exists(\skeeks\cms\crm\LeadTriage::class)) {
+                    // П2г: the open deal is another manager's — no deal without a client, the row only reports the match.
+                    $outcome['status'] = CmsCommImportRow::STATUS_DUPLICATE;
+                    $outcome['match'] = $match;
+                    $outcome['reason'] = 'Клиент другого менеджера, сделка не создана: '.self::matchText($match);
+                } else {
+                    // An older core: the request becomes a deal in «Неразобранное» (no executor).
+                    $outcome['match'] = $match;
+                    $outcome['foreign'] = true;
+                    $outcome['reason'] = 'Клиент другого менеджера — новая сделка в «Неразобранное»';
+                    foreach ($keys as $key) {
+                        $seen[$key] = (int)$row->row_num;
+                    }
                 }
             } elseif ($match && $open) {
                 // The same client with an open deal: the request adds to it (a person decides in it whether it is a new need).
                 $outcome['status'] = CmsCommImportRow::STATUS_DUPLICATE;
                 $outcome['match'] = ['type' => CrmRecords::LEAD, 'id' => $open, 'by' => $match['by'], 'value' => $match['value']];
                 $outcome['reason'] = 'Дополнит открытую сделку, '.preg_replace('/^уже есть в CRM, /u', '', self::matchText($match));
+            } elseif ($match && $match['by'] !== 'name' && class_exists(\skeeks\cms\crm\LeadTriage::class)) {
+                // П2г: a known client without an open deal — the new deal is linked to that client, or none is made.
+                $outcome['match'] = $match;
+                $client = self::clientOf($import, $match);
+                if (is_string($client)) {
+                    $outcome['status'] = CmsCommImportRow::STATUS_DUPLICATE;
+                    $outcome['reason'] = $client.': '.self::matchText($match);
+                } else {
+                    $outcome['client'] = $client;
+                    $outcome['reason'] = 'Клиент '.self::matchText($match);
+                    foreach ($keys as $key) {
+                        $seen[$key] = (int)$row->row_num;
+                    }
+                }
             } elseif ($match && $match['by'] !== 'name') {
-                // A known client without an open deal: a new deal in «Неразобранное», sorting links the client.
+                // An older core: a new deal in «Неразобранное», sorting links the client.
                 $outcome['match'] = $match;
                 $outcome['reason'] = 'Клиент '.self::matchText($match);
                 foreach ($keys as $key) {
@@ -433,6 +455,40 @@ class LeadImport
         return $lead && $user && \skeeks\cms\crm\CrmAccess::instance()->canSeeLead($user, $lead);
     }
 
+    /**
+     * The client of a matched company, contact or deal that the author of the
+     * import sees (CrmAccess; an import without an author sees all):
+     * ['company' => id|null, 'person' => id|null], or the reason why no deal
+     * is made — another manager's client, or an old deal without a client.
+     *
+     * @return array|string
+     */
+    private static function clientOf(CmsCommImport $import, array $match)
+    {
+        $companyId = null;
+        $personId = null;
+        if ($match['type'] === CrmRecords::COMPANY) {
+            $companyId = (int)$match['id'];
+        } elseif ($match['type'] === CrmRecords::CLIENT) {
+            $personId = (int)$match['id'];
+        } elseif ($match['type'] === CrmRecords::LEAD && ($old = CmsLead::findOne((int)$match['id']))) {
+            $companyId = $old->cms_company_id ? (int)$old->cms_company_id : null;
+            $personId = $old->cms_user_id ? (int)$old->cms_user_id : null;
+        }
+        if (!$companyId && !$personId) {
+            return 'Есть сделка без клиента, новая не создана — укажите клиента в ней';
+        }
+        if ($import->created_by) {
+            $access = \skeeks\cms\crm\CrmAccess::instance();
+            $userId = (int)$import->created_by;
+            if (($companyId && !$access->canSeeCompany($userId, $companyId)) || ($personId && !$access->canSeeClient($userId, $personId))) {
+                return 'Клиент другого менеджера, сделка не создана';
+            }
+        }
+
+        return ['company' => $companyId, 'person' => $personId];
+    }
+
     /** "уже есть в CRM, совпал email info@…" (the record itself is shown beside it). */
     public static function matchText(array $match): string
     {
@@ -452,7 +508,7 @@ class LeadImport
             $row->status = $outcome['status'];
             $row->reason = $outcome['reason'] !== null ? mb_substr($outcome['reason'], 0, 500) : null;
             if ($outcome['status'] === CmsCommImportRow::STATUS_CREATED) {
-                $lead = self::createLead($import, $row, $data, !empty($outcome['foreign']), $outcome['match'] !== null);
+                $lead = self::createLead($import, $row, $data, !empty($outcome['foreign']), $outcome['match'] !== null, $outcome['client'] ?? null);
                 $row->cms_lead_id = (int)$lead->id;
                 $seen['lead:'.$lead->id] = (int)$row->row_num;
                 $duplicates->remember((int)$lead->id, $data['phones']);
@@ -510,10 +566,11 @@ class LeadImport
 
     /**
      * @param bool $unsorted another manager's client: no executor of the import, the deal waits in «Неразобранное»
-     * @param bool $known the row matched a client of the CRM: the deal waits in «Неразобранное» with the import's
-     *                    executor (sorting links that client), its contacts stay request data
+     * @param bool $known the row matched a client of the CRM
+     * @param array|null $client that client (clientOf()): the deal is linked to it and keeps no contacts of its own;
+     *                           without it (an older core) the deal waits in «Неразобранное» with the row's contacts
      */
-    private static function createLead(CmsCommImport $import, CmsCommImportRow $row, array $data, bool $unsorted = false, bool $known = false): CmsLead
+    private static function createLead(CmsCommImport $import, CmsCommImportRow $row, array $data, bool $unsorted = false, bool $known = false, ?array $client = null): CmsLead
     {
         $executorId = $unsorted ? 0 : (int)$import->executor_id;
         $sourceType = defined(CmsLead::class.'::SOURCE_MAILING') ? CmsLead::SOURCE_MAILING : CmsLead::SOURCE_IMPORT;
@@ -559,17 +616,21 @@ class LeadImport
             // In a job there is no web user: the lead is the importing employee's.
             $blameable->value = (int)$import->created_by;
         }
-        // П2г: a new client gets its cards first, the deal is linked to them and keeps no contacts of its own.
+        // П2г: a new client gets its cards first, a known one is taken as found;
+        // the deal is linked to the client and keeps no contacts of its own.
         $newClient = !$unsorted && !$known && class_exists(\skeeks\cms\crm\LeadTriage::class);
         if ($newClient) {
             $cards = AudienceImport::newClient($import, $data);
             $lead->cms_company_id = $cards['company'] ? (int)$cards['company']->id : null;
             $lead->cms_user_id = $cards['person'] ? (int)$cards['person']->id : null;
+        } elseif ($client !== null) {
+            $lead->cms_company_id = $client['company'];
+            $lead->cms_user_id = $client['person'];
         }
-        $inWork = $executorId && ($newClient || !class_exists(\skeeks\cms\crm\LeadTriage::class));
+        $linked = $newClient || $client !== null;
+        $inWork = $executorId && ($linked || !class_exists(\skeeks\cms\crm\LeadTriage::class));
         if ($executorId && $quiet) {
-            // Through the normal save: the first stage, the creation entry, the lifecycle (core П2а);
-            // a known client's request waits in «Неразобранное» with the employee of the import.
+            // Through the normal save: the first stage, the creation entry, the lifecycle (core П2а).
             $lead->executor_id = $executorId;
             $lead->status = $inWork ? CmsLead::STATUS_IN_WORK : CmsLead::STATUS_NEW;
         }
@@ -580,10 +641,10 @@ class LeadImport
             // An older core: assigning in save() would notify per lead.
             $lead->updateAttributes(['executor_id' => $executorId, 'status' => $inWork ? CmsLead::STATUS_IN_WORK : CmsLead::STATUS_NEW]);
         }
-        if ($newClient) {
+        if ($linked) {
             return $lead;
         }
-        $person = $data['name'] !== '' ? $data['name'] : null;
+        $person =$data['name'] !== '' ? $data['name'] : null;
         (new CmsLeadService())->syncContacts($lead,
             array_map(static fn($p) => ['value' => SendContacts::formatPhone($p), 'name' => $person], $data['phones']),
             array_map(static fn($e) => ['value' => $e, 'name' => $person], $data['emails']));

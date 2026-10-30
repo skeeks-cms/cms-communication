@@ -3,8 +3,8 @@
  * Import of recipients into deals (LeadImport) on the stand database, rolled
  * back — П2г: a deal keeps no contacts of its own. A row of a new client
  * makes its company (or person) with the phones and emails, the deal in work
- * is linked to it; a row of a client already in the CRM becomes an unsorted
- * deal whose contacts stay request data.
+ * is linked to it; a row of a client already in the CRM that the author sees
+ * makes a deal linked to that client; another manager's client makes no deal.
  *
  * LEAD_IMPORT_STAND_TEST=local php tests/lead-import-stand.php
  */
@@ -82,11 +82,34 @@ try {
     $check($lead && !$lead->cms_company_id && $lead->cms_user_id && !$lead->emails, 'a person row: the deal is linked to the new person, no email of its own');
     $check(CmsUser::findOne($lead->cms_user_id)->email === 'person-'.$uniq.'@import.test', 'the email is the person\'s');
 
-    // 3. A client already in the CRM: an unsorted deal, its phone is request data, no new card.
+    // 3. A client already in the CRM: the deal is linked to it, no contacts of its own, no new card.
     $lead = CmsLead::findOne((int)$rows[2]->cms_lead_id);
-    $check($lead && $lead->status === CmsLead::STATUS_NEW && !$lead->cms_company_id && !$lead->cms_user_id, 'a known client: the deal waits in «Неразобранное» without a client');
-    $check(count($lead->phones) === 1, 'its phone stays request data');
+    $check($lead && (int)$lead->cms_company_id === (int)$known->id && !$lead->cms_user_id, 'a known client: the deal is linked to the found company');
+    $check($lead->status === CmsLead::STATUS_IN_WORK && !$lead->phones && !$lead->emails, 'the deal of a known client is in work and keeps no contacts');
     $check(!CmsCompany::find()->andWhere(['name' => 'Проверка: другое имя '.$uniq])->exists(), 'no second company for a known client');
+
+    // 4. Another manager's client: an employee who does not see the company gets no deal, the row reports the match.
+    $access = \skeeks\cms\crm\CrmAccess::instance();
+    $stranger = null;
+    foreach (CmsUser::find()->isWorker()->andWhere([CmsUser::tableName().'.is_active' => 1])->orderBy(['id' => SORT_ASC])->limit(200)->all() as $candidate) {
+        if (!$access->isAdmin($candidate) && !$access->canSeeCompany($candidate, (int)$known->id)) {
+            $stranger = $candidate;
+            break;
+        }
+    }
+    $check($stranger !== null, 'an employee who does not see the known company');
+    $before = (int)CmsLead::find()->count();
+    $foreign = LeadImport::create($siteId, "Компания;Телефон
+Проверка: чужая {$uniq};{$knownPhone}
+", 'Чужая '.$uniq.'.csv', true);
+    $foreign->executor_id = (int)$stranger->id;
+    $foreign->created_by = (int)$stranger->id;
+    $foreign->save(false);
+    LeadImport::run($foreign);
+    $row = CmsCommImportRow::find()->andWhere(['cms_comm_import_id' => $foreign->id])->one();
+    $check($row && $row->status === CmsCommImportRow::STATUS_DUPLICATE && !$row->cms_lead_id, "another manager's client: no deal, the row is a duplicate");
+    $check((int)CmsLead::find()->count() === $before, 'no deal is created');
+    $check(mb_strpos((string)$row->reason, 'другого менеджера') !== false, 'the reason names another manager');
 
     echo 'OK lead-import-stand: '.$checks." checks\n";
 } finally {
