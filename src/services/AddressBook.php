@@ -20,7 +20,8 @@ use yii\db\Expression;
 /**
  * Who is behind an email address: our mailboxes and employees, or leads,
  * companies and clients of the CRM. Matching is exact on the normalized
- * (lowercased) address; names never link records.
+ * (lowercased) address; names and domains never link records. An address
+ * written at several companies or several people links none of them.
  */
 class AddressBook
 {
@@ -108,6 +109,41 @@ class AddressBook
             $leads = [];
         }
 
+        if (!$visibleTo) {
+            // An address written at several companies (or several people) says nothing about which
+            // of them the letter is for: it is not linked to any of them and stays for sorting.
+            $companies->andWhere([CmsCompany::tableName().'.id' => self::unambiguousOwners(
+                CmsCompanyEmail::find()->select(['owner' => 'cms_company_id', 'address' => new Expression('LOWER(value)')])
+                    ->andWhere(['in', new Expression('LOWER(value)'), $addresses]))]);
+            $clients->andWhere([CmsUser::tableName().'.id' => self::unambiguousOwners(
+                CmsUserEmail::find()->select(['owner' => 'cms_user_id', 'address' => new Expression('LOWER(value)')])
+                    ->andWhere(['cms_site_id' => $siteId])
+                    ->andWhere(['cms_user_id' => CmsUser::find()->select('id')->andWhere(['is_worker' => 0])])
+                    ->andWhere(['in', new Expression('LOWER(value)'), $addresses]))]);
+        }
+
         return array_merge($leads, $companies->distinct()->all(), $clients->distinct()->all());
+    }
+
+    /**
+     * Owners of addresses that belong to exactly one owner.
+     *
+     * @param \yii\db\ActiveQuery $rows selects `owner` and `address`
+     * @return int[]
+     */
+    private static function unambiguousOwners($rows): array
+    {
+        $owners = [];
+        foreach ($rows->asArray()->all() as $row) {
+            $owners[(string)$row['address']][(int)$row['owner']] = true;
+        }
+        $result = [];
+        foreach ($owners as $byAddress) {
+            if (count($byAddress) === 1) {
+                $result[] = (int)array_key_first($byAddress);
+            }
+        }
+
+        return $result ?: [0];
     }
 }

@@ -43,23 +43,81 @@ class MessageLinker
         }
     }
 
+    /** Links an employee chose for a letter: they follow the whole conversation. */
+    private const CHOSEN = [CmsCommLink::TYPE_CONTEXT, CmsCommLink::TYPE_MANUAL, CmsCommLink::TYPE_CREATED];
+
     /**
-     * Earlier letters of the conversation pass their links on: a reply from
-     * another address still lands in the same lead or company.
+     * Earlier letters of the conversation pass their links on.
+     *
+     * Letters (email): links an employee chose (manual, created, written
+     * from the card) follow the whole conversation. Links found by address
+     * or inherited pass only from earlier letters with a common outside
+     * participant: an old letter answered or forwarded to another client
+     * (a reused invoice thread) must not drag the previous clients along.
+     * An incoming reply from an address nobody had in the conversation still
+     * follows the letter it answers (a reply from another mailbox of the
+     * same person).
+     *
+     * Messenger and site conversations belong to one person: everything passes.
      */
     public function inheritFromConversation(CmsCommMessage $message): void
     {
+        $earlier = CmsCommMessage::find()
+            ->andWhere(['cms_comm_conversation_id' => $message->cms_comm_conversation_id])
+            ->andWhere(['!=', 'id', $message->id]);
         $rows = CmsCommLink::find()
-            ->select(['model_code', 'model_id'])
-            ->distinct()
-            ->andWhere(['cms_comm_message_id' => CmsCommMessage::find()->select('id')
-                ->andWhere(['cms_comm_conversation_id' => $message->cms_comm_conversation_id])
-                ->andWhere(['!=', 'id', $message->id])])
+            ->select(['cms_comm_message_id', 'model_code', 'model_id', 'link_type'])
+            ->andWhere(['cms_comm_message_id' => (clone $earlier)->select('id')])
             ->asArray()
             ->all();
-        foreach ($rows as $row) {
-            $this->linkModel($message, $row['model_code'], (int)$row['model_id'], CmsCommLink::TYPE_THREAD, null);
+        if (!$rows) {
+            return;
         }
+
+        if ($message->channel === \skeeks\cms\communication\models\CmsCommAccount::CHANNEL_EMAIL) {
+            $from = [];
+            $book = new AddressBook();
+            $own = self::outsideAddresses($book, $message);
+            $parentId = null;
+            $letters = (clone $earlier)->andWhere(['id' => array_unique(array_column($rows, 'cms_comm_message_id'))])->all();
+            foreach ($letters as $letter) {
+                if (array_intersect($own, self::outsideAddresses($book, $letter))) {
+                    $from[(int)$letter->id] = true;
+                }
+                if ($message->in_reply_to && $letter->external_id === $message->in_reply_to) {
+                    $parentId = (int)$letter->id;
+                }
+            }
+            if (!$from && $parentId && $message->direction === CmsCommMessage::DIRECTION_IN) {
+                $from[$parentId] = true;
+            }
+            $rows = array_filter($rows, static fn($row) => in_array($row['link_type'], self::CHOSEN, true)
+                || isset($from[(int)$row['cms_comm_message_id']]));
+        }
+
+        $done = [];
+        foreach ($rows as $row) {
+            $key = $row['model_code'].':'.$row['model_id'];
+            if (!isset($done[$key])) {
+                $done[$key] = true;
+                $this->linkModel($message, $row['model_code'], (int)$row['model_id'], CmsCommLink::TYPE_THREAD, null);
+            }
+        }
+    }
+
+    /** Addresses of a letter outside our site: sender and recipients. */
+    private static function outsideAddresses(AddressBook $book, CmsCommMessage $message): array
+    {
+        $addresses = array_merge([(string)$message->from_address], array_keys($message->getTo()), array_keys($message->getCc()), array_keys($message->getBcc()));
+        $result = [];
+        foreach ($addresses as $address) {
+            $address = mb_strtolower(trim((string)$address));
+            if ($address !== '' && strpos($address, '@') !== false && !$book->isOurs($address, (int)$message->cms_site_id)) {
+                $result[] = $address;
+            }
+        }
+
+        return array_values(array_unique($result));
     }
 
     /**
