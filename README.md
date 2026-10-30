@@ -6,7 +6,8 @@
 CRM и появляется в их ленте рядом со звонками, задачами и комментариями.
 
 Версия 1.0 — почта. Боты, уведомления клиентам и рассылки — следующие этапы.
-Согласованная архитектура и этапы — в [ARCHITECTURE.md](ARCHITECTURE.md),
+Устройство коммуникаций — в [ARCHITECTURE.md](ARCHITECTURE.md), план, этапы и
+решения по CRM — в [плане платформы](https://github.com/skeeks-cms/platform-plan/tree/main/crm),
 правила разработки — в [AGENTS.md](AGENTS.md), изменения — в
 [CHANGELOG.md](CHANGELOG.md).
 

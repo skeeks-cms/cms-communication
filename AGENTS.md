@@ -1,7 +1,9 @@
 # CMS Communication development
 
 Read README.md and ARCHITECTURE.md before changing this package. Follow the
-active shared-vendor skeeks-cms-package-development skill.
+active shared-vendor skeeks-cms-package-development skill. The plan, stages,
+statuses and owner decisions of the CRM as a whole live in the platform plan
+(https://github.com/skeeks-cms/platform-plan, `crm/`), not in this package.
 
 This package owns communication accounts (mailboxes, bots, SMS channels),
 employee access to them, external identities, conversations, messages,
@@ -29,8 +31,9 @@ employee's send right on the account. Notifications go through the core
 self-notification. Their delivery outside the CRM (mail, MAX, Telegram, the
 application) is `notify\NotifyDeliveries` on the component event `created`,
 journal `cms_comm_notify_delivery`; an employee's messenger channel is
-`cms_comm_notify_channel`, connected by `notify\NotifyLinks` (see
-ARCHITECTURE.md, "Единый механизм уведомлений").
+`cms_comm_notify_channel`, connected by `notify\NotifyLinks` (see the platform
+plan, `crm/notifications.md`; the code contract is the skill
+`references/backend-notifications.md`).
 
 Exception to the queue rule: the interactive "Проверить подключение" action
 logs in to IMAP/SMTP synchronously with the driver timeout; it reads and sends

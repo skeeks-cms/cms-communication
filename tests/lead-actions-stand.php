@@ -1,6 +1,6 @@
 <?php
 /**
- * New actions from a deal (ARCHITECTURE.md п. 13а, LeadActions) against a
+ * New actions from a deal (platform-plan crm/links-contract.md п. 13а, LeadActions) against a
  * local application, in a transaction that is rolled back:
  * LEAD_ACTIONS_STAND_TEST=local php tests/lead-actions-stand.php
  *

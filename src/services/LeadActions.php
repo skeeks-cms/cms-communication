@@ -11,7 +11,7 @@ use skeeks\cms\models\CmsLead;
 
 /**
  * A new action from a deal — a letter, an SMS, a proposal, a presentation
- * (ARCHITECTURE.md п. 13а): who works on the deal (core
+ * (platform-plan crm/links-contract.md п. 13а): who works on the deal (core
  * CrmAccess::isLeadWorker()), and while the deal is closed only who acts on
  * its client anyway (an administrator, "full", the main responsible:
  * CrmAccess::canActOnClient() without a deal). «Свои сделки» and "edit" act

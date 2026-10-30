@@ -241,7 +241,7 @@ try {
     $check($mineRow && \skeeks\cms\models\CmsUser2manager::find()->andWhere(['client_id' => (int)$mineRow->record_id, 'worker_id' => (int)$manager->id])->exists(),
         '«Я»: the card is the manager\'s');
 
-    // П2д: the flow of a campaign makes deals (ARCHITECTURE.md п. 13, «Ручное предложение и поток»).
+    // П2д: the flow of a campaign makes deals (platform-plan crm/links-contract.md п. 13, «Ручное предложение и поток»).
     $sentLetter = CmsCommMessage::find()->andWhere(['direction' => CmsCommMessage::DIRECTION_OUT, 'cms_site_id' => $siteId])->orderBy(['id' => SORT_DESC])->one();
     $replyLetter = CmsCommMessage::find()->andWhere(['direction' => CmsCommMessage::DIRECTION_IN, 'cms_site_id' => $siteId])->orderBy(['id' => SORT_DESC])->one();
     $check($sentLetter && $replyLetter, 'the stand needs an incoming and an outgoing letter');

@@ -1,6 +1,6 @@
 <?php
 /**
- * The communication of a client for «Свои сделки» and "edit" (owner's decision 29.10.2026, ARCHITECTURE.md
+ * The communication of a client for «Свои сделки» and "edit" (owner's decision 29.10.2026, platform-plan crm/links-contract.md
  * п. 11): letters and chats only through the employee's deals, the old correspondence of the client — only
  * "full"; writing to a chat — only through an open deal he works on. Against a local application in a
  * transaction that is rolled back, with a fake messenger (nothing reaches a real one):

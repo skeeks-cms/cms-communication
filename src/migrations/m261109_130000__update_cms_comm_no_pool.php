@@ -3,7 +3,7 @@
 use yii\db\Migration;
 
 /**
- * No common pool (ARCHITECTURE.md п. 13а): a CRM client always has a main
+ * No common pool (platform-plan crm/links-contract.md п. 13а): a CRM client always has a main
  * responsible. Campaigns whose new companies had «без ответственного» get
  * «Отправитель», base imports into a list without a responsible get their
  * author («Я»). Only these values change, so a repeated or interrupted run

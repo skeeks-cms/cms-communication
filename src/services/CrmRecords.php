@@ -87,7 +87,7 @@ final class CrmRecords
 
     /**
      * Records whose communication — letters, chats linked to them — the employee reads (owner's decision
-     * 29.10.2026, ARCHITECTURE.md п. 11): «Свои сделки» and "edit" work only through their deals, so a
+     * 29.10.2026, platform-plan crm/links-contract.md п. 11): «Свои сделки» and "edit" work only through their deals, so a
      * company or a person opens its letters and chats only when seen in full (CrmAccess::seesWholeClient():
      * "full", the main one, a leader through a "full" subordinate, an administrator); a person — also as data
      * of a company seen in full (as CrmAccess::feedCondition()). Deals, services and tasks keep their own
