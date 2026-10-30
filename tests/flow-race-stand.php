@@ -3,7 +3,10 @@
  * Two events of one free client at once (П2д, F04): two processes — a reply
  * and a view of the same recipient — must make one deal and keep one main
  * responsible. Runs against the database of the local stand and COMMITS
- * (a lock is seen only between connections), then removes what it made.
+ * (a lock is seen only between connections), then removes what it made —
+ * also the notifications of its records and their deliveries, by the pair
+ * model_code + model_id — and checks that nothing of it is left. Its records
+ * are named «Проверка: гонка П2д …».
  *
  * FLOW_RACE_TEST=local php tests/flow-race-stand.php setup        → prints "<recipient id> <start time>"
  * FLOW_RACE_TEST=local php tests/flow-race-stand.php fire <reply|view|visit|request> <recipient id> <start time>
@@ -42,11 +45,11 @@ if ($step === 'setup') {
     $worker = CmsUser::find()->isWorker()->andWhere([CmsUser::tableName().'.is_active' => 1])->orderBy(['id' => SORT_ASC])->one();
     $sent = CmsCommMessage::find()->andWhere(['direction' => CmsCommMessage::DIRECTION_OUT, 'cms_site_id' => $siteId])->orderBy(['id' => SORT_DESC])->one();
     $u = (string)mt_rand(100000, 999999);
-    $company = new CmsCompany(['name' => 'Гонка П2д '.$u]);
+    $company = new CmsCompany(['name' => 'Проверка: гонка П2д '.$u]);
     $company->save(false);
     // п. 13а: a CRM client always has a main responsible; the events must not change it.
     (new \skeeks\cms\models\CmsCompany2manager(['cms_company_id' => (int)$company->id, 'cms_user_id' => (int)$worker->id]))->save(false);
-    $campaign = new CmsCommCampaign(['name' => 'Гонка П2д '.$u, 'cms_site_id' => $siteId, 'lead_to' => 'sender', 'lead_on_view' => 1, 'lead_on_visit' => 1]);
+    $campaign = new CmsCommCampaign(['name' => 'Проверка: гонка П2д '.$u, 'cms_site_id' => $siteId, 'lead_to' => 'sender', 'lead_on_view' => 1, 'lead_on_visit' => 1]);
     $campaign->save(false);
     $recipient = new CmsCommCampaignRecipient(['cms_comm_campaign_id' => (int)$campaign->id, 'record_type' => 'company', 'record_id' => (int)$company->id,
         'address' => 'race-'.$u.'@skeeks.com', 'sender_user_id' => (int)$worker->id, 'cms_comm_message_id' => $sent ? (int)$sent->id : null,
@@ -77,23 +80,59 @@ if ($step === 'fire') {
 }
 
 if ($step === 'check') {
-    $leads = CmsLead::find()->andWhere(['cms_company_id' => $companyId])->all();
-    $mains = (new \yii\db\Query())->from('{{%cms_company2manager}}')->andWhere(['cms_company_id' => $companyId, 'is_main' => 1])->count();
-    $ok = count($leads) === 1 && (int)$mains === 1;
-    echo ($ok ? 'OK flow-race-stand' : 'FAIL flow-race-stand').': deals '.count($leads).', main responsibles '.$mains."\n";
-    // Remove what the test made: its deals (with their tasks, links and feed), the recipient, the campaign, the company.
     $db = Yii::$app->db;
-    foreach ($leads as $lead) {
-        $db->createCommand()->delete('{{%cms_task}}', ['cms_lead_id' => (int)$lead->id])->execute();
-        $db->createCommand()->delete('{{%cms_comm_link}}', ['model_code' => [CmsLead::class, $lead->skeeksModelCode], 'model_id' => (int)$lead->id])->execute();
-        $db->createCommand()->delete('{{%cms_log}}', ['model_code' => $lead->skeeksModelCode, 'model_id' => (int)$lead->id])->execute();
-        $lead->delete();
-    }
-    $db->createCommand()->delete('{{%cms_company2manager}}', ['cms_company_id' => $companyId])->execute();
-    $recipient->delete();
-    $campaign->delete();
-    if ($company = CmsCompany::findOne($companyId)) {
-        $company->delete();
+    $ok = false;
+    // Records the test made, as model_code => ids: their notifications go with them.
+    $made = [CmsCompany::class => [$companyId], CmsCommCampaign::class => [(int)$campaign->id], CmsCommCampaignRecipient::class => [(int)$recipient->id]];
+    try {
+        $leads = CmsLead::find()->andWhere(['cms_company_id' => $companyId])->all();
+        $mains = (new \yii\db\Query())->from('{{%cms_company2manager}}')->andWhere(['cms_company_id' => $companyId, 'is_main' => 1])->count();
+        $ok = count($leads) === 1 && (int)$mains === 1;
+        echo ($ok ? 'OK flow-race-stand' : 'FAIL flow-race-stand').': deals '.count($leads).', main responsibles '.$mains."\n";
+    } finally {
+        // Remove what the test made: its deals (with their tasks, links and feed), the recipient, the campaign, the company.
+        foreach (CmsLead::find()->andWhere(['cms_company_id' => $companyId])->all() as $lead) {
+            foreach ([CmsLead::class, $lead->skeeksModelCode] as $code) {
+                $made[$code][] = (int)$lead->id;
+            }
+            $taskIds = array_map('intval', (new \yii\db\Query())->select('id')->from('{{%cms_task}}')->andWhere(['cms_lead_id' => (int)$lead->id])->column());
+            $made[\skeeks\cms\models\CmsTask::class] = array_merge($made[\skeeks\cms\models\CmsTask::class] ?? [], $taskIds);
+            $db->createCommand()->delete('{{%cms_task}}', ['cms_lead_id' => (int)$lead->id])->execute();
+            $db->createCommand()->delete('{{%cms_comm_link}}', ['model_code' => [CmsLead::class, $lead->skeeksModelCode], 'model_id' => (int)$lead->id])->execute();
+            $db->createCommand()->delete('{{%cms_log}}', ['model_code' => $lead->skeeksModelCode, 'model_id' => (int)$lead->id])->execute();
+            $lead->delete();
+        }
+        $db->createCommand()->delete('{{%cms_company2manager}}', ['cms_company_id' => $companyId])->execute();
+        $recipient->delete();
+        $campaign->delete();
+        if ($company = CmsCompany::findOne($companyId)) {
+            $company->delete();
+        }
+
+        // Notifications of those records and their deliveries: only by the exact pair model_code + model_id.
+        $pairs = ['or'];
+        foreach ($made as $code => $ids) {
+            if ($ids = array_values(array_unique(array_filter($ids)))) {
+                $pairs[] = ['model_code' => $code, 'model_id' => $ids];
+            }
+        }
+        $notifyIds = static fn() => array_map('intval', (new \yii\db\Query())->select('id')->from('{{%cms_web_notify}}')->andWhere($pairs)->column());
+        $deliveries = $db->getTableSchema('{{%cms_comm_notify_delivery}}', true) !== null;
+        $removed = 0;
+        if ($ids = $notifyIds()) {
+            $removed = count($ids);
+            if ($deliveries) {
+                $db->createCommand()->delete('{{%cms_comm_notify_delivery}}', ['cms_web_notify_id' => $ids])->execute();
+            }
+            $db->createCommand()->delete('{{%cms_web_notify}}', ['id' => $ids])->execute();
+        }
+        $left = count($notifyIds()) + (int)CmsLead::find()->andWhere(['cms_company_id' => $companyId])->count() + (CmsCompany::findOne($companyId) ? 1 : 0);
+        if ($left) {
+            echo "FAIL flow-race-stand: {$left} records of the test are left after cleaning up\n";
+            $ok = false;
+        } else {
+            echo "Cleaned up: no deals, company or notifications of the test are left (notifications removed: {$removed})\n";
+        }
     }
     exit($ok ? 0 : 1);
 }

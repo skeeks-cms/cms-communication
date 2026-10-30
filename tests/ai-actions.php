@@ -7,7 +7,8 @@
  * McpComponent::executeTool() like REST and MCP, with an unsaved token of an
  * existing OAuth client. Identities: TEST_ADMIN_ID (1), TEST_WORKER_ID
  * (1663); TEST_OAUTH_CLIENT_ID — an OAuth client (the first one by default);
- * TEST_PRESENTATION_ID — a presentation for everybody (10); TEST_TOPIC_ID (1).
+ * a presentation for everybody and a mailing topic are made inside the
+ * transaction («Проверка:»): no record of the stand database is relied on.
  * Letters are only queued inside the transaction: nothing leaves.
  */
 if (getenv('AI_ACTIONS_TEST') !== 'local') {
@@ -79,10 +80,19 @@ try {
     $admin = CmsUser::findOne((int)(getenv('TEST_ADMIN_ID') ?: 1));
     $worker = CmsUser::findOne((int)(getenv('TEST_WORKER_ID') ?: 1663));
     $client = CmsOauthClient::findOne((int)(getenv('TEST_OAUTH_CLIENT_ID') ?: 0)) ?: CmsOauthClient::find()->orderBy(['id' => SORT_DESC])->one();
-    $presentation = (int)(getenv('TEST_PRESENTATION_ID') ?: 10);
-    $topic = (int)(getenv('TEST_TOPIC_ID') ?: 1);
     check($admin && $worker && $client, 'Local test identities and an OAuth client exist');
     Yii::$app->user->setIdentity($admin);
+    // «Работа ИИ через API» of the stand is a copy of production: the run takes its own values in memory
+    // (sending on, no CRM limits: the configuration and the defaults), the stored settings are neither relied on nor changed.
+    \skeeks\cms\communication\components\AiApiSettings::reset($siteId, ['sendEnabled' => true, 'limits' => []]);
+    // Own fixtures: the stand database is a copy of production, its presentations and topics are not relied on.
+    $ownTopic = new \skeeks\cms\communication\models\CmsCommTopic(['cms_site_id' => $siteId, 'name' => 'Проверка: тема ИИ', 'is_active' => 1]);
+    $ownTopic->save(false);
+    $topic = (int)$ownTopic->id;
+    $ownPresentation = run('cms_proposal_presentation_create', ['name' => 'Проверка: презентация ИИ',
+        'target_url' => 'https://example.test/check-ai-'.bin2hex(random_bytes(4)), 'confirm' => true]);
+    $presentation = (int)($ownPresentation['presentation']['id'] ?? 0);
+    check($topic > 0 && $presentation > 0, 'The test topic and the presentation for everybody are made');
     $accountId = (int)(new MailComposeService($admin, $siteId))->defaultAccountId();
     check($accountId > 0, 'The administrator may send from a mailbox');
     $mcpClient = 'mcp:'.$client->name;

@@ -90,6 +90,9 @@ $db = Yii::$app->db;
 $tx = $db->beginTransaction();
 try {
     $siteId = (int)Yii::$app->skeeks->site->id;
+    // «Работа ИИ через API» of the stand is a copy of production: the run takes its own values in memory
+    // (sending on, no CRM limits), the stored settings are neither relied on nor changed.
+    \skeeks\cms\communication\components\AiApiSettings::reset($siteId, ['sendEnabled' => true, 'limits' => []]);
     $admin = CmsUser::findOne((int)(getenv('TEST_ADMIN_ID') ?: 1));
     $client = CmsOauthClient::findOne((int)(getenv('TEST_OAUTH_CLIENT_ID') ?: 0)) ?: CmsOauthClient::find()->orderBy(['id' => SORT_DESC])->one();
     check($admin && $client, 'Local identities and an OAuth client exist');
@@ -261,7 +264,8 @@ try {
     // 11. "Настройки почты" → «Работа ИИ через API»: the CRM value wins, then communication.aiLimits, then the defaults.
     $config = Yii::$app->communication->aiLimits;
     Yii::$app->communication->aiLimits = ['perCall' => 7, 'recentDays' => 12];
-    \skeeks\cms\communication\components\AiApiSettings::reset();
+    // No CRM values, in memory: the stand's own settings are not cleared for this.
+    \skeeks\cms\communication\components\AiApiSettings::reset($siteId, ['sendEnabled' => true, 'limits' => []]);
     $sources = AiActions::limitSources(AiActions::LIMITS + LetterPurpose::DAYS);
     check($sources['perCall'] === ['value' => 7, 'source' => 'config'] && $sources['sendPerDay'] === ['value' => 20, 'source' => 'default']
         && $sources['personalDays'] === ['value' => 90, 'source' => 'default'], 'Without CRM values: the configuration, then the defaults');
@@ -269,9 +273,10 @@ try {
     $stored->override = \skeeks\cms\base\Component::OVERRIDE_DEFAULT;
     $stored->overridePath = [\skeeks\cms\base\Component::OVERRIDE_DEFAULT];
     $stored->refresh();
-    $stored->setAttributes(['sendEnabled' => 0, 'sendPerDay' => '3', 'perCall' => '', 'recentDays' => '0', 'personalDays' => '45'], false);
+    // Saved inside the transaction that is rolled back; every limit is given, so stored values of the stand do not count.
+    $stored->setAttributes(['sendEnabled' => 0, 'sendPerDay' => '3', 'perDay' => '', 'perCall' => '', 'recentDays' => '0', 'personalDays' => '45', 'serviceDays' => ''], false);
     check($stored->validate() && $stored->save(), 'The settings are saved by the component settings of the site: '.json_encode($stored->getErrors(), JSON_UNESCAPED_UNICODE));
-    \skeeks\cms\communication\components\AiApiSettings::reset();
+    \skeeks\cms\communication\components\AiApiSettings::reset($siteId);
     $read = \skeeks\cms\communication\components\AiApiSettings::forSite($siteId);
     $limits = AiActions::limits();
     check($read['sendEnabled'] === false && $limits['sendPerDay'] === 3 && $limits['perCall'] === 7 && $limits['recentDays'] === 0 && LetterPurpose::days()['personalDays'] === 45,
@@ -293,7 +298,7 @@ try {
     $zero = run('cms_comm_draft_check', ['draft_id' => (int)$off['items'][0]['draft_id']]);
     check(in_array(AiSend::REASON_SEND_LIMIT, array_column($zero['problems'], 'reason'), true), 'sendPerDay = 0: nothing leaves through the API');
     Yii::$app->communication->aiLimits = $config;
-    \skeeks\cms\communication\components\AiApiSettings::reset();
+    \skeeks\cms\communication\components\AiApiSettings::reset($siteId, ['sendEnabled' => true, 'limits' => []]);
     // Who changes them: the right of mail management (also mailboxes and their access), administrators by default.
     $right = \skeeks\cms\communication\controllers\AdminCmsCommSettingsController::PERMISSION;
     $am = Yii::$app->authManager;
@@ -306,6 +311,9 @@ try {
     }
 } finally {
     $tx->rollBack();
+    // The settings saved inside the transaction stay in the component cache after the rollback:
+    // drop it, or the stand (and the next tests) would read the test values instead of its own.
+    (new \skeeks\cms\communication\components\AiApiSettings())->invalidateCache();
     \skeeks\cms\communication\components\AiApiSettings::reset();
 }
 echo "OK: {$checks} checks\n";

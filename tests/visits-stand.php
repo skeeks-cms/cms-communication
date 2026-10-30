@@ -2,14 +2,15 @@
 /**
  * Step F on a local application with its database, in a transaction that is
  * rolled back: VISITS_TEST=local php tests/visits-stand.php. A letter of
- * the administrator (TEST_ADMIN_ID, 1) to a lead (TEST_LEAD_ID, 41, with an
- * email) is queued with links in the text and the signature: marks and the
+ * the administrator (TEST_ADMIN_ID, 1) to a deal made inside the transaction
+ * («Проверка:», a test address on @skeeks.com) is queued with links in the text and the signature: marks and the
  * code, the manager's marks kept, other links untouched; then visits by the
  * code — a robot, a link check, an employee, a person (feed entry, the
  * pages of the visit, notification, call task once), the next pages, the
  * end of a visit, a reply that quotes the letter, the feed renderer, the
- * client history of AI clients (with skeeks/cms-mcp) and a campaign
- * recipient "перешёл на сайт". Nothing leaves: the letter only waits in
+ * client history of AI clients (with skeeks/cms-mcp) and a recipient of a
+ * campaign made inside the transaction "перешёл на сайт". No record of the
+ * stand database is relied on. Nothing leaves: the letter only waits in
  * the queue inside the transaction.
  */
 if (getenv('VISITS_TEST') !== 'local') {
@@ -53,8 +54,13 @@ $tx = $db->beginTransaction();
 try {
     $siteId = (int)Yii::$app->skeeks->site->id;
     $admin = CmsUser::findOne((int)(getenv('TEST_ADMIN_ID') ?: 1));
-    $lead = CmsLead::findOne((int)(getenv('TEST_LEAD_ID') ?: 41));
-    check($admin && $lead && $lead->mainEmail, 'The administrator and a lead with an email exist');
+    check((bool)$admin, 'The administrator exists');
+    // An own deal with a test address: the stand database is a copy of production, its deals are not relied on.
+    $lead = new CmsLead(['cms_site_id' => $siteId, 'name' => 'Проверка: метки ссылок', 'executor_id' => (int)$admin->id]);
+    $lead->save(false);
+    (new \skeeks\cms\models\CmsLeadEmail(['cms_lead_id' => (int)$lead->id, 'value' => 'check-visits-'.(int)$lead->id.'@skeeks.com']))->save(false);
+    $lead->refresh();
+    check((bool)$lead->mainEmail, 'The test deal has its email');
     Yii::$app->user->setIdentity($admin);
     $email = (string)$lead->mainEmail->value;
     LinkTrackingSettings::reset($siteId, ['enabled' => true, 'domains' => ['skeeks.com', 'skeeks-platform.ru'], 'taskOnVisit' => true]);
@@ -177,8 +183,13 @@ try {
     }
 
     // 10. A campaign letter: its recipient "перешёл на сайт" at the first visit.
-    $campaignId = (int)\skeeks\cms\communication\models\CmsCommCampaign::find()->select('id')->orderBy(['id' => SORT_DESC])->scalar();
-    if ($campaignId) {
+    // An own campaign: the stand may have none, and its real ones are not touched.
+    $ownCampaign = new \skeeks\cms\communication\models\CmsCommCampaign(['cms_site_id' => $siteId, 'name' => 'Проверка: метки ссылок',
+        'status' => \skeeks\cms\communication\models\CmsCommCampaign::STATUS_RUNNING, 'audience_type' => \skeeks\cms\communication\models\CmsCommCampaign::AUDIENCE_MANUAL]);
+    $ownCampaign->save(false);
+    $campaignId = (int)$ownCampaign->id;
+    check($campaignId > 0, 'The test campaign is made');
+    {
         $db->createCommand()->insert('{{%cms_comm_campaign_recipient}}', ['cms_comm_campaign_id' => $campaignId, 'record_type' => 'lead', 'record_id' => (int)$lead->id,
             'address' => $email, 'status' => 'sent', 'cms_comm_message_id' => (int)$replyMessage->id, 'sent_at' => time() - 120,
             'created_at' => time(), 'updated_at' => time()])->execute();
@@ -188,9 +199,7 @@ try {
         check((int)$db->createCommand('SELECT visited_at FROM {{%cms_comm_campaign_recipient}} WHERE cms_comm_message_id = :m', [':m' => (int)$replyMessage->id])->queryScalar() > 0,
             'The campaign recipient is "перешёл на сайт"');
         $campaign = \skeeks\cms\communication\models\CmsCommCampaign::findOne($campaignId);
-        check(\skeeks\cms\communication\services\Campaigns::stats($campaign)['visited'] >= 1, 'The campaign report counts the visit');
-    } else {
-        echo "SKIP campaign: no campaign on the stand\n";
+        check(\skeeks\cms\communication\services\Campaigns::stats($campaign)['visited'] === 1, 'The campaign report counts the visit');
     }
 
     // 11. Marking off: the letter leaves as written.

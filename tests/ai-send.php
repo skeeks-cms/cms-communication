@@ -71,6 +71,9 @@ $db = Yii::$app->db;
 $tx = $db->beginTransaction();
 try {
     $siteId = (int)Yii::$app->skeeks->site->id;
+    // «Работа ИИ через API» of the stand is a copy of production: the run takes its own values in memory
+    // (sending on, no CRM limits), the stored settings are neither relied on nor changed.
+    \skeeks\cms\communication\components\AiApiSettings::reset($siteId, ['sendEnabled' => true, 'limits' => []]);
     $admin = CmsUser::findOne((int)(getenv('TEST_ADMIN_ID') ?: 1));
     $worker = CmsUser::findOne((int)(getenv('TEST_WORKER_ID') ?: 1663));
     $client = CmsOauthClient::findOne((int)(getenv('TEST_OAUTH_CLIENT_ID') ?: 0)) ?: CmsOauthClient::find()->orderBy(['id' => SORT_DESC])->one();
@@ -227,5 +230,6 @@ try {
     check(!$clientChange['success'] && isset($clientChange['errors']['client']), 'The client of a sent presentation stays');
 } finally {
     $tx->rollBack();
+    \skeeks\cms\communication\components\AiApiSettings::reset();
 }
 echo "OK: {$checks} checks\n";
