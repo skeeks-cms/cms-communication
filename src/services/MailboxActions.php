@@ -73,9 +73,11 @@ class MailboxActions
     public function manageableAccountIds(): array
     {
         if ($this->manageable === null) {
+            // A mailing service mailbox has no folders on a server: nothing to move there.
             $query = CmsCommAccount::findMailboxes()->select('id')->andWhere(['cms_site_id' => $this->siteId])
                 ->andWhere(['id' => CmsCommAccountAccess::find()->select('cms_comm_account_id')
-                    ->andWhere(['cms_user_id' => (int)$this->user->id, 'can_manage_messages' => 1])]);
+                    ->andWhere(['cms_user_id' => (int)$this->user->id, 'can_manage_messages' => 1])])
+                ->andWhere(\skeeks\cms\communication\mail\MailingServices::notServiceCondition());
             $this->manageable = array_map('intval', $query->column());
         }
 

@@ -60,6 +60,41 @@ class MailFolders
     }
 
     /**
+     * Mailboxes of the folder list and their folders:
+     * - read "всё": every folder; a mailing service mailbox (only sends,
+     *   mail\MailingServices) only "Отправленные";
+     * - only a send right ("свои" or "любые" without reading the mailbox):
+     *   "Отправленные" with the letters the employee may read anyway
+     *   (forManager(): their own letters and those of their clients), so a
+     *   mailbox they write from does not vanish from "Почта".
+     *
+     * @return array[] each: account (CmsCommAccount), kinds (in, out, archive, junk, trash)
+     */
+    public function boxes(): array
+    {
+        $readAll = [];
+        foreach ($this->accounts() as $account) {
+            $readAll[(int)$account->id] = $account;
+        }
+        $sendOnly = CmsCommAccount::findMailboxes()->andWhere(['cms_site_id' => $this->siteId, 'is_active' => 1])
+            ->andWhere(['not', ['id' => array_keys($readAll) ?: [0]]])
+            ->andWhere(['id' => CmsCommAccountAccess::find()->select('cms_comm_account_id')
+                ->andWhere(['cms_user_id' => $this->user->id])
+                ->andWhere(['!=', 'send_level', CmsCommAccountAccess::SEND_NONE])])
+            ->all();
+        $accounts = array_merge(array_values($readAll), $sendOnly);
+        usort($accounts, static fn($a, $b) => strcmp((string)$a->address, (string)$b->address));
+
+        $boxes = [];
+        foreach ($accounts as $account) {
+            $full = isset($readAll[(int)$account->id]) && !\skeeks\cms\communication\mail\MailingServices::isService($account);
+            $boxes[] = ['account' => $account, 'kinds' => $full ? ['in', 'out', 'archive', 'junk', 'trash'] : ['out']];
+        }
+
+        return $boxes;
+    }
+
+    /**
      * @return array[] each: key, title, group (null or mailbox address), unread
      */
     public function folders(): array
@@ -74,12 +109,12 @@ class MailFolders
         if ($accounts) {
             $folders[] = ['key' => self::UNLINKED, 'title' => 'Без привязки', 'group' => null, 'icon' => 'help'];
         }
-        foreach ($accounts as $account) {
-            $folders[] = ['key' => 'in:'.$account->id, 'title' => 'Входящие', 'group' => $account->address, 'icon' => 'inbox'];
-            $folders[] = ['key' => 'out:'.$account->id, 'title' => 'Отправленные', 'group' => $account->address, 'icon' => 'send'];
-            $folders[] = ['key' => 'archive:'.$account->id, 'title' => 'Архив', 'group' => $account->address, 'icon' => 'archive'];
-            $folders[] = ['key' => 'junk:'.$account->id, 'title' => 'Спам', 'group' => $account->address, 'icon' => 'spam'];
-            $folders[] = ['key' => 'trash:'.$account->id, 'title' => 'Корзина', 'group' => $account->address, 'icon' => 'trash'];
+        $titles = ['in' => ['Входящие', 'inbox'], 'out' => ['Отправленные', 'send'], 'archive' => ['Архив', 'archive'],
+            'junk' => ['Спам', 'spam'], 'trash' => ['Корзина', 'trash']];
+        foreach ($this->boxes() as $box) {
+            foreach ($box['kinds'] as $kind) {
+                $folders[] = ['key' => $kind.':'.$box['account']->id, 'title' => $titles[$kind][0], 'group' => $box['account']->address, 'icon' => $titles[$kind][1]];
+            }
         }
         foreach ($folders as &$folder) {
             // Like web mail: unread letters of the trash are not counted.
@@ -109,9 +144,9 @@ class MailFolders
             }
         }
         if (preg_match('/^(in|out|archive|junk|trash):(\d+)$/', $key, $m)) {
-            foreach ($this->accounts() as $account) {
-                if ((int)$account->id === (int)$m[2]) {
-                    return true;
+            foreach ($this->boxes() as $box) {
+                if ((int)$box['account']->id === (int)$m[2]) {
+                    return in_array($m[1], $box['kinds'], true);
                 }
             }
         }

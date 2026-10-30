@@ -410,7 +410,8 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $started = 0;
         $connectionIds = [];
         foreach ($this->mailFolders()->accounts() as $account) {
-            if ($account->is_active && $account->cms_comm_connection_id) {
+            // A mailing service only sends: nothing to receive.
+            if ($account->is_active && $account->cms_comm_connection_id && !\skeeks\cms\communication\mail\MailingServices::isService($account)) {
                 $connectionIds[(int)$account->cms_comm_connection_id] = (int)$account->cms_site_id;
             }
         }
@@ -701,7 +702,9 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             // "Выбрать все письма папки": how many letters the folder has with these filters.
             'total' => $hasMore ? (int)$this->listQuery($folders, $request->get())->count() : count($messages),
             'canSend' => (bool)$this->composeService()->sendableAccounts(),
-            'canManage' => $actions->canManageAny(),
+            // Folders of a mailbox the employee may not manage (a mailing service, send-only access) offer no moves.
+            'canManage' => $actions->canManageAny() && (!preg_match('/^[a-z]+:(\d+)$/', $folder, $box)
+                    || in_array((int)$box[1], $actions->manageableAccountIds(), true)),
             'labels' => $labels,
             'label' => $label,
             'assignee' => $assignee,

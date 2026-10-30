@@ -7,9 +7,11 @@
 
 namespace skeeks\cms\communication\jobs;
 
+use skeeks\cms\communication\campaign\MailboxCampaignChannel;
 use skeeks\cms\communication\mail\MailDriverInterface;
 use skeeks\cms\communication\mail\MailSendException;
 use skeeks\cms\communication\mail\MailingServiceInterface;
+use skeeks\cms\communication\models\CmsCommCampaign;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\services\Unsubscribe;
 use skeeks\cms\job\contracts\JobReporterInterface;
@@ -62,6 +64,15 @@ class MailSendJobHandler extends AbstractJobHandler
         if (!$driver instanceof MailDriverInterface) {
             $this->finish($id, CmsCommMessage::STATUS_FAILED, 'Драйвер подключения не умеет отправлять почту.');
             throw new JobPermanentException('Драйвер подключения не умеет отправлять почту.');
+        }
+        // A letter of a mailing service campaign never leaves through an ordinary mailbox:
+        // the mailbox may have been switched to another connection after the launch.
+        if ($message->hasAttribute('cms_comm_campaign_id') && $message->cms_comm_campaign_id && !$driver instanceof MailingServiceInterface) {
+            $campaign = CmsCommCampaign::findOne((int)$message->cms_comm_campaign_id);
+            if ($campaign && $campaign->channel !== MailboxCampaignChannel::ID) {
+                $this->finish($id, CmsCommMessage::STATUS_FAILED, 'Ящик кампании больше не подключён к сервису рассылок.');
+                throw new JobPermanentException('Ящик кампании больше не подключён к сервису рассылок.');
+            }
         }
 
         // A letter never leaves without one of its files.
