@@ -413,6 +413,11 @@ class CampaignTasks
             $task->cms_user_id = (int)$record->cms_user_id;
         }
         $task->plan_start_at = self::startFor($executor, $now, self::DURATION);
+        // The calculated start is the planner's suggestion, not a person's choice: the task stays auto
+        // and moves with the executor's queue (cms with TaskPlanner; an older cms has no such flag).
+        if ($task->hasProperty('isAutoStart')) {
+            $task->isAutoStart = true;
+        }
         $task->plan_duration = self::DURATION;
         $at = \Yii::$app->formatter->asDatetime(($message ? (int)$message->message_at : 0) ?: $now, 'php:d.m.Y в H:i');
         $lines = $kind === self::KIND_REQUEST

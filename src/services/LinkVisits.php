@@ -447,6 +447,11 @@ class LinkVisits
         $task->created_by = (int)$executor->id;
         self::fillClient($task, $record);
         $task->plan_start_at = CampaignTasks::startFor($executor, $now, self::CALL_DURATION);
+        // The calculated start is the planner's suggestion, not a person's choice: the task stays auto
+        // and moves with the executor's queue (cms with TaskPlanner; an older cms has no such flag).
+        if ($task->hasProperty('isAutoStart')) {
+            $task->isAutoStart = true;
+        }
         $task->plan_duration = self::CALL_DURATION;
         $message = $track->message;
         $visit = CmsCommTrackVisit::find()->andWhere(['cms_comm_track_id' => (int)$track->id, 'is_bot' => 0, 'check_reason' => null])
