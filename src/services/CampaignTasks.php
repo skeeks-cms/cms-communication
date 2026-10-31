@@ -412,7 +412,7 @@ class CampaignTasks
         } elseif ($record->cms_user_id) {
             $task->cms_user_id = (int)$record->cms_user_id;
         }
-        $task->plan_start_at = self::dueAt(is_array($executor->work_shedule) ? $executor->work_shedule : null, $now);
+        $task->plan_start_at = self::startFor($executor, $now, self::DURATION);
         $task->plan_duration = self::DURATION;
         $at = \Yii::$app->formatter->asDatetime(($message ? (int)$message->message_at : 0) ?: $now, 'php:d.m.Y в H:i');
         $lines = $kind === self::KIND_REQUEST
@@ -432,6 +432,22 @@ class CampaignTasks
         }
 
         return $task;
+    }
+
+    /**
+     * The start of a task for the executor: the nearest free time of their schedule after MIN_LEAD_SECONDS
+     * (cms TaskPlanner, the one calculation of task starts); an older cms — the schedule only.
+     */
+    public static function startFor(CmsUser $executor, int $now, int $duration = self::DURATION): int
+    {
+        if (class_exists(\skeeks\cms\services\TaskPlanner::class)) {
+            $planner = new \skeeks\cms\services\TaskPlanner();
+            $planner->now = $now;
+
+            return $planner->nearestStart($executor, $duration, $now + self::MIN_LEAD_SECONDS);
+        }
+
+        return self::dueAt(is_array($executor->work_shedule) ? $executor->work_shedule : null, $now);
     }
 
     /** Today within the working hours, otherwise the start of the nearest working period; never sooner than MIN_LEAD_SECONDS. */

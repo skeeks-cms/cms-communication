@@ -446,7 +446,7 @@ class LinkVisits
         // A task to oneself is accepted at once; the site has no signed-in user.
         $task->created_by = (int)$executor->id;
         self::fillClient($task, $record);
-        $task->plan_start_at = CampaignTasks::dueAt(is_array($executor->work_shedule) ? $executor->work_shedule : null, $now);
+        $task->plan_start_at = CampaignTasks::startFor($executor, $now, self::CALL_DURATION);
         $task->plan_duration = self::CALL_DURATION;
         $message = $track->message;
         $visit = CmsCommTrackVisit::find()->andWhere(['cms_comm_track_id' => (int)$track->id, 'is_bot' => 0, 'check_reason' => null])
