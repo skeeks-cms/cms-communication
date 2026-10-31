@@ -163,7 +163,9 @@ class NotifyDeliveries
         if (!$urgent && $delivery->skip_if_read && $notify->is_read) {
             return self::skip($delivery, 'Прочитано в CRM');
         }
-        if (!$urgent && !$isTest && ($until = $notifications->quietEndsAt((int)$delivery->cms_user_id))) {
+        // A kind without quiet hours (a reminder a person set for themself) is not urgent but does not wait either.
+        $ignoresQuiet = method_exists($notifications, 'ignoresQuietHours') && $notifications->ignoresQuietHours($notify->kind);
+        if (!$urgent && !$isTest && !$ignoresQuiet && ($until = $notifications->quietEndsAt((int)$delivery->cms_user_id))) {
             $delivery->status = CmsCommNotifyDelivery::STATUS_POSTPONED;
             $delivery->reason = 'Тихие часы до '.\Yii::$app->formatter->asTime($until, 'short');
             $delivery->scheduled_at = $until;
