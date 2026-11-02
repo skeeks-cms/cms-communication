@@ -73,6 +73,8 @@ class CommunicationBootstrap implements BootstrapInterface
                     && ($canUrl = $app->seo->canUrl) && method_exists($canUrl, 'ADDminor_pname')) {
                     $canUrl->ADDminor_pname(LinkMarks::CODE_PARAM);
                 }
+                // The code joins the marks utm_* the site keeps for its requests: a form on another page still knows the letter.
+                \skeeks\cms\communication\services\LinkRequests::rememberCode();
             });
         }
 

@@ -8,6 +8,7 @@
 namespace skeeks\cms\communication\services;
 
 use skeeks\cms\communication\models\CmsCommCampaignRecipient;
+use skeeks\cms\communication\models\CmsCommLink;
 use skeeks\cms\communication\models\CmsCommTrack;
 use skeeks\cms\communication\models\CmsCommTrackVisit;
 use skeeks\cms\crm\LeadOriginEvent;
@@ -42,8 +43,11 @@ use yii\helpers\Url;
  * call task of the visit (LinkVisits::callTask()) of its responsible or of
  * the sender on that client is linked to the deal instead of a second one.
  *
- * Only a counted visit within its time (LinkVisits::IDLE): no cookie, a
- * robot, a link check, an ended visit — the request is routed as before.
+ * The visit: the cookie of a visit going on (LinkVisits::IDLE), otherwise the
+ * code of the letter among the marks of the request (rememberCode(): the code
+ * is kept with utm_* in the session, so a form on another page or after the
+ * visit ended still knows it) with a counted visit within CODE_LIFETIME.
+ * Neither, or only a robot or a link check — the request is routed as before.
  * Requests that are not a visitor's (a mailing, an import, a call, a
  * letter, the API, an employee's form) are not asked about.
  */
@@ -55,6 +59,9 @@ class LinkRequests
         CmsLead::SOURCE_PHONE, CmsLead::SOURCE_IMPORT, CmsLead::SOURCE_API, CmsLead::SOURCE_EMAIL,
         CmsLead::SOURCE_MAX, CmsLead::SOURCE_MAILING,
     ];
+
+    /** A code among the marks of a request binds within so long after its last counted visit (the marks of cms-seo live 24 hours). */
+    public const CODE_LIFETIME = 24 * 3600;
 
     /** The campaign request is being created: its own deal is not a visitor's request. */
     private static bool $busy = false;
@@ -85,6 +92,56 @@ class LinkRequests
             ->andWhere(['>=', 'last_at', $now - LinkVisits::IDLE])->one();
     }
 
+    /**
+     * A page opened by a link of a letter (`?sx=`): the code joins the marks utm_* skeeks/cms-seo keeps in the
+     * session for the requests of this browser (24 hours, replaced by the next marked visit). Form2 copies them
+     * into the submission and the deal (`source_data.utm`), so a form on any later page carries the code.
+     */
+    public static function rememberCode(): void
+    {
+        $app = \Yii::$app;
+        $request = $app->request;
+        if (!$request instanceof \yii\web\Request || !$request->isGet || !$app->has('seo')
+            || (class_exists(\skeeks\cms\backend\BackendComponent::class) && \skeeks\cms\backend\BackendComponent::getCurrent())) {
+            return;
+        }
+        $code = $request->get(LinkMarks::CODE_PARAM);
+        if (!is_string($code) || !preg_match('~^'.LinkMarks::CODE_PATTERN.'$~', $code)
+            || !method_exists($app->seo, 'setUtms') || !method_exists($app->seo, 'getUtms')) {
+            return;
+        }
+        try {
+            $utms = (array)$app->seo->getUtms();
+            unset($utms['created_at']);
+            if (($utms[LinkMarks::CODE_PARAM] ?? null) !== $code) {
+                $utms[LinkMarks::CODE_PARAM] = $code;
+                $app->seo->setUtms($utms);
+            }
+        } catch (\Throwable $e) {
+            \Yii::error('Код ссылки из письма не запомнен: '.$e->getMessage(), self::class);
+        }
+    }
+
+    /**
+     * The code of a letter among the marks of the request (`source_data.utm.sx`, rememberCode()): its latest
+     * counted visit (never a robot or a link check) within CODE_LIFETIME. The visit cookie may be gone: the
+     * visit ended, the form is on another page much later.
+     */
+    public static function visitOfRequestCode(CmsLead $lead, ?int $now = null): ?CmsCommTrackVisit
+    {
+        $data = is_array($lead->source_data) ? $lead->source_data : [];
+        $code = is_array($data['utm'] ?? null) ? ($data['utm'][LinkMarks::CODE_PARAM] ?? null) : null;
+        $track = is_string($code) ? LinkVisits::findTrack($code) : null;
+        if (!$track) {
+            return null;
+        }
+        $now = $now ?? time();
+
+        return CmsCommTrackVisit::find()->andWhere(['cms_comm_track_id' => (int)$track->id, 'is_bot' => 0, 'check_reason' => null])
+            ->andWhere(['not', ['token' => null]])->andWhere(['>=', 'last_at', $now - self::CODE_LIFETIME])
+            ->orderBy(['id' => SORT_DESC])->one();
+    }
+
     public static function onOrigin(LeadOriginEvent $event): void
     {
         $lead = $event->lead;
@@ -96,7 +153,7 @@ class LinkRequests
             return;
         }
         try {
-            $visit = self::currentVisit();
+            $visit = self::currentVisit() ?: self::visitOfRequestCode($lead);
             $track = $visit ? $visit->track : null;
             $record = $track ? (LinkVisits::records($track)[0] ?? null) : null;
         } catch (\Throwable $e) {
@@ -174,6 +231,10 @@ class LinkRequests
             $text .= ' Задача «'.Html::encode((string)$task->name).'» привязана к этой сделке.';
         }
         $deal->addSystemActivity($text);
+        // The letter belongs to the deal now: it is in the correspondence of the deal card.
+        if ($track->message) {
+            (new MessageLinker())->link($track->message, [$deal], CmsCommLink::TYPE_THREAD);
+        }
     }
 
     /** "02.11.2026 («Сайт по 152-ФЗ»)": the letter of the link. */
