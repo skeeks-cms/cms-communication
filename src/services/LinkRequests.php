@@ -44,10 +44,9 @@ use yii\helpers\Url;
  * the sender on that client is linked to the deal instead of a second one.
  *
  * The visit: the cookie of a visit going on (LinkVisits::IDLE), otherwise the
- * code of the letter among the marks of the request (rememberCode(): the code
- * is kept with utm_* in the session, so a form on another page or after the
- * visit ended still knows it) with a counted visit within CODE_LIFETIME.
- * Neither, or only a robot or a link check — the request is routed as before.
+ * counted visit the browser session remembered (rememberVisit(), within
+ * SESSION_LIFETIME): a form on another page or after the visit ended still
+ * binds. Neither, a robot or a link check — the request is routed as before.
  * Requests that are not a visitor's (a mailing, an import, a call, a
  * letter, the API, an employee's form) are not asked about.
  */
@@ -60,8 +59,11 @@ class LinkRequests
         CmsLead::SOURCE_MAX, CmsLead::SOURCE_MAILING,
     ];
 
-    /** A code among the marks of a request binds within so long after its last counted visit (the marks of cms-seo live 24 hours). */
-    public const CODE_LIFETIME = 24 * 3600;
+    /** The session key of the counted visit of this browser (rememberVisit()). */
+    public const SESSION_KEY = 'cmsCommunication.linkVisit';
+
+    /** A visit remembered by the session binds requests within so long after its last page. */
+    public const SESSION_LIFETIME = 24 * 3600;
 
     /** The campaign request is being created: its own deal is not a visitor's request. */
     private static bool $busy = false;
@@ -93,53 +95,42 @@ class LinkRequests
     }
 
     /**
-     * A page opened by a link of a letter (`?sx_code=`, older letters `?sx=`): the code joins the marks utm_*
-     * skeeks/cms-seo keeps in the session for the requests of this browser (24 hours, replaced by the next marked
-     * visit) as `sx_code`. Form2 copies them into the submission and the deal (`source_data.utm`), so a form on
-     * any later page carries the code.
+     * A counted visit on this site (controllers\VisitController::actionSeen()): the session of the browser keeps
+     * its token, so a form on any later page binds the request even when the visit cookie is gone (the visit
+     * ended, the cookie was cleared). Only a counted visit gets a token: a robot or a link check never does,
+     * and another browser has another session. The code of the letter itself never leaves the CRM.
      */
-    public static function rememberCode(): void
+    public static function rememberVisit(string $token): void
     {
-        $app = \Yii::$app;
-        $request = $app->request;
-        if (!$request instanceof \yii\web\Request || !$request->isGet || !$app->has('seo')
-            || (class_exists(\skeeks\cms\backend\BackendComponent::class) && \skeeks\cms\backend\BackendComponent::getCurrent())) {
-            return;
-        }
-        $code = LinkMarks::codeOf((array)$request->get());
-        if ($code === null || !method_exists($app->seo, 'setUtms') || !method_exists($app->seo, 'getUtms')) {
+        if (!preg_match('~^[A-Za-z0-9_-]{20,48}$~', $token) || !\Yii::$app->has('session')) {
             return;
         }
         try {
-            $utms = (array)$app->seo->getUtms();
-            unset($utms['created_at']);
-            if (($utms[LinkMarks::CODE_PARAM] ?? null) !== $code) {
-                $utms[LinkMarks::CODE_PARAM] = $code;
-                $app->seo->setUtms($utms);
-            }
+            \Yii::$app->session->set(self::SESSION_KEY, ['token' => $token, 'at' => time()]);
         } catch (\Throwable $e) {
-            \Yii::error('Код ссылки из письма не запомнен: '.$e->getMessage(), self::class);
+            \Yii::error('Визит по ссылке из письма не запомнен в сессии: '.$e->getMessage(), self::class);
         }
     }
 
-    /**
-     * The code of a letter among the marks of the request (`source_data.utm.sx_code`, rememberCode()): its
-     * latest counted visit (never a robot or a link check) within CODE_LIFETIME. The visit cookie may be gone:
-     * the visit ended, the form is on another page much later.
-     */
-    public static function visitOfRequestCode(CmsLead $lead, ?int $now = null): ?CmsCommTrackVisit
+    /** The counted visit this browser session remembered (rememberVisit()), last seen within SESSION_LIFETIME. */
+    public static function sessionVisit(?int $now = null): ?CmsCommTrackVisit
     {
-        $data = is_array($lead->source_data) ? $lead->source_data : [];
-        $code = is_array($data['utm'] ?? null) ? LinkMarks::codeOf($data['utm']) : null;
-        $track = $code !== null ? LinkVisits::findTrack($code) : null;
-        if (!$track) {
+        if (!\Yii::$app->request instanceof \yii\web\Request || !\Yii::$app->has('session')) {
+            return null;
+        }
+        $session = \Yii::$app->session;
+        if (!$session->getIsActive() && !$session->getHasSessionId()) {
+            return null;
+        }
+        $kept = $session->get(self::SESSION_KEY);
+        $token = is_array($kept) ? ($kept['token'] ?? null) : null;
+        if (!is_string($token) || !preg_match('~^[A-Za-z0-9_-]{20,48}$~', $token)) {
             return null;
         }
         $now = $now ?? time();
 
-        return CmsCommTrackVisit::find()->andWhere(['cms_comm_track_id' => (int)$track->id, 'is_bot' => 0, 'check_reason' => null])
-            ->andWhere(['not', ['token' => null]])->andWhere(['>=', 'last_at', $now - self::CODE_LIFETIME])
-            ->orderBy(['id' => SORT_DESC])->one();
+        return CmsCommTrackVisit::find()->andWhere(['token' => $token, 'is_bot' => 0, 'check_reason' => null])
+            ->andWhere(['>=', 'last_at', $now - self::SESSION_LIFETIME])->one();
     }
 
     public static function onOrigin(LeadOriginEvent $event): void
@@ -153,10 +144,13 @@ class LinkRequests
             return;
         }
         try {
-            $visit = self::currentVisit() ?: self::visitOfRequestCode($lead);
+            $visit = self::currentVisit() ?: self::sessionVisit();
             $track = $visit ? $visit->track : null;
             $record = $track ? (LinkVisits::records($track)[0] ?? null) : null;
         } catch (\Throwable $e) {
+            if ($e instanceof \yii\db\Exception && CmsLeadService::isLockConflict($e)) {
+                throw $e;
+            }
             \Yii::error('Заявка: переход из письма не прочитан: '.$e->getMessage(), self::class);
             return;
         }
@@ -172,7 +166,11 @@ class LinkRequests
         try {
             $deal = self::campaignDeal($track, $lead);
         } catch (\Throwable $e) {
-            // The request of the visitor is saved anyway: as a request of the client of the letter.
+            // A deadlock or a lock wait rolled the whole transaction back: the owner of the creation repeats it.
+            if ($e instanceof \yii\db\Exception && CmsLeadService::isLockConflict($e)) {
+                throw $e;
+            }
+            // Any other failure: the request of the visitor is saved anyway, as a request of the client of the letter.
             \Yii::error('Заявка по рассылке после перехода из письма не создана: '.$e->getMessage(), self::class);
             $deal = null;
         }

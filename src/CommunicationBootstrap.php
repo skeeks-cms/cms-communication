@@ -74,10 +74,7 @@ class CommunicationBootstrap implements BootstrapInterface
                     foreach (LinkMarks::CODE_PARAMS as $name) {
                         $canUrl->ADDminor_pname($name);
                     }
-                }
-                // The code joins the marks utm_* the site keeps for its requests: a form on another page still knows the letter.
-                \skeeks\cms\communication\services\LinkRequests::rememberCode();
-            });
+                }            });
         }
 
         if (!$app instanceof \yii\web\Application || !defined(CrmContactBlockWidget::class.'::EVENT_CONTACT_ACTIONS')) {

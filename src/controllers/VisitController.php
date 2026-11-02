@@ -9,6 +9,7 @@ namespace skeeks\cms\communication\controllers;
 
 use skeeks\cms\communication\components\LinkTrackingSettings;
 use skeeks\cms\communication\services\LinkMarks;
+use skeeks\cms\communication\services\LinkRequests;
 use skeeks\cms\communication\services\LinkVisits;
 use skeeks\cms\rbac\CmsManager;
 use yii\web\ForbiddenHttpException;
@@ -99,9 +100,16 @@ class VisitController extends \yii\web\Controller
             }
         }
         $token = $request->post('token');
-
-        return (new LinkVisits())->seen($track, (string)$request->post('url', ''), (string)$request->post('title', ''),
+        $result = (new LinkVisits())->seen($track, (string)$request->post('url', ''), (string)$request->post('title', ''),
             (string)$request->userIP, (string)$request->userAgent, $signals, is_string($token) ? mb_substr($token, 0, 48) : null, self::isStaff());
+        // A counted visit on this very site: its session knows it, so a form on any later page binds the request
+        // (LinkRequests). A site on another installation posts across sites: its session is not ours.
+        $origin = (string)$request->headers->get('Origin', '');
+        if (!empty($result['token']) && ($origin === '' || strcasecmp((string)parse_url($origin, PHP_URL_HOST), (string)$request->hostName) === 0)) {
+            LinkRequests::rememberVisit((string)$result['token']);
+        }
+
+        return $result;
     }
 
     public function actionPage()

@@ -39,6 +39,7 @@ use skeeks\cms\communication\models\CmsCommCampaign;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\models\CmsCommTrack;
 use skeeks\cms\communication\models\CmsCommTrackVisit;
+use skeeks\cms\communication\services\LinkRequests;
 use skeeks\cms\communication\services\LinkVisits;
 use skeeks\cms\communication\services\MailComposeService;
 use skeeks\cms\crm\CrmAccess;
@@ -225,46 +226,63 @@ try {
     check(CmsTask::find()->andWhere(['cms_lead_id' => (int)$first->id])->andWhere(['like', 'name', 'Связаться:%', false])->exists(),
         'The second request gives the task «Связаться» in the deal');
 
-    // 6. Page A by the link, then page B, the form on B after the visit cookie is gone: the code kept with the marks.
+    // 5б. A lock wait inside the campaign request is not swallowed: the whole creation fails for its owner to repeat.
+    $lockCompany = $company('компания рассылки, блокировка', $main);
+    [$lockMessage, , $lockToken] = $letter($lockCompany, 'Сайт по 152-ФЗ', (int)$campaign->id);
+    $db->createCommand()->insert('{{%cms_comm_campaign_recipient}}', ['cms_comm_campaign_id' => (int)$campaign->id, 'record_type' => 'company',
+        'record_id' => (int)$lockCompany->id, 'address' => 'check-requests-lock-'.$uniq.'@skeeks.com', 'status' => 'sent',
+        'cms_comm_message_id' => (int)$lockMessage->id, 'sender_user_id' => (int)$sender->id, 'sent_at' => time() - 120,
+        'created_at' => time(), 'updated_at' => time()])->execute();
+    $_COOKIE[LinkVisits::COOKIE] = $lockToken;
+    $lockWait = static function ($e) {
+        if ($e->sender->source_type === CmsLead::SOURCE_MAILING) {
+            throw new \yii\db\Exception('Lock wait timeout exceeded', ['HY000', 1205, 'Lock wait timeout exceeded']);
+        }
+    };
+    \yii\base\Event::on(CmsLead::class, CmsLead::EVENT_BEFORE_INSERT, $lockWait);
+    $thrown = null;
+    try {
+        $request('campaign-lock');
+    } catch (\yii\db\Exception $e) {
+        $thrown = $e;
+    } finally {
+        \yii\base\Event::off(CmsLead::class, CmsLead::EVENT_BEFORE_INSERT, $lockWait);
+    }
+    check($thrown && CmsLeadService::isLockConflict($thrown), 'A lock conflict of the campaign request reaches the owner of the creation');
+    check(!CmsLead::find()->andWhere(['source_ref' => 'link-requests-test:'.$uniq.':campaign-lock'])->exists(), 'No ordinary request instead of the campaign one');
+
+    // 6. Page A by the link, then page B, the form on B after the visit cookie is gone: the session remembers the visit.
     $pageCompany = $company('компания страницы Б', $main);
     [$message, $track, $token] = $letter($pageCompany, 'Сайт по 152-ФЗ');
     unset($_COOKIE[LinkVisits::COOKIE]);
-    // The page A as the site sees it: GET with the marks and the code; cms-seo keeps the marks, the package adds the code.
-    $_SERVER['REQUEST_METHOD'] = 'GET';
-    Yii::$app->request->setQueryParams(['utm_source' => 'crm', 'utm_medium' => 'email', 'utm_campaign' => 'personal', 'sx_code' => $track->code]);
-    $kept = null;
-    if (Yii::$app->has('seo')) {
-        Yii::$app->seo->setUtms(['utm_source' => 'crm', 'utm_medium' => 'email', 'utm_campaign' => 'personal']);
-        \skeeks\cms\communication\services\LinkRequests::rememberCode();
-        $kept = (array)Yii::$app->seo->utms;
-        check(($kept['sx_code'] ?? null) === $track->code && ($kept['utm_source'] ?? null) === 'crm', 'The code is kept next to the marks utm_*: '.json_encode($kept));
-        // The page B: no marks in its address, the kept ones stay.
-        Yii::$app->request->setQueryParams([]);
-        \skeeks\cms\communication\services\LinkRequests::rememberCode();
-        check(((array)Yii::$app->seo->utms)['sx_code'] === $track->code, 'Another page keeps the code');
-    }
-    $utm = ['utm_source' => 'crm', 'utm_medium' => 'email', 'utm_campaign' => 'personal', 'sx_code' => $track->code];
-    $lead = $request('page-b', null, ['source_url' => 'https://skeeks.com/works', 'source_data' => ['utm' => $kept ?: $utm, 'page_url' => 'https://skeeks.com/works']]);
+    // What VisitController::actionSeen() does for a counted visit on this site.
+    LinkRequests::rememberVisit($token);
+    $marks = ['utm_source' => 'crm', 'utm_medium' => 'email', 'utm_campaign' => 'personal', 'utm_content' => 'link-1'];
+    $lead = $request('page-b', null, ['source_url' => 'https://skeeks.com/works', 'source_data' => ['utm' => $marks, 'page_url' => 'https://skeeks.com/works']]);
     check((int)$lead->cms_company_id === (int)$pageCompany->id && (int)$lead->executor_id === (int)$main->id,
         'A form on page B: the deal of the company of the letter at its main responsible');
-    check($lead->utm_source === 'crm' && $lead->utm_medium === 'email' && $lead->utm_campaign === 'personal', 'The marks utm_* are in the deal');
+    check($lead->utm_source === 'crm' && $lead->utm_medium === 'email' && $lead->utm_campaign === 'personal' && $lead->utm_content === 'link-1',
+        'The marks utm_* are in the deal');
+    check(!str_contains(json_encode($lead->source_data), $track->code), 'The code of the letter is not in the deal');
     check($feedHas($lead, 'Заявка после перехода из письма от'), 'The feed entry of the visit');
     check(\skeeks\cms\communication\models\CmsCommLink::find()->andWhere(['cms_comm_message_id' => (int)$message->id,
         'model_code' => $lead->skeeksModelCode, 'model_id' => (int)$lead->id])->exists(), 'The letter is linked to the deal');
-    // A letter sent before the rename: its links carry `sx=`, the kept marks too.
-    $lead = $request('legacy', null, ['source_data' => ['utm' => ['utm_source' => 'crm', 'sx' => $track->code]]]);
-    check((int)$lead->cms_company_id === (int)$pageCompany->id, 'The older name of the code still binds');
-    // A code whose letter was opened only by a link check binds nothing.
+    // Another browser (no session) with the code among its marks: nothing — the code in a form proves nothing.
+    Yii::$app->session->remove(LinkRequests::SESSION_KEY);
+    $lead = $request('other-browser', null, ['source_data' => ['utm' => $marks + ['sx_code' => $track->code, 'sx' => $track->code]]]);
+    check(!$lead->cms_company_id && $lead->status === CmsLead::STATUS_NEW, 'Another browser with the code in its marks: as before');
+    // A link check never gets a token; a token of a visit marked a check later binds nothing.
     $checked = $company('компания проверки ссылок', $main);
-    [, $checkedTrack, $checkedToken] = $letter($checked, 'Сайт по 152-ФЗ');
+    [, , $checkedToken] = $letter($checked, 'Сайт по 152-ФЗ');
     CmsCommTrackVisit::updateAll(['check_reason' => 'test'], ['token' => $checkedToken]);
-    $lead = $request('checked', null, ['source_data' => ['utm' => ['utm_source' => 'crm', 'sx_code' => $checkedTrack->code]]]);
-    check(!$lead->cms_company_id && $lead->status === CmsLead::STATUS_NEW, 'A code with only a link check: as before');
-    // An old code: the visit was more than a day ago.
-    CmsCommTrackVisit::updateAll(['check_reason' => null, 'last_at' => time() - \skeeks\cms\communication\services\LinkRequests::CODE_LIFETIME - 60], ['token' => $checkedToken]);
-    $lead = $request('old-code', null, ['source_data' => ['utm' => ['sx' => $checkedTrack->code]]]);
-    check(!$lead->cms_company_id, 'An old code: as before');
-
+    LinkRequests::rememberVisit($checkedToken);
+    $lead = $request('checked');
+    check(!$lead->cms_company_id && $lead->status === CmsLead::STATUS_NEW, 'A visit of a link check: as before');
+    // An old visit: more than a day ago.
+    CmsCommTrackVisit::updateAll(['check_reason' => null, 'last_at' => time() - LinkRequests::SESSION_LIFETIME - 60], ['token' => $checkedToken]);
+    $lead = $request('old-visit');
+    check(!$lead->cms_company_id, 'An old visit: as before');
+    Yii::$app->session->remove(LinkRequests::SESSION_KEY);
     echo 'OK link-requests-stand: '.$checks." checks\n";
 } finally {
     unset($_COOKIE[LinkVisits::COOKIE]);
