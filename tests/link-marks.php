@@ -93,7 +93,22 @@ marksExpect($count === 2 && $text === "Ссылка: https://skeeks.com/works?{$
 LinkTrackingSettings::reset(1, ['enabled' => true, 'domains' => $domains, 'taskOnVisit' => true]);
 $prepared = LinkMarks::prepare(1, '<a href="https://skeeks.com/">Сайт</a>', 'Сайт https://skeeks.com/', 'email', null, null);
 marksExpect($prepared && preg_match('~^'.LinkMarks::CODE_PATTERN.'$~', $prepared['code']) && $prepared['utm_campaign'] === 'personal'
-    && str_contains($prepared['html'], 'sx='.$prepared['code']) && str_contains($prepared['text'], 'sx='.$prepared['code']), 'A personal letter gets a code and "personal"');
+    && str_contains($prepared['html'], 'utm_campaign=personal&amp;utm_content=link-1&amp;sx_code='.$prepared['code'].'"')
+    && str_contains($prepared['text'], 'utm_campaign=personal&utm_content=link-1&sx_code='.$prepared['code']), 'A personal letter gets a code (sx_code, the last parameter), "personal" and link-1: '.$prepared['html']);
+$two = LinkMarks::prepare(1, '<a href="https://skeeks.com/a">А</a> <a href="https://ya.ru/">Я</a> <a href="https://skeeks.com/b?utm_content=banner">Б</a> <a href="https://skeeks.com/c">В</a>',
+    "https://skeeks.com/a https://skeeks.com/c", 'email');
+marksExpect(str_contains($two['html'], '/a?utm_source=crm&amp;utm_medium=email&amp;utm_campaign=personal&amp;utm_content=link-1&amp;')
+    && str_contains($two['html'], '/b?utm_content=banner&amp;utm_source=crm') && !str_contains($two['html'], 'link-2&amp;sx_code='.$two['code'].'">Б')
+    && str_contains($two['html'], '/c?utm_source=crm&amp;utm_medium=email&amp;utm_campaign=personal&amp;utm_content=link-3&amp;'),
+    'utm_content is the number of our link in the letter; a manager\'s utm_content stays: '.$two['html']);
+marksExpect(str_contains($two['text'], '/a?utm_source=crm&utm_medium=email&utm_campaign=personal&utm_content=link-1&')
+    && str_contains($two['text'], '/c?utm_source=crm&utm_medium=email&utm_campaign=personal&utm_content=link-2&'), 'The plain text numbers its own links');
+// Letters sent before the rename carry `sx=`: still a code everywhere.
+marksExpect(LinkMarks::codeOf(['sx' => 'AbCdEfGhIjKlMnOp']) === 'AbCdEfGhIjKlMnOp' && LinkMarks::codeOf(['sx_code' => 'QQQQQQQQQQQQQQQQ', 'sx' => 'AbCdEfGhIjKlMnOp']) === 'QQQQQQQQQQQQQQQQ'
+    && LinkMarks::codeOf(['sx_code' => 'short']) === null && LinkMarks::codeOf([]) === null, 'The code is read by both names, the new one first');
+marksExpect(!LinkMarks::isMarkable('https://skeeks.com/a?sx_code=ZZZZZZZZZZZZZZZZ', $domains) && !LinkMarks::isMarkable('https://skeeks.com/a?SX=ZZZZZZZZZZZZZZZZ', $domains),
+    'A link with a code of either name is not marked again');
+marksExpect(LinkMarks::removeCode('https://skeeks.com/a?sx=AbCdEfGhIjKlMnOp&sx_code=QQQQQQQQQQQQQQQQ&b=1') === 'https://skeeks.com/a?b=1', 'Both names leave an address');
 marksExpect(LinkMarks::prepare(1, '<a href="https://ya.ru/">Яндекс</a>', 'https://ya.ru/', 'email') === null, 'A letter without our links gets no code');
 marksExpect(LinkMarks::prepare(1, '<a href="https://skeeks.com/">С</a>', '', 'email', 12, 'proposal-5')['utm_campaign'] === 'campaign-12', 'A campaign letter is "campaign-<id>"');
 marksExpect(LinkMarks::prepare(1, '<a href="https://skeeks.com/">С</a>', '', 'email', null, 'proposal-5')['utm_campaign'] === 'proposal-5', 'A letter with an offer is the offer mark');
@@ -109,6 +124,7 @@ foreach (['curl/8.4.0', '', 'TelegramBot (like TwitterBot)', 'Mozilla/5.0 (compa
 marksExpect(!LinkChecks::isRobot('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 YaBrowser/24.10 Safari/537.36')
     && !LinkChecks::isRobot('Mozilla/5.0 (Linux; Android 13; Cubot KingKong) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36'), 'People are not robots');
 marksExpect(LinkVisits::cleanUrl('https://skeeks.com/a?utm_source=crm&sx=AbCdEfGhIjKlMnOp') === 'https://skeeks.com/a?utm_source=crm'
+    && LinkVisits::cleanUrl('https://skeeks.com/a?utm_source=crm&sx_code=AbCdEfGhIjKlMnOp') === 'https://skeeks.com/a?utm_source=crm'
     && LinkVisits::cleanUrl('javascript:alert(1)') === null, 'A visit keeps the page without the code, only http(s)');
 marksExpect(LinkVisits::displayUrl('https://www.skeeks.com/works/?utm_source=crm&utm_medium=email&page=2') === 'skeeks.com/works/?page=2'
     && LinkVisits::displayUrl('https://skeeks.com/') === 'skeeks.com', 'A page is shown without the scheme and marks');

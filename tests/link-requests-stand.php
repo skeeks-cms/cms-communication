@@ -231,19 +231,19 @@ try {
     unset($_COOKIE[LinkVisits::COOKIE]);
     // The page A as the site sees it: GET with the marks and the code; cms-seo keeps the marks, the package adds the code.
     $_SERVER['REQUEST_METHOD'] = 'GET';
-    Yii::$app->request->setQueryParams(['utm_source' => 'crm', 'utm_medium' => 'email', 'utm_campaign' => 'personal', 'sx' => $track->code]);
+    Yii::$app->request->setQueryParams(['utm_source' => 'crm', 'utm_medium' => 'email', 'utm_campaign' => 'personal', 'sx_code' => $track->code]);
     $kept = null;
     if (Yii::$app->has('seo')) {
         Yii::$app->seo->setUtms(['utm_source' => 'crm', 'utm_medium' => 'email', 'utm_campaign' => 'personal']);
         \skeeks\cms\communication\services\LinkRequests::rememberCode();
         $kept = (array)Yii::$app->seo->utms;
-        check(($kept['sx'] ?? null) === $track->code && ($kept['utm_source'] ?? null) === 'crm', 'The code is kept next to the marks utm_*: '.json_encode($kept));
+        check(($kept['sx_code'] ?? null) === $track->code && ($kept['utm_source'] ?? null) === 'crm', 'The code is kept next to the marks utm_*: '.json_encode($kept));
         // The page B: no marks in its address, the kept ones stay.
         Yii::$app->request->setQueryParams([]);
         \skeeks\cms\communication\services\LinkRequests::rememberCode();
-        check(((array)Yii::$app->seo->utms)['sx'] === $track->code, 'Another page keeps the code');
+        check(((array)Yii::$app->seo->utms)['sx_code'] === $track->code, 'Another page keeps the code');
     }
-    $utm = ['utm_source' => 'crm', 'utm_medium' => 'email', 'utm_campaign' => 'personal', 'sx' => $track->code];
+    $utm = ['utm_source' => 'crm', 'utm_medium' => 'email', 'utm_campaign' => 'personal', 'sx_code' => $track->code];
     $lead = $request('page-b', null, ['source_url' => 'https://skeeks.com/works', 'source_data' => ['utm' => $kept ?: $utm, 'page_url' => 'https://skeeks.com/works']]);
     check((int)$lead->cms_company_id === (int)$pageCompany->id && (int)$lead->executor_id === (int)$main->id,
         'A form on page B: the deal of the company of the letter at its main responsible');
@@ -251,11 +251,14 @@ try {
     check($feedHas($lead, 'Заявка после перехода из письма от'), 'The feed entry of the visit');
     check(\skeeks\cms\communication\models\CmsCommLink::find()->andWhere(['cms_comm_message_id' => (int)$message->id,
         'model_code' => $lead->skeeksModelCode, 'model_id' => (int)$lead->id])->exists(), 'The letter is linked to the deal');
+    // A letter sent before the rename: its links carry `sx=`, the kept marks too.
+    $lead = $request('legacy', null, ['source_data' => ['utm' => ['utm_source' => 'crm', 'sx' => $track->code]]]);
+    check((int)$lead->cms_company_id === (int)$pageCompany->id, 'The older name of the code still binds');
     // A code whose letter was opened only by a link check binds nothing.
     $checked = $company('компания проверки ссылок', $main);
     [, $checkedTrack, $checkedToken] = $letter($checked, 'Сайт по 152-ФЗ');
     CmsCommTrackVisit::updateAll(['check_reason' => 'test'], ['token' => $checkedToken]);
-    $lead = $request('checked', null, ['source_data' => ['utm' => ['utm_source' => 'crm', 'sx' => $checkedTrack->code]]]);
+    $lead = $request('checked', null, ['source_data' => ['utm' => ['utm_source' => 'crm', 'sx_code' => $checkedTrack->code]]]);
     check(!$lead->cms_company_id && $lead->status === CmsLead::STATUS_NEW, 'A code with only a link check: as before');
     // An old code: the visit was more than a day ago.
     CmsCommTrackVisit::updateAll(['check_reason' => null, 'last_at' => time() - \skeeks\cms\communication\services\LinkRequests::CODE_LIFETIME - 60], ['token' => $checkedToken]);

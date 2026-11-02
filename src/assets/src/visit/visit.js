@@ -1,6 +1,6 @@
 /**
  * Visits of our site by links of letters (step F). A marked link carries
- * the personal code of the recipient `sx=`; this script
+ * the personal code of the recipient `sx_code=` (older letters `sx=`); this script
  * - removes the code from the address bar at once (marks utm_* stay for
  *   Metrika): an address copied from the bar and forwarded is not the
  *   recipient's;
@@ -47,7 +47,8 @@
         var rest = [];
         search.split('&').forEach(function (pair) {
             var name = pair.split('=')[0];
-            if (name.toLowerCase() === 'sx') {
+            // sx_code; letters sent before CRM communication 1.20.0 carry sx.
+            if (name.toLowerCase() === 'sx_code' || name.toLowerCase() === 'sx') {
                 code = decodeURIComponent((pair.split('=')[1] || '').replace(/\+/g, ' '));
             } else if (pair !== '') {
                 rest.push(pair);

@@ -110,7 +110,7 @@ class LinkVisits
             return null;
         }
 
-        return mb_substr(LinkMarks::removeParam($url, LinkMarks::CODE_PARAM), 0, 1000);
+        return mb_substr(LinkMarks::removeCode($url), 0, 1000);
     }
 
     /** "skeeks.com/solutions/plitka": the address of a page without the scheme and the marks utm_*. */

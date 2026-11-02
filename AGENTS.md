@@ -196,12 +196,12 @@ the person yet). `chat\ChatIdentityHandler` runs before `ChatNotifier`.
 Visits by links of letters (step F): links are marked only in
 `MailComposeService::queue()` by `services\LinkMarks` (the text written now,
 before quotes, sendable links and the opt-out link; never a link that has
-`sx`, a `/~` path or another host; the code `cms_comm_track` in the letter's
+`sx_code` (or the older `sx`), a `/~` path or another host; `utm_content=link-<N>` numbers our links; the code `cms_comm_track` in the letter's
 transaction); no pixel, no redirect. Visits are `services\LinkVisits` only:
 counted by the page signal of the shared `link-signal.js`
 (`assets\LinkSignalAsset`, also used by cms-proposal), robots
 `LinkChecks::ROBOT_PATTERNS`, checks `LinkChecks::reason()`, employees never.
-The site script is registered by the bootstrap only for `?sx=` or the cookie
+The site script is registered by the bootstrap only for `?sx_code=` (`?sx=`) or the cookie
 `sx_visit`; endpoints `controllers\VisitController` answer CORS only for
 domains of `components\LinkTrackingSettings`. One feed entry per visit
 (`log\VisitLogRenderer`), the call task once per code and never beside an

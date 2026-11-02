@@ -12,7 +12,7 @@ use yii\web\AssetBundle;
 /**
  * The visit script of the site of the CRM (step F, services\LinkVisits):
  * registered by CommunicationBootstrap only on a page opened by a marked
- * link (`?sx=`) or within such a visit (cookie `sx_visit`); other pages
+ * link (`?sx_code=`, older `?sx=`) or within such a visit (cookie `sx_visit`); other pages
  * load nothing. In the head: the code leaves the address bar before the
  * counters read it.
  */

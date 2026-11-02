@@ -71,7 +71,9 @@ class CommunicationBootstrap implements BootstrapInterface
             $app->on(\yii\base\Application::EVENT_BEFORE_ACTION, static function () use ($app) {
                 if ($app->has('seo') && !(class_exists(\skeeks\cms\backend\BackendComponent::class) && \skeeks\cms\backend\BackendComponent::getCurrent())
                     && ($canUrl = $app->seo->canUrl) && method_exists($canUrl, 'ADDminor_pname')) {
-                    $canUrl->ADDminor_pname(LinkMarks::CODE_PARAM);
+                    foreach (LinkMarks::CODE_PARAMS as $name) {
+                        $canUrl->ADDminor_pname($name);
+                    }
                 }
                 // The code joins the marks utm_* the site keeps for its requests: a form on another page still knows the letter.
                 \skeeks\cms\communication\services\LinkRequests::rememberCode();
@@ -197,8 +199,8 @@ class CommunicationBootstrap implements BootstrapInterface
 
     /**
      * The visit script on a page of the site opened by a marked link of a
-     * letter (`?sx=`) or within such a visit (cookie `sx_visit`): every other
-     * page, the administration and AJAX answers load nothing.
+     * letter (`?sx_code=`, older letters `?sx=`) or within such a visit (cookie
+     * `sx_visit`): every other page, the administration and AJAX answers load nothing.
      */
     public static function registerVisitScript(Event $event): void
     {
@@ -207,9 +209,9 @@ class CommunicationBootstrap implements BootstrapInterface
             || (class_exists(\skeeks\cms\backend\BackendComponent::class) && \skeeks\cms\backend\BackendComponent::getCurrent())) {
             return;
         }
-        $code = $request->get(LinkMarks::CODE_PARAM);
+        $code = LinkMarks::codeOf((array)$request->get());
         $cookie = $_COOKIE[LinkVisits::COOKIE] ?? null;
-        if (!(is_string($code) && preg_match('~^'.LinkMarks::CODE_PATTERN.'$~', $code)) && !(is_string($cookie) && preg_match('~^[A-Za-z0-9_-]{20,48}$~', $cookie))) {
+        if ($code === null && !(is_string($cookie) && preg_match('~^[A-Za-z0-9_-]{20,48}$~', $cookie))) {
             return;
         }
         if ($event->sender instanceof View) {

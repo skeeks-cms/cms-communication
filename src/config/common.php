@@ -507,6 +507,6 @@ return [
         'overviewContributors' => ['mailing' => \skeeks\cms\communication\mcp\MailingOverviewContributor::class],
         // The personal opt-out link of a letter is never shown to API clients: opening it unsubscribes.
         // A link with the personal code of the recipient neither: an agent opening it would be the client's visit.
-        'personalLinkPatterns' => ['unsubscribe' => '~/\~unsub/~', 'visit' => '~[?&]sx=[A-Za-z0-9_-]{16}(?:[&#]|$)~'],
+        'personalLinkPatterns' => ['unsubscribe' => '~/\~unsub/~', 'visit' => '~[?&]sx(?:_code)?=[A-Za-z0-9_-]{16}(?:[&#]|$)~'],
     ]],
 ];

@@ -12,7 +12,7 @@ use yii\db\ActiveRecord;
 
 /**
  * The personal code of a letter and its recipient in links to our sites
- * (`sx=<code>`, services\LinkMarks): one per letter that carries such
+ * (`sx_code=<code>`, older letters `sx=`; services\LinkMarks): one per letter that carries such
  * links. A visit by the code (CmsCommTrackVisit) belongs to the letter, the
  * CRM record of the recipient, the campaign and the offer of the letter.
  *

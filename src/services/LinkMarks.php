@@ -17,8 +17,10 @@ use yii\db\ActiveRecord;
  * MailComposeService::queue(), the one point every letter passes (personal,
  * reply, forward, "Отправить клиенту", campaign, AI draft), adds to each
  * link to our domains (LinkTrackingSettings) the missing `utm_source=crm`,
- * `utm_medium=<channel>`, `utm_campaign=<campaign-N | proposal-N | personal>`
- * and the personal code of the recipient `sx=<code>` (CmsCommTrack). The
+ * `utm_medium=<channel>`, `utm_campaign=<campaign-N | proposal-N | personal>`,
+ * `utm_content=link-<N>` (the number of the link in the letter) and the
+ * personal code of the recipient `sx_code=<code>` (CmsCommTrack; letters
+ * sent before 1.20.0 carry `sx=`, still read: LEGACY_CODE_PARAM). The
  * text the employee wrote is marked before the quote or the forwarded
  * letter is added, so earlier letters keep their links and codes.
  *
@@ -31,7 +33,16 @@ use yii\db\ActiveRecord;
  */
 class LinkMarks
 {
-    public const CODE_PARAM = 'sx';
+    public const CODE_PARAM = 'sx_code';
+
+    /** The name of the code in letters sent before 1.20.0: their links keep working. */
+    public const LEGACY_CODE_PARAM = 'sx';
+
+    /** Every name the code may have in an address, the current one first. */
+    public const CODE_PARAMS = [self::CODE_PARAM, self::LEGACY_CODE_PARAM];
+
+    /** `utm_content` of a marked link: its number in the letter ("link-2" — the second link). */
+    public const UTM_CONTENT_PREFIX = 'link-';
     public const UTM_SOURCE = 'crm';
     public const UTM_PERSONAL = 'personal';
     /** The code in a link: 16 url-safe characters (12 random bytes). */
@@ -81,6 +92,29 @@ class LinkMarks
         }
 
         return $url.$fragment;
+    }
+
+    /** The code among the query parameters of a request (either name); null — none or not a code. */
+    public static function codeOf(array $query): ?string
+    {
+        foreach (self::CODE_PARAMS as $name) {
+            $code = $query[$name] ?? null;
+            if (is_string($code) && preg_match('~^'.self::CODE_PATTERN.'$~', $code)) {
+                return $code;
+            }
+        }
+
+        return null;
+    }
+
+    /** The address without the code (either name). */
+    public static function removeCode(string $url): string
+    {
+        foreach (self::CODE_PARAMS as $name) {
+            $url = self::removeParam($url, $name);
+        }
+
+        return $url;
     }
 
     /** Removes one parameter (any case) from the address, keeping the rest and the fragment. */
@@ -135,12 +169,12 @@ class LinkMarks
         return !self::hasCode($url);
     }
 
-    /** Does the address already carry a personal code (`sx=`, any case). */
+    /** Does the address already carry a personal code (`sx_code=` or the older `sx=`, any case). */
     public static function hasCode(string $url): bool
     {
         $query = (string)parse_url(explode('#', $url, 2)[0], PHP_URL_QUERY);
         foreach (explode('&', $query) as $pair) {
-            if ($pair !== '' && strtolower(rawurldecode(explode('=', $pair, 2)[0])) === self::CODE_PARAM) {
+            if ($pair !== '' && in_array(strtolower(rawurldecode(explode('=', $pair, 2)[0])), self::CODE_PARAMS, true)) {
                 return true;
             }
         }
@@ -158,8 +192,9 @@ class LinkMarks
             return $html;
         }
 
-        return (string)preg_replace_callback('~<(?:a|area)\b[^>]*>~i', static function ($tag) use ($params, $domains, &$count) {
-            return (string)preg_replace_callback('~(\bhref\s*=\s*)(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'>]+))~i', static function ($m) use ($params, $domains, &$count) {
+        $index = 0;
+        return (string)preg_replace_callback('~<(?:a|area)\b[^>]*>~i', static function ($tag) use ($params, $domains, &$count, &$index) {
+            return (string)preg_replace_callback('~(\bhref\s*=\s*)(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'>]+))~i', static function ($m) use ($params, $domains, &$count, &$index) {
                 $raw = $m[2] !== '' ? $m[2] : (($m[3] ?? '') !== '' ? $m[3] : ($m[4] ?? ''));
                 $url = html_entity_decode(trim($raw), ENT_QUOTES | ENT_HTML5, 'UTF-8');
                 if (!self::isMarkable($url, $domains)) {
@@ -167,7 +202,7 @@ class LinkMarks
                 }
                 $count++;
 
-                return $m[1].'"'.htmlspecialchars(self::addParams($url, $params), ENT_QUOTES, 'UTF-8').'"';
+                return $m[1].'"'.htmlspecialchars(self::addParams($url, self::linkParams($params, ++$index)), ENT_QUOTES, 'UTF-8').'"';
             }, $tag[0]);
         }, $html);
     }
@@ -179,7 +214,8 @@ class LinkMarks
             return $text;
         }
 
-        return (string)preg_replace_callback('~https?://[^\s<>"\'\[\]]+~iu', static function ($m) use ($params, $domains, &$count) {
+        $index = 0;
+        return (string)preg_replace_callback('~https?://[^\s<>"\'\[\]]+~iu', static function ($m) use ($params, $domains, &$count, &$index) {
             $url = $m[0];
             $tail = '';
             while ($url !== '' && preg_match('~[.,;:!?)»]$~u', $url)) {
@@ -191,8 +227,20 @@ class LinkMarks
             }
             $count++;
 
-            return self::addParams($url, $params).$tail;
+            return self::addParams($url, self::linkParams($params, ++$index)).$tail;
         }, $text);
+    }
+
+    /** The parameters of the N-th marked link of a part of the letter: a closure value gets the number. */
+    private static function linkParams(array $params, int $index): array
+    {
+        foreach ($params as $key => $value) {
+            if ($value instanceof \Closure) {
+                $params[$key] = $value($index);
+            }
+        }
+
+        return $params;
     }
 
     /**
@@ -213,6 +261,8 @@ class LinkMarks
             'utm_source' => self::UTM_SOURCE,
             'utm_medium' => $channel,
             'utm_campaign' => $campaign,
+            // The HTML and the plain text number their links to our sites each, in their order.
+            'utm_content' => static fn(int $index) => self::UTM_CONTENT_PREFIX.$index,
             self::CODE_PARAM => $code,
         ];
         $count = 0;

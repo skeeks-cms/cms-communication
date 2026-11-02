@@ -93,9 +93,10 @@ class LinkRequests
     }
 
     /**
-     * A page opened by a link of a letter (`?sx=`): the code joins the marks utm_* skeeks/cms-seo keeps in the
-     * session for the requests of this browser (24 hours, replaced by the next marked visit). Form2 copies them
-     * into the submission and the deal (`source_data.utm`), so a form on any later page carries the code.
+     * A page opened by a link of a letter (`?sx_code=`, older letters `?sx=`): the code joins the marks utm_*
+     * skeeks/cms-seo keeps in the session for the requests of this browser (24 hours, replaced by the next marked
+     * visit) as `sx_code`. Form2 copies them into the submission and the deal (`source_data.utm`), so a form on
+     * any later page carries the code.
      */
     public static function rememberCode(): void
     {
@@ -105,9 +106,8 @@ class LinkRequests
             || (class_exists(\skeeks\cms\backend\BackendComponent::class) && \skeeks\cms\backend\BackendComponent::getCurrent())) {
             return;
         }
-        $code = $request->get(LinkMarks::CODE_PARAM);
-        if (!is_string($code) || !preg_match('~^'.LinkMarks::CODE_PATTERN.'$~', $code)
-            || !method_exists($app->seo, 'setUtms') || !method_exists($app->seo, 'getUtms')) {
+        $code = LinkMarks::codeOf((array)$request->get());
+        if ($code === null || !method_exists($app->seo, 'setUtms') || !method_exists($app->seo, 'getUtms')) {
             return;
         }
         try {
@@ -123,15 +123,15 @@ class LinkRequests
     }
 
     /**
-     * The code of a letter among the marks of the request (`source_data.utm.sx`, rememberCode()): its latest
-     * counted visit (never a robot or a link check) within CODE_LIFETIME. The visit cookie may be gone: the
-     * visit ended, the form is on another page much later.
+     * The code of a letter among the marks of the request (`source_data.utm.sx_code`, rememberCode()): its
+     * latest counted visit (never a robot or a link check) within CODE_LIFETIME. The visit cookie may be gone:
+     * the visit ended, the form is on another page much later.
      */
     public static function visitOfRequestCode(CmsLead $lead, ?int $now = null): ?CmsCommTrackVisit
     {
         $data = is_array($lead->source_data) ? $lead->source_data : [];
-        $code = is_array($data['utm'] ?? null) ? ($data['utm'][LinkMarks::CODE_PARAM] ?? null) : null;
-        $track = is_string($code) ? LinkVisits::findTrack($code) : null;
+        $code = is_array($data['utm'] ?? null) ? LinkMarks::codeOf($data['utm']) : null;
+        $track = $code !== null ? LinkVisits::findTrack($code) : null;
         if (!$track) {
             return null;
         }

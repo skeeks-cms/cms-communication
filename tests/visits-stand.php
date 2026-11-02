@@ -86,20 +86,20 @@ try {
         && $track->recipient === mb_strtolower($email), 'The letter has a code of its recipient, the lead');
     $html = (string)$message->body_html;
     $code = $track->code;
-    check(str_contains($html, 'https://skeeks.com/solutions/plitka?utm_source=crm&amp;utm_medium=email&amp;utm_campaign=personal&amp;sx='.$code),
+    check(str_contains($html, 'https://skeeks.com/solutions/plitka?utm_source=crm&amp;utm_medium=email&amp;utm_campaign=personal&amp;utm_content=link-1&amp;sx_code='.$code),
         'The link in the text leaves with marks and the code');
-    check(str_contains($html, 'https://skeeks-platform.ru/?utm_source=crm&amp;utm_medium=email&amp;utm_campaign=personal&amp;sx='.$code),
+    check(str_contains($html, 'https://skeeks-platform.ru/?utm_source=crm&amp;utm_medium=email&amp;utm_campaign=personal&amp;utm_content=link-3&amp;sx_code='.$code),
         'The link of the signature leaves with marks and the code');
-    check(str_contains($html, 'utm_campaign=autumn&amp;utm_source=manager&amp;utm_medium=email&amp;sx='.$code), 'The manager\'s marks are kept');
+    check(str_contains($html, 'utm_campaign=autumn&amp;utm_source=manager&amp;utm_medium=email&amp;utm_content=link-2&amp;sx_code='.$code), 'The manager\'s marks are kept');
     check(str_contains($html, 'href="https://ya.ru/"') && str_contains($html, 'href="mailto:info@skeeks.com"'), 'Other sites and mail are untouched');
-    check(str_contains((string)$message->body_text, 'sx='.$code), 'The text part carries the same code');
+    check(str_contains((string)$message->body_text, 'sx_code='.$code), 'The text part carries the same code');
     // The letter left two minutes ago: not a check by time.
     $message->updateAttributes(['status' => CmsCommMessage::STATUS_SENT, 'message_at' => time() - 120]);
     $track->updateAttributes(['created_at' => time() - 180]);
 
     // 2. A robot and curl: kept, not counted.
     $visits = new LinkVisits();
-    $page1 = 'https://skeeks.com/solutions/plitka?utm_source=crm&utm_medium=email&utm_campaign=personal&sx='.$code;
+    $page1 = 'https://skeeks.com/solutions/plitka?utm_source=crm&utm_medium=email&utm_campaign=personal&sx_code='.$code;
     check($visits->seen($track, $page1, 'Плитка', '203.0.113.5', 'curl/8.4.0')['result'] === LinkVisits::RESULT_BOT, 'curl is a robot');
     $feed = static fn(string $event) => CmsLog::find()->andWhere(['log_type' => LinkVisits::LOG_TYPE, 'model_code' => CmsLead::class, 'model_id' => (int)$lead->id])
         ->andWhere(['like', 'data', '"track":'.(int)$track->id])->andWhere(['like', 'data', '"event":"'.$event.'"'])->count();
@@ -137,10 +137,10 @@ try {
     $rendered = (new VisitLogRenderer())->render($log);
     check(str_contains($rendered, 'Перешёл на сайт из письма') && str_contains($rendered, 'Решения для магазинов плитки') && str_contains($rendered, 'Портфолио: плитка')
         && str_contains($rendered, 'Проверка меток ссылок'), 'The feed entry shows the letter and the path: '.strip_tags($rendered));
-    check(!str_contains($rendered, 'sx='), 'The feed shows no code');
+    check(!str_contains($rendered, 'sx_code='), 'The feed shows no code');
 
     // 7. Another link of the letter in the same browser continues the visit; another browser is a new visit, no second task.
-    check($visits->seen($track, 'https://skeeks-platform.ru/?sx='.$code, 'Платформа', '203.0.113.9', CHROME, PERSON, $first['token'])['result'] === LinkVisits::RESULT_CONTINUED,
+    check($visits->seen($track, 'https://skeeks-platform.ru/?sx_code='.$code, 'Платформа', '203.0.113.9', CHROME, PERSON, $first['token'])['result'] === LinkVisits::RESULT_CONTINUED,
         'The same browser continues its visit');
     $other = $visits->seen($track, $page1, 'Плитка', '198.51.100.20', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1', PERSON);
     check($other['result'] === LinkVisits::RESULT_COUNTED && $other['token'] !== $first['token'], 'Another browser is a new visit');
@@ -161,9 +161,9 @@ try {
     $replyMessage = $service->queue($reply);
     $replyTrack = CmsCommTrack::find()->andWhere(['cms_comm_message_id' => (int)$replyMessage->id])->one();
     check($replyTrack && $replyTrack->code !== $code, 'The reply has its own code');
-    check(str_contains((string)$replyMessage->body_html, 'https://skeeks.com/works?utm_source=crm&amp;utm_medium=email&amp;utm_campaign=personal&amp;sx='.$replyTrack->code)
-        && str_contains((string)$replyMessage->body_html, 'sx='.$code), 'The new link gets the new code, the quoted one keeps the old');
-    check(substr_count((string)$replyMessage->body_html, 'sx=') === substr_count($html, 'sx=') + 1, 'The quote gets no second code');
+    check(str_contains((string)$replyMessage->body_html, 'https://skeeks.com/works?utm_source=crm&amp;utm_medium=email&amp;utm_campaign=personal&amp;utm_content=link-1&amp;sx_code='.$replyTrack->code)
+        && str_contains((string)$replyMessage->body_html, 'sx_code='.$code), 'The new link gets the new code, the quoted one keeps the old');
+    check(substr_count((string)$replyMessage->body_html, 'sx_code=') === substr_count($html, 'sx_code=') + 1, 'The quote gets no second code');
 
     // 9. AI clients read the visit in the client history; links with a code are hidden from them.
     if (Yii::$app->has('cmsMcp') && ($client = \skeeks\cms\oauth2\models\CmsOauthClient::find()->orderBy(['id' => SORT_DESC])->one())) {
@@ -173,9 +173,9 @@ try {
         $found = array_values(array_filter($history['items'] ?? [], static fn($i) => ($i['subtype'] ?? '') === 'site_visit'));
         check(array_filter($found, static fn($i) => str_contains((string)$i['summary'], 'Портфолио: плитка')), 'The history shows the visit with its pages');
         $json = json_encode($history, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        check(!str_contains($json, 'sx='), 'No personal code reaches AI clients');
+        check(!str_contains($json, 'sx_code='), 'No personal code reaches AI clients');
         $read = Yii::$app->cmsMcp->executeTool('cms_comm_message_get', ['id' => (int)$message->id], $token, ['transport' => 'test']);
-        check(!str_contains(json_encode($read, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), 'sx='.$code), 'The letter read by AI hides the marked links');
+        check(!str_contains(json_encode($read, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), 'sx_code='.$code), 'The letter read by AI hides the marked links');
         $track->refresh();
         check((int)$track->visits_count === 2, 'Reading by AI is no visit');
     } else {
@@ -195,7 +195,7 @@ try {
             'created_at' => time(), 'updated_at' => time()])->execute();
         $replyMessage->updateAttributes(['status' => CmsCommMessage::STATUS_SENT, 'message_at' => time() - 120, 'cms_comm_campaign_id' => $campaignId]);
         $replyTrack->updateAttributes(['cms_comm_campaign_id' => $campaignId, 'created_at' => time() - 180]);
-        $visits->seen($replyTrack, 'https://skeeks.com/works?sx='.$replyTrack->code, 'Портфолио', '203.0.113.30', CHROME, PERSON);
+        $visits->seen($replyTrack, 'https://skeeks.com/works?sx_code='.$replyTrack->code, 'Портфолио', '203.0.113.30', CHROME, PERSON);
         check((int)$db->createCommand('SELECT visited_at FROM {{%cms_comm_campaign_recipient}} WHERE cms_comm_message_id = :m', [':m' => (int)$replyMessage->id])->queryScalar() > 0,
             'The campaign recipient is "перешёл на сайт"');
         $campaign = \skeeks\cms\communication\models\CmsCommCampaign::findOne($campaignId);
@@ -211,7 +211,7 @@ try {
     $plain->body_html = '<p><a href="https://skeeks.com/">сайт</a></p>';
     check($plain->validate(), 'The letter without marks is valid');
     $plainMessage = $service->queue($plain);
-    check(!str_contains((string)$plainMessage->body_html, 'sx=') && !CmsCommTrack::find()->andWhere(['cms_comm_message_id' => (int)$plainMessage->id])->exists(),
+    check(!str_contains((string)$plainMessage->body_html, 'sx_code=') && !CmsCommTrack::find()->andWhere(['cms_comm_message_id' => (int)$plainMessage->id])->exists(),
         'With marking off no code is made');
 } finally {
     $tx->rollBack();
