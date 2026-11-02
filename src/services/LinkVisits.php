@@ -75,6 +75,9 @@ class LinkVisits
     /** A call task to the sender lasts so long. */
     public const CALL_DURATION = 15 * 60;
 
+    /** The name of the call task of a visit (followed by " — <client>"). */
+    public const CALL_TASK_NAME = 'Позвонить: клиент перешёл на сайт из письма';
+
     public static function findTrack(string $code): ?CmsCommTrack
     {
         if (!preg_match('~^'.LinkMarks::CODE_PATTERN.'$~', $code)) {
@@ -441,7 +444,7 @@ class LinkVisits
         $now = $now ?? time();
         $task = new CmsTask();
         $who = CrmRecords::name($record);
-        $task->name = mb_substr('Позвонить: клиент перешёл на сайт из письма'.($who !== '' ? ' — '.$who : ''), 0, 255);
+        $task->name = mb_substr(self::CALL_TASK_NAME.($who !== '' ? ' — '.$who : ''), 0, 255);
         $task->executor_id = (int)$executor->id;
         // A task to oneself is accepted at once; the site has no signed-in user.
         $task->created_by = (int)$executor->id;
@@ -479,12 +482,13 @@ class LinkVisits
     /**
      * An open "Позвонить" task of the employee on this client: a call task of
      * an opened offer or of an earlier visit. A new one is not made.
+     * $name — only tasks named so (CALL_TASK_NAME: the call task of a visit).
      */
-    public function openCallTask(int $executorId, ActiveRecord $record): ?CmsTask
+    public function openCallTask(int $executorId, ActiveRecord $record, string $name = 'Позвонить'): ?CmsTask
     {
         $t = CmsTask::tableName();
         $query = CmsTask::find()->andWhere([$t.'.executor_id' => $executorId, $t.'.status' => CmsTask::activeStatuses()])
-            ->andWhere(['like', $t.'.name', 'Позвонить%', false]);
+            ->andWhere(['like', $t.'.name', strtr($name, ['%' => '\%', '_' => '\_']).'%', false]);
         if ($record instanceof CmsLead) {
             $query->andWhere([$t.'.cms_lead_id' => (int)$record->id]);
         } elseif ($record instanceof CmsCompany) {

@@ -56,6 +56,8 @@ class CommunicationBootstrap implements BootstrapInterface
 
         // A task asked for in a chat by "/task": the chat hears when it is accepted, done or cancelled.
         Event::on(\skeeks\cms\models\CmsTask::class, \yii\db\ActiveRecord::EVENT_AFTER_UPDATE, [\skeeks\cms\communication\chat\ChatTasks::class, 'onTaskUpdate']);
+        // A request of the site within a visit by a letter link goes to the client of the letter.
+        \skeeks\cms\communication\services\LinkRequests::register();
 
         if ($app instanceof \yii\web\Application) {
             // Visits by links of letters (step F): fixed endpoints go before the CMS tree rule, whose fallback
