@@ -382,8 +382,13 @@ try {
     \skeeks\cms\crm\CrmAccess::instance()->resetMemo();
     $controller = Yii::$app->createController('cmsCommunication/admin-cms-comm-message')[0];
     $request = Yii::$app->request;
+    // A window posts the version of the draft it holds: the current one, unless the test gives its own (null — none).
     $post = static function (array $body) use ($request) {
         $_SERVER['REQUEST_METHOD'] = 'POST';
+        $id = (int)($body['ComposeForm']['draft_id'] ?? 0);
+        if ($id && !array_key_exists('draft_version', $body) && ($row = CmsCommDraft::findOne($id))) {
+            $body['draft_version'] = \skeeks\cms\communication\services\MailDrafts::version($row);
+        }
         $request->setBodyParams($body);
     };
     [$uiClient, $uiDraft, $uiAddress] = $makeDraft('Окно руководителя');
@@ -569,8 +574,107 @@ try {
     check(mb_strpos(DraftOwners::replaceSignature($middle, null, null), 'Постскриптум автора') !== false, 'A block in the middle of the text is the author\'s');
     check(mb_strpos(DraftOwners::replaceSignature('<p>Текст</p><div><br></div>'.MailSignatures::block('<p>Старая</p>'), null, '<p>Новая</p>'), 'Старая') === false,
         'The block of the form at the end is replaced');
+    // --- Third review ---
+    // 25. A document added by the API to an employee's draft must be one the leader may send too.
+    require_once __DIR__.'/support/SampleSendable.php';
+    $sendables = Yii::$app->communication->sendables;
+    $sendables['sample'] = ['class' => \skeeks\cms\communication\tests\SampleSendableSource::class,
+        'finder' => static function (int $id, $user) use ($employee) {
+            $lead = (int)$user->id === (int)$employee->id ? CmsLead::findOne($id) : null;
+
+            return $lead ? new \skeeks\cms\communication\tests\SampleSendable($id, [$lead]) : null;
+        }];
+    Yii::$app->communication->sendables = $sendables;
+    [$docClient, $docDraft] = $makeDraft('Документ');
+    $docUpdate = run($leader, 'cms_comm_draft_update', ['draft_id' => $docDraft, 'offer' => 'sample:'.(int)$docClient->id, 'confirm' => true]);
+    check(($docUpdate['reason'] ?? '') === 'offer' && !in_array('sample:'.(int)$docClient->id, CmsCommDraft::findOne($docDraft)->getSendableRefs(), true),
+        'The leader cannot put into the employee\'s draft a document only the employee may send: '.json_encode($docUpdate, JSON_UNESCAPED_UNICODE));
+    check(run($employee, 'cms_comm_draft_update', ['draft_id' => $docDraft, 'offer' => 'sample:'.(int)$docClient->id, 'confirm' => true])['saved'] ?? false,
+        'The employee himself can');
+
+    // 26. The quote is part of the check: switching it on after the check refuses the send; the preview shows it.
+    [, $quoteDraft] = $makeDraft('Цитата');
+    CmsCommDraft::updateAll(['reply_to_message_id' => (int)$letter->id, 'include_quote' => 0], ['id' => $quoteDraft]);
+    $quoteCheck = run($leader, 'cms_comm_draft_check', ['draft_id' => $quoteDraft]);
+    check($quoteCheck['ok'] && $quoteCheck['preview']['quote'] === null, 'A reply without the quote passes, no quote in the preview: '.json_encode($quoteCheck['problems'], JSON_UNESCAPED_UNICODE));
+    CmsCommDraft::updateAll(['include_quote' => 1], ['id' => $quoteDraft]);
+    $quoteSend = run($leader, 'cms_comm_draft_send', ['draft_id' => $quoteDraft, 'check_token' => $quoteCheck['check_token'], 'idempotency_key' => 'quote-'.$sfx, 'confirm' => true]);
+    check($quoteSend['state'] === 'refused' && $quoteSend['problems'][0]['reason'] === AiSend::REASON_CHANGED, 'The token without the quote does not send the letter with it');
+    $quoteAgain = run($leader, 'cms_comm_draft_check', ['draft_id' => $quoteDraft]);
+    check(($quoteAgain['preview']['quote']['kind'] ?? '') === 'reply' && mb_strpos($quoteAgain['preview']['quote']['text'], 'Секретный корреспондент') !== false,
+        'The new check shows the quoted letter');
+
+    // 27. A check writes nothing to the draft: the fresh tokens of its pictures stay in memory.
+    $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
+    $stored = \skeeks\cms\communication\services\MailFiles::storeBytes($png, 'pic.png', null, $siteId);
+    $storedPath = (string)$stored->rootSrc;
+    [, $picDraft] = $makeDraft('Картинка');
+    CmsCommDraft::updateAll(['body_html' => '<p>Текст</p><p><img data-sx-upload="gone-token-'.$sfx.'" alt=""></p>'], ['id' => $picDraft]);
+    (new \skeeks\cms\communication\models\CmsCommDraftFile(['cms_comm_draft_id' => $picDraft, 'storage_file_id' => (int)$stored->id, 'name' => 'pic.png',
+        'size' => strlen($png), 'content_hash' => hash('sha256', $png), 'is_inline' => 1, 'token' => 'gone-token-'.$sfx, 'priority' => 10]))->save(false);
+    $rowBefore = CmsCommDraft::find()->andWhere(['id' => $picDraft])->asArray()->one();
+    $filesBefore = \skeeks\cms\communication\models\CmsCommDraftFile::find()->andWhere(['cms_comm_draft_id' => $picDraft])->asArray()->all();
+    run($leader, 'cms_comm_draft_check', ['draft_id' => $picDraft]);
+    check(CmsCommDraft::find()->andWhere(['id' => $picDraft])->asArray()->one() === $rowBefore
+        && \skeeks\cms\communication\models\CmsCommDraftFile::find()->andWhere(['cms_comm_draft_id' => $picDraft])->asArray()->all() === $filesBefore,
+        'The check changed neither the text nor the files of the draft');
+    // Opening it in the window keeps the tokens only while the draft is the version read: a change made meanwhile wins.
+    $opened = new \skeeks\cms\communication\forms\ComposeForm();
+    $done = $interleave($picDraft, static fn() => CmsCommDraft::updateAll(['body_html' => '<p>Правка нового владельца</p>'], ['id' => $picDraft]));
+    (new \skeeks\cms\communication\services\MailDrafts($employee, $siteId))->fill($opened, CmsCommDraft::findOne($picDraft));
+    $done();
+    check(CmsCommDraft::findOne($picDraft)->body_html === '<p>Правка нового владельца</p>', 'Opening a draft never writes its old text over a newer change');
+
+    // 28. A form without the version (a tab opened before the update) neither saves nor sends an existing draft.
+    [, $oldTabDraft, $oldTabAddress] = $makeDraft('Старая вкладка');
+    $asLeader();
+    $oldTab = ['ComposeForm' => ['draft_id' => $oldTabDraft, 'cms_comm_account_id' => $accountId, 'to' => $oldTabAddress, 'subject' => 'Из старой вкладки', 'body_html' => '<p>Т</p>'],
+        'draft_owner_id' => (int)$employee->id, 'draft_version' => null];
+    $post($oldTab);
+    $oldSave = $controller->saveDraft();
+    $letters = (int)CmsCommMessage::find()->count();
+    $post($oldTab);
+    $oldSend = $controller->compose();
+    check(!empty($oldSave['moved']) && !$oldSend['success'] && (int)CmsCommMessage::find()->count() === $letters
+        && CmsCommDraft::findOne($oldTabDraft)->subject === 'Старая вкладка', 'A tab without the version neither saves nor sends');
+    // The draft handed to someone the leader does not manage: the window says so instead of stopping silently.
+    $adminOwners->transfer([CmsCommDraft::findOne($oldTabDraft)], (int)$otherHead->id);
+    $asLeader();
+    $post(['ComposeForm' => $oldTab['ComposeForm'], 'draft_owner_id' => (int)$employee->id]);
+    $outOfReach = $controller->saveDraft();
+    check(!empty($outOfReach['moved']) && mb_strpos((string)$outOfReach['message'], 'руководитель') !== false, 'A draft handed out of reach is reported to the window');
+
+    // 29. A picture right before the signature block is the author's: it stays.
+    $withPicture = '<p>Текст</p><img src="https://example.com/a.png" alt="">'.MailSignatures::block('<p>Подпись</p>');
+    $replaced = DraftOwners::replaceSignature($withPicture, null, '<p>Новая</p>');
+    check(mb_strpos($replaced, 'a.png') !== false && mb_strpos($replaced, 'Подпись</p>') === false && mb_strpos($replaced, 'Новая') !== false,
+        'The picture before the signature stays, the block is replaced: '.$replaced);
+
+    // 30. A new AI draft into the folder of the responsible checks the caller's rights to the client, not the responsible's.
+    $guarded = new \skeeks\cms\models\CmsCompany(['name' => $mark.' компания под защитой']);
+    $guarded->save(false);
+    \skeeks\cms\models\CmsCompany2manager::deleteAll(['cms_company_id' => (int)$guarded->id]);
+    foreach ([[(int)$otherHead->id, \skeeks\cms\crm\CrmAccess::LEVEL_FULL, 1], [(int)$employee->id, \skeeks\cms\crm\CrmAccess::LEVEL_DEAL, 0]] as [$uid, $level, $main]) {
+        (new \skeeks\cms\models\CmsCompany2manager(['cms_company_id' => (int)$guarded->id, 'cms_user_id' => $uid]))->save(false);
+        \skeeks\cms\models\CmsCompany2manager::updateAll(['access_level' => $level, 'is_main' => $main], ['cms_company_id' => (int)$guarded->id, 'cms_user_id' => $uid]);
+    }
+    (new \skeeks\cms\models\CmsCompanyEmail(['cms_company_id' => (int)$guarded->id, 'value' => 'test-draft-owners-guarded@skeeks.com']))->save(false);
+    if (\skeeks\cms\crm\CrmAccess::levelsReady()) {
+        $guardedDraft = run($employee, 'cms_comm_draft_create', ['cms_comm_topic_id' => (int)$topic->id,
+            'items' => [['record_type' => 'company', 'record_id' => (int)$guarded->id, 'address' => 'test-draft-owners-guarded@skeeks.com', 'subject' => 'Защита', 'body_html' => '<p>Т</p>']]]);
+        check(($guardedDraft['items'][0]['status'] ?? '') === 'refused', 'An employee with «Свои сделки» cannot prepare a letter to the company in the responsible\'s folder: '
+            .json_encode($guardedDraft['items'] ?? $guardedDraft, JSON_UNESCAPED_UNICODE));
+    }
 } finally {
+    // Temporary uploads opened the session: it is written now, inside the transaction, not after it
+    // with a user the rollback removed.
+    if (Yii::$app->has('session') && Yii::$app->session->getIsActive()) {
+        Yii::$app->session->close();
+    }
     $tx->rollBack();
+    if (!empty($storedPath) && is_file($storedPath)) {
+        @unlink($storedPath);
+    }
     \skeeks\cms\communication\components\AiApiSettings::reset();
     CmsDepartment::resetTree();
 }

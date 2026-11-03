@@ -174,7 +174,8 @@ class DraftOwners
                     .': откройте его заново.');
             }
             if ($expectedVersion !== null && $expectedVersion !== '' && !hash_equals(MailDrafts::version($draft), $expectedVersion)) {
-                throw new AiRefusal(AiSend::REASON_CHANGED, 'Черновик изменён в другом окне или через API: откройте его заново, чтобы не потерять эти правки.');
+                throw new AiRefusal(AiSend::REASON_CHANGED, 'Черновик изменён в другом окне или через API, это окно его больше не сохраняет: '
+                    .'скопируйте свои правки и откройте черновик заново.');
             }
 
             return $operation($draft);
@@ -305,8 +306,36 @@ class DraftOwners
         if (!$root) {
             return null;
         }
-        $empty = static fn(\DOMNode $node) => trim(str_replace("\xC2\xA0", ' ', (string)$node->textContent)) === ''
-            && !($node instanceof \DOMElement && $node->getElementsByTagName('img')->length);
+        // Empty: no text and nothing visible — a picture, a rule, a table or media is content, itself or inside.
+        $visible = ['img', 'hr', 'table', 'video', 'audio', 'iframe', 'object', 'embed', 'svg'];
+        $empty = static function (\DOMNode $node) use ($visible): bool {
+            if (trim(str_replace("\xC2\xA0", ' ', (string)$node->textContent)) !== '') {
+                return false;
+            }
+            if (!$node instanceof \DOMElement) {
+                return true;
+            }
+            foreach ($visible as $tag) {
+                if (strtolower($node->nodeName) === $tag || $node->getElementsByTagName($tag)->length) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+        // The empty line of the editor: <div> or <p> with nothing but <br>.
+        $blankLine = static function ($node) use ($empty): bool {
+            if (!$node instanceof \DOMElement || !in_array(strtolower($node->nodeName), ['div', 'p'], true) || !$empty($node)) {
+                return false;
+            }
+            foreach ($node->getElementsByTagName('*') as $inner) {
+                if (strtolower($inner->nodeName) !== 'br') {
+                    return false;
+                }
+            }
+
+            return true;
+        };
         // The last meaningful top-level node: the block must be it.
         $block = null;
         for ($node = $root->lastChild; $node; $node = $node->previousSibling) {
@@ -341,7 +370,7 @@ class DraftOwners
         }
         $above = $block->previousSibling;
         $root->removeChild($block);
-        if ($above instanceof \DOMElement && $empty($above)) {
+        if ($blankLine($above)) {
             $root->removeChild($above);
         }
         $result = '';

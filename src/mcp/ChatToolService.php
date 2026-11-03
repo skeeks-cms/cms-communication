@@ -209,22 +209,24 @@ class ChatToolService
 
         $row = null;
         try {
-            CmsCommApiSend::getDb()->transaction(function () use ($prepared, $key, $hash, &$row) {
-                // The day limit shared with letters, taken atomically (parallel sends count in turn).
-                \skeeks\cms\communication\services\AiSend::reserveDay($this->siteId, (int)$this->user->id);
-                $row = new CmsCommApiSend([
-                    'cms_site_id' => $this->siteId,
-                    'cms_user_id' => (int)$this->user->id,
-                    'client' => mb_substr('mcp:'.($this->clientName !== '' ? $this->clientName : 'клиент'), 0, 190),
-                    'idempotency_key' => $key,
-                    'request_hash' => $hash,
-                ]);
-                $row->save(false);
-                $message = BotSend::queue($prepared['chat'], $prepared['text'], ['user' => $this->user, 'replyTo' => $prepared['replyTo']]);
-                AiMark::apply($message, AiMark::make($this->clientName, (int)$this->user->id));
-                $message->save(false, ['prepared_by', 'prepared_client', 'prepared_user_id', 'prepared_at', 'prepared_edited']);
-                $row->cms_comm_message_id = (int)$message->id;
-                $row->save(false, ['cms_comm_message_id', 'updated_at']);
+            // The day lock of the employee first, then the transaction (AiSend::withDayLock()): the limit is shared with letters.
+            \skeeks\cms\communication\services\AiSend::withDayLock($this->siteId, (int)$this->user->id, function () use ($prepared, $key, $hash, &$row) {
+                return CmsCommApiSend::getDb()->transaction(function () use ($prepared, $key, $hash, &$row) {
+                    \skeeks\cms\communication\services\AiSend::reserveDay($this->siteId, (int)$this->user->id);
+                    $row = new CmsCommApiSend([
+                        'cms_site_id' => $this->siteId,
+                        'cms_user_id' => (int)$this->user->id,
+                        'client' => mb_substr('mcp:'.($this->clientName !== '' ? $this->clientName : 'клиент'), 0, 190),
+                        'idempotency_key' => $key,
+                        'request_hash' => $hash,
+                    ]);
+                    $row->save(false);
+                    $message = BotSend::queue($prepared['chat'], $prepared['text'], ['user' => $this->user, 'replyTo' => $prepared['replyTo']]);
+                    AiMark::apply($message, AiMark::make($this->clientName, (int)$this->user->id));
+                    $message->save(false, ['prepared_by', 'prepared_client', 'prepared_user_id', 'prepared_at', 'prepared_edited']);
+                    $row->cms_comm_message_id = (int)$message->id;
+                    $row->save(false, ['cms_comm_message_id', 'updated_at']);
+                });
             });
         } catch (SendException $e) {
             return ['sent' => false, 'state' => 'refused', 'repeated' => false,

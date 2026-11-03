@@ -49,6 +49,8 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     public const PAGE_SIZE = 30;
 
     /** The "Написать" window of an employee without a mailbox that may send. */
+    /** A form of a draft without the version it was opened with: opened before the update of the mail screen. */
+    public const OLD_WINDOW_TEXT = 'Окно письма открыто до обновления «Почты»: закройте его и откройте черновик заново, чтобы не потерять более свежие правки.';
     public const NO_MAILBOX_TEXT = 'У вас нет почтового ящика для отправки. Попросите администратора дать доступ к ящику.';
 
     public function init()
@@ -233,7 +235,11 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         // A draft of an employee the user manages is saved as that employee's (his mailbox, his clients).
         [$service, $drafts, $draft, $draftOwner] = $this->draftContext($draftId);
         if ($draftId && !$draft) {
-            return ['success' => false, 'gone' => true];
+            // Handed over to someone the user does not manage: the window says so; sent or deleted: it just stops.
+            $refusal = $this->draftOwners()->refusal($draftId);
+
+            return $refusal['reason'] === \skeeks\cms\communication\services\AiSend::REASON_NOT_OWN
+                ? ['success' => false, 'moved' => true, 'message' => $refusal['message']] : ['success' => false, 'gone' => true];
         }
         if ($moved = $this->movedError($draft)) {
             return ['success' => false, 'moved' => true, 'message' => $moved];
@@ -243,6 +249,10 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         }
         $form = new ComposeForm(['service' => $service]);
         $form->load(\Yii::$app->request->post());
+        if ($draft && $this->postedVersion() === null) {
+            // A window opened before the version existed (an old tab) never writes over a draft.
+            return ['success' => false, 'moved' => true, 'message' => self::OLD_WINDOW_TEXT];
+        }
         if ($draft) {
             // The rights, the owner and the version are checked on the locked row and the draft is written
             // under that lock (files included): a hand-over or another change meanwhile is never overwritten.
@@ -650,7 +660,7 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     {
         $this->requirePostJson();
         // A leader without a mailbox of his own may still put files into an employee's draft.
-        if (!$this->composeService()->sendableAccounts() && !$this->draftOwners()->hasOthers()) {
+        if (!$this->composeService()->sendableAccounts() && count($this->draftOwners()->ids()) < 2) {
             throw new \yii\web\ForbiddenHttpException('Вам нельзя отправлять письма.');
         }
         $file = \yii\web\UploadedFile::getInstanceByName('file');
@@ -1212,6 +1222,9 @@ class AdminCmsCommMessageController extends BackendModelStandartController
 
                 return ['success' => true, 'id' => (int)$message->id];
             };
+            if ($draftId && $this->postedVersion() === null) {
+                return ['success' => false, 'errors' => ['to' => self::OLD_WINDOW_TEXT.' Письмо не отправлено.']];
+            }
             try {
                 // A draft is sent under its lock, checked on the locked row: the owner and the version the window
                 // holds (a change in another window or by the API, a hand-over, a send elsewhere refuse it).

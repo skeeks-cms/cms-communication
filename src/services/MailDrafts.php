@@ -219,10 +219,18 @@ class MailDrafts
      * Fills the form with a draft. Its files go back into the temporary area
      * of this session under fresh tokens when the old ones are gone.
      *
+     * The form gets the fresh tokens in memory. With $persist the draft keeps
+     * them too (the text and the files' tokens, a file whose stored copy is
+     * gone leaves) — only under the draft's lock and only when the locked row
+     * is still the version that was read: a hand-over or a change made since
+     * is never written over. A check of the API passes $persist=false and
+     * writes nothing.
+     *
      * @return array[] attachments for the form: token, name, size
      */
-    public function fill(ComposeForm $form, CmsCommDraft $draft): array
+    public function fill(ComposeForm $form, CmsCommDraft $draft, bool $persist = true): array
     {
+        $readVersion = $persist ? self::version($draft) : null;
         $form->draft_id = (int)$draft->id;
         $form->cms_comm_account_id = $draft->cms_comm_account_id ?: $form->cms_comm_account_id;
         $form->to = (string)$draft->to_list;
@@ -240,27 +248,47 @@ class MailDrafts
 
         $tokens = [];
         $attachments = [];
+        $renewed = [];
+        $gone = [];
         foreach ($draft->getFiles()->with('storageFile')->all() as $file) {
             $token = $this->reopen($file);
             if ($token === null) {
-                // The stored copy is gone: the draft loses the file.
-                $this->forgetFile($file);
+                // The stored copy is gone: the draft loses the file (when it is written).
+                $gone[] = (int)$file->id;
                 continue;
             }
-            $tokens[(string)$file->getOldAttribute('token') ?: $token] = $token;
+            if ($token !== (string)$file->token) {
+                $renewed[(int)$file->id] = $token;
+            }
+            $tokens[(string)$file->token ?: $token] = $token;
             if (!$file->is_inline) {
                 $attachments[] = ['token' => $token, 'name' => (string)$file->name, 'size' => (int)$file->size];
             }
         }
         $form->uploads = array_column($attachments, 'token');
-        // The stored text follows the fresh tokens at once: a draft reopened again before
-        // the next autosave still finds its pictures. updateAttributes() keeps updated_at.
         $body = (string)$draft->body_html;
-        $stored = RichTextHtml::replaceUploads($body, static function ($old) use ($tokens) {
-            return isset($tokens[$old]) ? '<img data-sx-upload="'.htmlspecialchars($tokens[$old], ENT_QUOTES, 'UTF-8').'" alt="">' : '';
-        });
-        if ($draft->body_html !== null && $stored !== $body) {
-            $draft->updateAttributes(['body_html' => $stored]);
+        if ($persist && ($renewed || $gone)) {
+            // The stored text follows the fresh tokens: a draft reopened again before the next autosave still
+            // finds its pictures. updateAttributes() keeps updated_at; the version does not count tokens.
+            $stored = RichTextHtml::replaceUploads($body, static function ($old) use ($tokens) {
+                return isset($tokens[$old]) ? '<img data-sx-upload="'.htmlspecialchars($tokens[$old], ENT_QUOTES, 'UTF-8').'" alt="">' : '';
+            });
+            CmsCommDraft::getDb()->transaction(static function () use ($draft, $readVersion, $renewed, $gone, $stored, $body) {
+                $locked = self::lock((int)$draft->id);
+                if (!$locked || !hash_equals(self::version($locked), (string)$readVersion)) {
+                    return;
+                }
+                foreach ($locked->getFiles()->all() as $file) {
+                    if (isset($renewed[(int)$file->id])) {
+                        $file->updateAttributes(['token' => mb_substr($renewed[(int)$file->id], 0, 255)]);
+                    } elseif (in_array((int)$file->id, $gone, true)) {
+                        self::forgetFile($file);
+                    }
+                }
+                if ($locked->body_html !== null && $stored !== $body) {
+                    $locked->updateAttributes(['body_html' => $stored]);
+                }
+            });
         }
         $form->body_html = RichTextHtml::replaceUploads($body, static function ($old) use ($tokens) {
             $token = $tokens[$old] ?? null;
@@ -272,7 +300,7 @@ class MailDrafts
         return $attachments;
     }
 
-    /** The draft file as an upload of this session: its token, or null when the bytes are gone. */
+    /** The draft file as an upload of this session: its token (fresh when the old one is gone), or null when the bytes are gone. */
     private function reopen(CmsCommDraftFile $file): ?string
     {
         if ($file->token && MailFiles::tempPath((string)$file->token)) {
@@ -282,14 +310,8 @@ class MailDrafts
         if ($path === '' || !is_file($path)) {
             return null;
         }
-        $upload = TemporaryUploads::putBytes((string)file_get_contents($path), (string)$file->name, 'mail');
-        $old = (string)$file->token;
-        $file->token = mb_substr($upload['token'], 0, 255);
-        $file->save(false, ['token']);
-        // The text refers to the old token: fill() maps it to the new one.
-        $file->setOldAttribute('token', $old);
 
-        return $upload['token'];
+        return TemporaryUploads::putBytes((string)file_get_contents($path), (string)$file->name, 'mail')['token'];
     }
 
     /**

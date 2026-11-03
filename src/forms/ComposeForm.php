@@ -169,10 +169,12 @@ class ComposeForm extends Model
         if (!method_exists($access, 'clientActionError') || !method_exists($access, 'actingWorker')) {
             return;
         }
-        // An employee acts now (a web or API session; the console is not limited). The letter is written as
-        // the owner of the form — the employee himself, or the owner of a draft his leader sends: his rights decide.
+        // An employee acts now (a web or API session; the console is not limited): his rights decide. Only a
+        // leader acting for his employee (actedBy: a draft of the employee sent or changed by the leader)
+        // writes the employee's letter — then the owner's rights decide. Preparing a draft into somebody's
+        // folder (AI for the responsible of the client) is the caller's own action and checks the caller.
         $acting = $access::actingWorker();
-        $worker = $acting && $this->service ? $this->service->getUser() : $acting;
+        $worker = $acting && $this->actedBy && $this->service ? $this->service->getUser() : $acting;
         if (!$worker) {
             return;
         }

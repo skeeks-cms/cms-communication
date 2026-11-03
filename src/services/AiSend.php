@@ -136,7 +136,8 @@ class AiSend
         $drafts = new MailDrafts($owner, $this->siteId);
         $service = new MailComposeService($owner, $this->siteId);
         $form = new ComposeForm(['service' => $service]);
-        $drafts->fill($form, $draft);
+        // Read only: a check writes nothing to the draft (the tokens of its pictures stay in memory).
+        $drafts->fill($form, $draft, false);
         $form->cms_comm_account_id = $form->cms_comm_account_id ?: $service->defaultAccountId();
         $drafts->applyAiDraft($form);
         $form->actedBy = (int)$owner->id !== (int)$this->user->id ? (int)$this->user->id : null;
@@ -259,8 +260,14 @@ class AiSend
         $html = RichTextHtml::clean($form->getHtml(), ComposeForm::EDITOR_PRESET);
         $html = (string)preg_replace('~<img[^>]*data-sx-upload="[^"]*"[^>]*>~i', '<img data-sx-upload>', $html);
         $files = array_map(static fn($f) => [(string)$f->content_hash, (int)$f->is_inline, (string)$f->name], $draft->getFiles()->all());
+        // What queue() adds below the text: the quoted or forwarded letter and its attachments.
+        $quote = self::quote($form);
+        $fileIds = array_map('intval', (array)$form->file_ids);
+        sort($fileIds);
 
         return hash('sha256', json_encode([
+            (int)$form->reply_to_message_id, (int)$form->forward_message_id, (int)$form->reply_all, (int)$form->include_quote,
+            $quote ? hash('sha256', $quote[0]) : '', $fileIds,
             // The owner too: a draft handed over is another employee's letter (his mailbox rights, limit, signature).
             (int)$draft->id, (int)$draft->cms_user_id, (int)$form->cms_comm_account_id,
             $form->getToAddresses(), $form->getCcAddresses(), $form->getBccAddresses(),
@@ -268,6 +275,23 @@ class AiSend
             $sendables, (string)$purpose, (int)$form->cms_comm_topic_id, (string)$form->context_model_code, (int)$form->context_model_id,
             $files, $testMode, $form->withOptOut(),
         ], JSON_UNESCAPED_UNICODE));
+    }
+
+    /**
+     * The quoted or forwarded letter queue() puts below the text ([html, text], MailComposeService::quoteOf()),
+     * or null: part of what the person approves and of the check token.
+     */
+    private static function quote(ComposeForm $form): ?array
+    {
+        $service = $form->service;
+        if (!$service) {
+            return null;
+        }
+        $forward = $form->forward_message_id ? $service->visibleMessage((int)$form->forward_message_id) : null;
+        $reply = !$forward && $form->reply_to_message_id && $form->include_quote ? $service->visibleMessage((int)$form->reply_to_message_id) : null;
+        $original = $forward ?: $reply;
+
+        return $original ? $service->quoteOf($original, (bool)$forward) : null;
     }
 
     /**
@@ -318,6 +342,8 @@ class AiSend
                 'subject' => (string)$form->subject,
                 'text' => $text,
                 'html' => $html,
+                // The answered (include_quote) or forwarded letter added below the text when it leaves.
+                'quote' => ($quote = self::quote($form)) ? ['kind' => $form->forward_message_id ? 'forward' : 'reply', 'text' => mb_substr(trim($quote[1]), 0, 3000)] : null,
                 'note' => 'Предпросмотр: кнопка предложения не ведёт на личную ссылку'
                     .($form->withOptOut() ? ', ссылка «Отписаться» добавится при отправке'
                         : ($prepared['purpose'] === LetterPurpose::INDIVIDUAL_OFFER ? ', строки «Отписаться» и заголовков отписки не будет (индивидуальное предложение)' : ', блока отписки нет — это не рассылка'))
@@ -384,42 +410,45 @@ class AiSend
 
         $row = null;
         try {
-            CmsCommApiSend::getDb()->transaction(function () use ($prepared, $key, $hash, $draftId, $testMode, $campaign, &$row) {
-                // The draft is taken for this send: a parallel send (the owner and his leader, two keys) or a
-                // hand-over waits here and then finds it sent or changed; nothing is queued twice.
-                $locked = MailDrafts::lock($draftId);
-                if (!$locked) {
-                    throw new AiRefusal(AiActions::REASON_NOT_FOUND, 'Черновик уже отправлен или удалён: второе письмо не отправлено.');
-                }
-                // What was checked is what leaves: the version of the locked row (every field, every file) and the rights on it.
-                if (!hash_equals($prepared['version'], MailDrafts::version($locked)) || !(new DraftOwners($this->user, $this->siteId))->canManage((int)$locked->cms_user_id)) {
-                    throw new AiRefusal(self::REASON_CHANGED, 'Черновик изменился, передан другому сотруднику или стал вам недоступен во время отправки.');
-                }
-                // The day limit of the owner, taken atomically with letters and chat messages of other requests.
-                self::reserveDay($this->siteId, (int)$prepared['owner']->id);
-                $row = new CmsCommApiSend([
-                    'cms_site_id' => $this->siteId,
-                    'cms_user_id' => (int)$this->user->id,
-                    'sender_user_id' => (int)$prepared['owner']->id,
-                    'client' => mb_substr('mcp:'.($this->clientName !== '' ? $this->clientName : 'клиент'), 0, 190),
-                    'idempotency_key' => $key,
-                    'request_hash' => $hash,
-                    'cms_comm_draft_id' => $draftId,
-                    'purpose' => $prepared['purpose'],
-                    'test_mode' => (int)$testMode,
-                ]);
-                $row->save(false);
-                // The send of the offer learns that AI sent it (its feed entry says so); the letter's own mark stays as prepared.
-                if (is_array($prepared['form']->aiMark)) {
-                    $prepared['form']->aiMark['sent_via'] = $row->client;
-                }
-                $message = (new MailComposeService($prepared['owner'], $this->siteId))->queue($prepared['form']);
-                $row->cms_comm_message_id = (int)$message->id;
-                $row->save(false, ['cms_comm_message_id', 'updated_at']);
-                if ($campaign) {
-                    $this->joinCampaign($campaign, $message, $prepared);
-                }
-                MailDrafts::delete($locked);
+            // The day lock of the owner first, then the transaction: see withDayLock().
+            self::withDayLock($this->siteId, (int)$prepared['owner']->id, function () use ($prepared, $key, $hash, $draftId, $testMode, $campaign, &$row) {
+                return CmsCommApiSend::getDb()->transaction(function () use ($prepared, $key, $hash, $draftId, $testMode, $campaign, &$row) {
+                    // The draft is taken for this send: a parallel send (the owner and his leader, two keys) or a
+                    // hand-over waits here and then finds it sent or changed; nothing is queued twice.
+                    $locked = MailDrafts::lock($draftId);
+                    if (!$locked) {
+                        throw new AiRefusal(AiActions::REASON_NOT_FOUND, 'Черновик уже отправлен или удалён: второе письмо не отправлено.');
+                    }
+                    // What was checked is what leaves: the version of the locked row (every field, every file) and the rights on it.
+                    if (!hash_equals($prepared['version'], MailDrafts::version($locked)) || !(new DraftOwners($this->user, $this->siteId))->canManage((int)$locked->cms_user_id)) {
+                        throw new AiRefusal(self::REASON_CHANGED, 'Черновик изменился, передан другому сотруднику или стал вам недоступен во время отправки.');
+                    }
+                    // The day limit of the owner, taken atomically with letters and chat messages of other requests.
+                    self::reserveDay($this->siteId, (int)$prepared['owner']->id);
+                    $row = new CmsCommApiSend([
+                        'cms_site_id' => $this->siteId,
+                        'cms_user_id' => (int)$this->user->id,
+                        'sender_user_id' => (int)$prepared['owner']->id,
+                        'client' => mb_substr('mcp:'.($this->clientName !== '' ? $this->clientName : 'клиент'), 0, 190),
+                        'idempotency_key' => $key,
+                        'request_hash' => $hash,
+                        'cms_comm_draft_id' => $draftId,
+                        'purpose' => $prepared['purpose'],
+                        'test_mode' => (int)$testMode,
+                    ]);
+                    $row->save(false);
+                    // The send of the offer learns that AI sent it (its feed entry says so); the letter's own mark stays as prepared.
+                    if (is_array($prepared['form']->aiMark)) {
+                        $prepared['form']->aiMark['sent_via'] = $row->client;
+                    }
+                    $message = (new MailComposeService($prepared['owner'], $this->siteId))->queue($prepared['form']);
+                    $row->cms_comm_message_id = (int)$message->id;
+                    $row->save(false, ['cms_comm_message_id', 'updated_at']);
+                    if ($campaign) {
+                        $this->joinCampaign($campaign, $message, $prepared);
+                    }
+                    MailDrafts::delete($locked);
+                });
             });
         } catch (SendException $e) {
             return ['sent' => false, 'state' => 'refused', 'repeated' => false,
@@ -520,26 +549,69 @@ class AiSend
      */
     public static function sentTodayBy(int $siteId, int $senderId): int
     {
+        return (int)self::sentTodayQuery($siteId, $senderId)->count();
+    }
+
+    private static function sentTodayQuery(int $siteId, int $senderId): \yii\db\ActiveQuery
+    {
         $tz = new \DateTimeZone(\Yii::$app->formatter->timeZone ?: date_default_timezone_get());
 
-        return (int)CmsCommApiSend::find()->andWhere(['cms_site_id' => $siteId])
+        return CmsCommApiSend::find()->andWhere(['cms_site_id' => $siteId])
             ->andWhere(['or', ['sender_user_id' => $senderId], ['and', ['sender_user_id' => null], ['cms_user_id' => $senderId]]])
             ->andWhere(['not', ['cms_comm_message_id' => null]])
-            ->andWhere(['>=', 'created_at', (new \DateTime('today', $tz))->getTimestamp()])->count();
+            ->andWhere(['>=', 'created_at', (new \DateTime('today', $tz))->getTimestamp()]);
+    }
+
+    /** Seconds a send waits for another send of the same employee (withDayLock()). */
+    public static int $dayLockTimeout = 10;
+
+    /** withDayLock() was entered inside a transaction opened before it: its snapshot may predate the lock. */
+    private static int $snapshotBeforeLock = 0;
+
+    /**
+     * Runs a send of an employee (a letter, a chat message) under his day lock: a named lock of the
+     * database (GET_LOCK) per site and employee, held until the send's transaction is committed. Sends of
+     * one employee take it in turn, others never wait; no row of cms_user is locked, so inserts that refer
+     * to employees (foreign keys) and sends of other employees are never blocked or deadlocked by it.
+     * $send opens the transaction itself, after the lock: its snapshot then sees every send committed before.
+     *
+     * @throws AiRefusal send_busy when another send of the employee does not finish in time
+     */
+    public static function withDayLock(int $siteId, int $senderId, callable $send)
+    {
+        $db = CmsCommApiSend::getDb();
+        $name = 'sx_comm_api_send:'.$siteId.':'.$senderId;
+        if ((int)$db->createCommand('SELECT GET_LOCK(:name, :timeout)', [':name' => $name, ':timeout' => self::$dayLockTimeout])->queryScalar() !== 1) {
+            throw new AiRefusal('send_busy', 'Сейчас идёт другая отправка этого сотрудника: повторите через несколько секунд с тем же idempotency_key.');
+        }
+        $outer = $db->getTransaction() !== null;
+        self::$snapshotBeforeLock += (int)$outer;
+        try {
+            return $send();
+        } finally {
+            self::$snapshotBeforeLock -= (int)$outer;
+            $db->createCommand('SELECT RELEASE_LOCK(:name)', [':name' => $name])->queryScalar();
+        }
     }
 
     /**
-     * Takes a place of the day limit of API sends of an employee (letters and chat messages alike): his
-     * row is locked to the end of the transaction, so parallel sends of his drafts and messages count in
-     * turn and never pass the limit together. Called inside the transaction that writes the send row.
+     * Takes a place of the day limit of API sends of an employee (letters and chat messages alike). Called
+     * inside withDayLock(), in the transaction that writes the send row: the sends of the employee count in
+     * turn and never pass the limit together. The transaction began after the lock, so a plain count sees
+     * every committed send; inside a transaction opened before the lock (a caller's, a test's) the snapshot
+     * may be older, and a locking read counts what is committed now.
      *
      * @throws AiRefusal send_day_limit
      */
     public static function reserveDay(int $siteId, int $senderId): void
     {
-        CmsUser::getDb()->createCommand('SELECT id FROM '.CmsUser::tableName().' WHERE id = :id FOR UPDATE', [':id' => $senderId])->queryScalar();
+        $db = CmsCommApiSend::getDb();
         $limit = AiActions::limits()['sendPerDay'];
-        if (self::sentTodayBy($siteId, $senderId) >= $limit) {
+        $count = self::sentTodayQuery($siteId, $senderId)->select(['COUNT(*)'])->createCommand($db);
+        $used = self::$snapshotBeforeLock > 0
+            ? (int)$db->createCommand($count->getRawSql().' LOCK IN SHARE MODE')->queryScalar()
+            : (int)$count->queryScalar();
+        if ($used >= $limit) {
             throw new AiRefusal(self::REASON_SEND_LIMIT, $limit > 0
                 ? 'Дневной лимит отправок через API исчерпан: не больше '.$limit.' писем и сообщений в день от сотрудника («Настройки почты» → «Работа ИИ через API»).'
                 : 'Отправка через API ограничена нулём писем в день («Настройки почты» → «Работа ИИ через API»).');

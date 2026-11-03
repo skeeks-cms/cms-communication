@@ -225,6 +225,15 @@ class AiActions
         $this->checkNotInCampaign($record, null);
         // A repeated offer is a mailing concern: personal and service letters may answer with an offer sent before.
         $sendable = $offer !== '' ? $this->offer($offer, $record, $owner, LetterPurpose::withTopic($purpose) && !$testMode) : null;
+        // A draft of an employee changed by his leader: a new or replaced document must be one the leader may
+        // send too (as in the mail screen) — the owner's rights never open a document to the caller.
+        // The same for a new draft put into the responsible's folder: the caller attaches only what he may send.
+        if ($sendable && $this->actorId !== (int)$owner->id && (!$draft || !in_array($sendable[0].':'.$sendable[1], $draft->getSendableRefs(), true))) {
+            $actor = CmsUser::findOne($this->actorId);
+            if (!$actor || !(new SendService($actor, $this->siteId))->findRef($sendable[0].':'.$sendable[1])) {
+                throw new AiRefusal(self::REASON_OFFER, 'Предложение «'.$offer.'» вам недоступно: в черновик другого сотрудника можно положить только документ, который можете отправить и вы.');
+            }
+        }
         $attachments = $this->attachmentSources($item);
         if ($purpose === LetterPurpose::INDIVIDUAL_OFFER && !$sendable) {
             throw new AiRefusal(LetterPurpose::REASON_PURPOSE, 'Индивидуальное предложение отправляется с Презентацией или КП: укажите offer ("proposal:<id>").');
@@ -243,6 +252,9 @@ class AiActions
 
         $service = new MailComposeService($owner, $this->siteId);
         $form = new ComposeForm(['service' => $service]);
+        // A leader changing his employee's draft writes the employee's letter: the owner's client rights decide.
+        // A new draft (even into the responsible's folder) is the caller's own action and checks the caller.
+        $form->actedBy = $draft && $this->actorId !== (int)$owner->id ? $this->actorId : null;
         $form->cms_comm_account_id = $accountId;
         $form->to = $address;
         $form->subject = $subject;

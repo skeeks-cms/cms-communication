@@ -1580,10 +1580,21 @@
         if (!id) {
             return $.Deferred().resolve().promise();
         }
-        return $.post($form.data('draft-delete-url'), csrf({id: id, draft_owner_id: $form.find('[data-sx-compose-draft-owner]').val()})).done(function (response) {
+        var done = $.Deferred();
+        $.post($form.data('draft-delete-url'), csrf({id: id, draft_owner_id: $form.find('[data-sx-compose-draft-owner]').val()})).done(function (response) {
             applyMainCounters(response.counters);
             reloadList('drafts');
+            // Nothing removed: the draft was handed over or is no longer available — the window says so.
+            if (response.removed === 0) {
+                done.reject(response.message);
+            } else {
+                done.resolve(response);
+            }
+        }).fail(function () {
+            done.reject();
         });
+
+        return done.promise();
     }
 
     /**
@@ -1674,9 +1685,9 @@
                 } else if (!closeOwnPanel()) {
                     $form.replaceWith('<div class="sx-compose__done">Черновик удалён.</div>');
                 }
-            }).fail(function () {
+            }).fail(function (message) {
                 $form.data('sent', false);
-                notify('error', 'Не удалось удалить черновик.');
+                notify('error', message || 'Не удалось удалить черновик.');
             });
         });
     });
