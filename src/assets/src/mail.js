@@ -1189,8 +1189,9 @@
             return;
         }
         suggestTimer = setTimeout(function () {
-            var url = $chips.closest('[data-sx-compose]').data('contacts-url');
-            $.get(url, {q: q}).done(function (response) {
+            var $compose = $chips.closest('[data-sx-compose]');
+            // A draft of an employee: the recipients he may write to (the server checks the draft is available).
+            $.get($compose.data('contacts-url'), {q: q, draft_id: draftId($compose)}).done(function (response) {
                 if ($.trim($input.val()) !== q) {
                     return;
                 }
@@ -1532,6 +1533,11 @@
                 // Sent or removed in another window.
                 $form.data('sent', true);
                 $form.find('[data-sx-compose-draft-status]').text('');
+            } else if (response.moved) {
+                // Handed over to another employee meanwhile: this window writes for the former owner, it stops.
+                $form.data('sent', true);
+                $form.find('[data-sx-compose-draft-status]').text(response.message);
+                notify('error', response.message);
             }
         }).fail(function () {
             $form.data('dirty', true);
@@ -1579,6 +1585,41 @@
         });
     }
 
+    /**
+     * Resolved when the last version of the form is saved: no upload under way,
+     * no save in flight, nothing changed since the last successful save.
+     * Rejected when a save fails or the draft is gone: then nothing may act on it.
+     */
+    function savedDraft($form) {
+        var done = $.Deferred();
+        var step = function (round) {
+            if (round > 200) {
+                done.reject();
+            } else if (isUploading($form)) {
+                setTimeout(function () {
+                    step(round + 1);
+                }, 300);
+            } else if ($form.data('draftXhr')) {
+                $form.data('draftXhr').then(function (response) {
+                    return response && response.success === false ? done.reject() : step(round + 1);
+                }, function () {
+                    done.reject();
+                });
+            } else if ($form.data('dirty')) {
+                $.when(saveDraft($form)).then(function (response) {
+                    return response && response.success === false ? done.reject() : step(round + 1);
+                }, function () {
+                    done.reject();
+                });
+            } else {
+                done.resolve();
+            }
+        };
+        step(0);
+
+        return done.promise();
+    }
+
     // "Передать черновик" in the draft window: the form is saved first, then the draft gets its new owner.
     $(document).on('change', '[data-sx-compose] [data-sx-compose-draft-transfer]', function () {
         var $form = $(this).closest('[data-sx-compose]');
@@ -1589,8 +1630,9 @@
             return;
         }
         clearTimeout($form.data('draftTimer'));
-        var wait = $form.data('dirty') || !draftId($form) ? saveDraft($form) : ($form.data('draftXhr') || $.Deferred().resolve().promise());
-        $.when(wait).always(function () {
+        savedDraft($form).fail(function () {
+            notify('error', 'Черновик не сохранён: передать его нельзя. Дождитесь загрузки файлов и сохранения и попробуйте ещё раз.');
+        }).done(function () {
             var id = draftId($form);
             if (!id || !window.confirm('Передать черновик — ' + name + '? Письмо уйдёт из ящика нового владельца, с его подписью.')) {
                 return;
@@ -1993,7 +2035,8 @@
 
     function openContext($row, x, y, $owner) {
         var $menu = $mail().find('[data-sx-mail-context]');
-        if (!$menu.length) {
+        // The letter menu acts on letter ids: never on a draft row.
+        if (!$menu.length || $row.is('[data-draft-id]')) {
             return;
         }
         closeMenus();
@@ -2015,7 +2058,8 @@
     }
 
     $(document).on('contextmenu', root + ' .sx-mail__row', function (e) {
-        if ($(e.target).closest('a, input').length) {
+        // A draft is not a letter: no read marks, links or records for its id.
+        if ($(e.target).closest('a, input').length || $(this).is('[data-draft-id]')) {
             return;
         }
         e.preventDefault();
@@ -2539,7 +2583,8 @@
                 type: source.type,
                 q: $search.val(),
                 context_model_code: $form.find('[name$="[context_model_code]"]').val(),
-                context_model_id: $form.find('[name$="[context_model_id]"]').val()
+                context_model_id: $form.find('[name$="[context_model_id]"]').val(),
+                draft_id: draftId($form)
             }).done(function (response) {
                 $list.empty();
                 var items = (response && response.items) || [];
@@ -2606,7 +2651,7 @@
             notify('info', 'Этот документ уже в письме.');
             return;
         }
-        $.get($form.data('sendables-url'), {ref: ref}).done(function (response) {
+        $.get($form.data('sendables-url'), {ref: ref, draft_id: draftId($form)}).done(function (response) {
             if (!response || !response.success) {
                 notify('error', (response && response.message) || 'Документ недоступен.');
                 return;

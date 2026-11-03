@@ -134,11 +134,18 @@ try {
     // 3. Others: the employee of another department and its head do not see it; a manager does not see the leader's drafts.
     $foreignList = run($otherHead, 'cms_comm_draft_list', ['cms_user_id' => (int)$employee->id]);
     check(!$foreignList['success'] && $foreignList['reason'] === AiSend::REASON_NOT_OWN, 'A head of another department cannot list the employee\'s drafts');
-    rejects(fn() => run($otherHead, 'cms_comm_draft_get', ['draft_id' => $draftId]), 'руководитель', 'A head of another department cannot read the draft');
     $foreignCheck = run($otherHead, 'cms_comm_draft_check', ['draft_id' => $draftId]);
     check(!$foreignCheck['ok'] && $foreignCheck['problems'][0]['reason'] === AiSend::REASON_NOT_OWN
         && mb_strpos($foreignCheck['problems'][0]['message'], 'руководитель по отделам или администратор') !== false, 'not_own stays for unavailable drafts, with who may');
-    rejects(fn() => run($otherHead, 'cms_comm_draft_update', ['draft_id' => $draftId, 'subject' => 'Чужая правка', 'confirm' => true]), 'руководитель', 'A head of another department cannot change the draft');
+    // Every draft tool refuses alike: success=false with the stable reason, never an exception text to parse.
+    foreach (['cms_comm_draft_get' => [], 'cms_comm_draft_update' => ['subject' => 'Чужая правка', 'confirm' => true],
+                 'cms_comm_draft_attachment_add' => ['cms_storage_file_id' => 1], 'cms_comm_draft_attachment_remove' => ['attachment_id' => 1]] as $tool => $more) {
+        $refused = run($otherHead, $tool, ['draft_id' => $draftId] + $more);
+        check($refused['success'] === false && $refused['reason'] === AiSend::REASON_NOT_OWN, $tool.': not_own for a head of another department');
+    }
+    $missing = run($leader, 'cms_comm_draft_get', ['draft_id' => 999999999]);
+    check($missing['success'] === false && $missing['reason'] === 'not_found', 'An unknown draft is not_found, apart from not_own');
+    check(CmsCommDraft::findOne($draftId)->subject === 'Предложение', 'The refused change changed nothing');
     check(!run($employee, 'cms_comm_draft_list', ['cms_user_id' => (int)$leader->id])['success'], 'An ordinary manager does not see drafts of his leader');
 
     // 4. The leader: the list with the switch, the draft as the owner's.
@@ -210,6 +217,215 @@ try {
     $back2->refresh();
     check(mb_strpos((string)$back2->body_html, 'Менеджер Б') !== false && mb_strpos((string)$back2->body_html, 'Менеджер Тест, студия') === false,
         'The new owner\'s signature replaces the former one');
+
+    // A new client of the employee with an AI draft for him (one draft waits per client).
+    $sfx = bin2hex(random_bytes(3));
+    $makeDraft = static function (string $subject) use ($employee, $siteId, $topic, $accountId, $mark) {
+        static $n = 0;
+        $n++;
+        $address = 'test-draft-owners-'.$n.'@skeeks.com';
+        $client = new CmsLead(['name' => $mark.' клиент '.$n, 'executor_id' => (int)$employee->id, 'cms_site_id' => $siteId]);
+        $client->save(false);
+        (new CmsLeadEmail(['cms_lead_id' => (int)$client->id, 'value' => $address]))->save(false);
+        $made = run($employee, 'cms_comm_draft_create', ['cms_comm_topic_id' => (int)$topic->id, 'cms_comm_account_id' => $accountId, 'confirm' => true,
+            'items' => [['record_type' => 'lead', 'record_id' => (int)$client->id, 'address' => $address, 'subject' => $subject, 'body_html' => '<p>Текст</p><p>{Отписаться}</p>']]]);
+        $id = (int)($made['items'][0]['draft_id'] ?? 0);
+        check($id > 0, 'A draft for "'.$subject.'": '.json_encode($made['items'] ?? $made, JSON_UNESCAPED_UNICODE));
+
+        return [$client, $id, $address];
+    };
+    $lettersOf = static fn(CmsLead $client) => (int)CmsCommMessage::find()->alias('m')
+        ->innerJoin(['l' => \skeeks\cms\communication\models\CmsCommLink::tableName()], 'l.cms_comm_message_id = m.id')
+        ->andWhere(['l.model_id' => (int)$client->id, 'm.direction' => CmsCommMessage::DIRECTION_OUT])->count('DISTINCT m.id');
+
+    // 8. Two sends of one draft at once (the owner and his leader, two keys): one letter, the second is refused.
+    [$raceClient, $raceDraft] = $makeDraft('Гонка');
+    $raceCheck = run($leader, 'cms_comm_draft_check', ['draft_id' => $raceDraft]);
+    $ownerToken = (new AiSend($employee, 'x', $siteId))->check($raceDraft)['check_token'] ?? '';
+    check($raceCheck['ok'] && $ownerToken === $raceCheck['check_token'], 'Both checks pass with the same token');
+    $ownerResult = null;
+    $armed = true;
+    // The owner's send runs while the leader's send has read the draft and not yet taken it.
+    $handler = static function ($event) use (&$armed, &$ownerResult, $raceDraft, $ownerToken, $employee, $siteId, $sfx) {
+        if ($armed && (int)$event->sender->id === $raceDraft) {
+            $armed = false;
+            $ownerResult = (new AiSend($employee, 'x', $siteId))->send($raceDraft, $ownerToken, 'race-owner-'.$sfx, true);
+        }
+    };
+    yii\base\Event::on(CmsCommDraft::class, yii\db\ActiveRecord::EVENT_AFTER_FIND, $handler);
+    try {
+        $leaderResult = run($leader, 'cms_comm_draft_send', ['draft_id' => $raceDraft, 'check_token' => $raceCheck['check_token'], 'idempotency_key' => 'race-leader-'.$sfx, 'confirm' => true]);
+    } finally {
+        yii\base\Event::off(CmsCommDraft::class, yii\db\ActiveRecord::EVENT_AFTER_FIND, $handler);
+    }
+    check(!$armed && ($ownerResult['sent'] ?? false), 'The owner\'s send went first: '.json_encode($ownerResult, JSON_UNESCAPED_UNICODE));
+    check($leaderResult['state'] === 'refused' && !CmsCommApiSend::find()->andWhere(['idempotency_key' => 'race-leader-'.$sfx])->exists(),
+        'The leader\'s send of the same draft is refused and takes no key: '.json_encode($leaderResult['problems'] ?? $leaderResult, JSON_UNESCAPED_UNICODE));
+    check($lettersOf($raceClient) === 1, 'One draft made one letter');
+    check(run($employee, 'cms_comm_draft_send', ['draft_id' => $raceDraft, 'check_token' => $ownerToken, 'idempotency_key' => 'race-owner-'.$sfx, 'confirm' => true])['repeated'],
+        'The first key still returns the first result');
+
+    // 9. A check token of another owner: after a hand-over the old token does not send.
+    [, $handDraft] = $makeDraft('Передача после проверки');
+    $handCheck = run($admin, 'cms_comm_draft_check', ['draft_id' => $handDraft]);
+    check($handCheck['ok'], 'The administrator\'s check of the employee\'s draft passes');
+    // The administrator gets the same signature: the text stays the same, only the owner changes.
+    CmsCommSignature::deleteAll(['cms_user_id' => (int)$admin->id, 'cms_comm_account_id' => $accountId]);
+    (new CmsCommSignature(['cms_user_id' => (int)$admin->id, 'cms_comm_account_id' => $accountId, 'body_html' => '<p>Менеджер Тест, студия</p>']))->save(false);
+    $bodyBefore = (string)CmsCommDraft::findOne($handDraft)->body_html;
+    (new DraftOwners($admin, $siteId))->transfer([CmsCommDraft::findOne($handDraft)], (int)$admin->id);
+    check((string)CmsCommDraft::findOne($handDraft)->body_html === $bodyBefore, 'The hand-over kept the text (the same signature)');
+    $stale = run($admin, 'cms_comm_draft_send', ['draft_id' => $handDraft, 'check_token' => $handCheck['check_token'], 'idempotency_key' => 'hand-'.$sfx]);
+    check($stale['state'] === 'refused' && $stale['problems'][0]['reason'] === AiSend::REASON_CHANGED, 'The token of the former owner is refused after a hand-over');
+
+    // 10. One day counter of API sends for letters and chats: a letter for the employee counts against him.
+    $chatCount = static function (CmsUser $user) use ($siteId) {
+        $chat = new \skeeks\cms\communication\mcp\ChatToolService($user, 'x', $siteId);
+        $method = new ReflectionMethod($chat, 'sentToday');
+        $method->setAccessible(true);
+
+        return (int)$method->invoke($chat);
+    };
+    check($chatCount($leader) === AiSend::sentTodayBy($siteId, (int)$leader->id) && AiSend::sentTodayBy($siteId, (int)$leader->id) === 0,
+        'The leader\'s chat counter is the letters\' one: nothing of the employee\'s letters');
+    check($chatCount($employee) === AiSend::sentTodayBy($siteId, (int)$employee->id) && $chatCount($employee) === 2,
+        'The employee\'s counter has his two letters, whoever sent them, in chats too');
+
+    // 11. The rights to act on the client are the owner's, not the caller's.
+    $company = new \skeeks\cms\models\CmsCompany(['name' => $mark.' компания']);
+    $company->save(false);
+    \skeeks\cms\models\CmsCompany2manager::deleteAll(['cms_company_id' => (int)$company->id]);
+    $link = new \skeeks\cms\models\CmsCompany2manager(['cms_company_id' => (int)$company->id, 'cms_user_id' => (int)$employee->id]);
+    $link->save(false);
+    \skeeks\cms\models\CmsCompany2manager::updateAll(['access_level' => \skeeks\cms\crm\CrmAccess::LEVEL_DEAL, 'is_main' => 0],
+        ['cms_company_id' => (int)$company->id, 'cms_user_id' => (int)$employee->id]);
+    (new \skeeks\cms\models\CmsCompanyEmail(['cms_company_id' => (int)$company->id, 'value' => 'test-draft-owners-company@skeeks.com']))->save(false);
+    $companyDraft = new CmsCommDraft(['cms_site_id' => $siteId, 'cms_user_id' => (int)$employee->id, 'cms_comm_account_id' => $accountId,
+        'to_list' => 'test-draft-owners-company@skeeks.com', 'subject' => 'Компании', 'body_html' => '<p>Текст</p>', 'purpose' => 'advertising',
+        'cms_comm_topic_id' => (int)$topic->id, 'context_model_code' => (new \skeeks\cms\models\CmsCompany())->skeeksModelCode, 'context_model_id' => (int)$company->id]);
+    $companyDraft->save(false);
+    $ownLead = static fn(array $result) => in_array(\skeeks\cms\crm\CrmAccess::OWN_LEAD_REQUIRED, array_column($result['problems'] ?? [], 'message'), true);
+    if (\skeeks\cms\crm\CrmAccess::levelsReady()) {
+        check($ownLead(run($admin, 'cms_comm_draft_check', ['draft_id' => (int)$companyDraft->id])),
+            'The administrator cannot write to a company for an employee who works with it only through his deals');
+        \skeeks\cms\models\CmsCompany2manager::updateAll(['access_level' => \skeeks\cms\crm\CrmAccess::LEVEL_FULL],
+            ['cms_company_id' => (int)$company->id, 'cms_user_id' => (int)$employee->id]);
+        check(!$ownLead(run($admin, 'cms_comm_draft_check', ['draft_id' => (int)$companyDraft->id])), 'With the full level of the employee it may');
+    }
+
+    // 12. Hand-over through the API: a dry run, the change, refusals per draft.
+    [, $apiDraft] = $makeDraft('Передача через API');
+    $dry = run($leader, 'cms_comm_draft_transfer', ['draft_ids' => [$apiDraft], 'cms_user_id' => (int)$leader->id]);
+    check($dry['requires_confirmation'] && $dry['items'][0]['status'] === 'ready' && (int)CmsCommDraft::findOne($apiDraft)->cms_user_id === (int)$employee->id,
+        'Without confirm the hand-over is only checked');
+    $moved = run($leader, 'cms_comm_draft_transfer', ['draft_ids' => [$apiDraft, 999999999], 'cms_user_id' => (int)$leader->id, 'confirm' => true]);
+    check($moved['items'][0]['status'] === 'transferred' && $moved['items'][1]['reason'] === 'not_found'
+        && (int)CmsCommDraft::findOne($apiDraft)->cms_user_id === (int)$leader->id, 'The leader takes the draft through the API; an unknown one is refused in its row');
+    check(run($leader, 'cms_comm_draft_transfer', ['draft_ids' => [$apiDraft], 'cms_user_id' => (int)$otherEmployee->id, 'confirm' => true])['reason'] === AiSend::REASON_NOT_OWN,
+        'Not to an employee of another department');
+    check(run($otherHead, 'cms_comm_draft_transfer', ['draft_ids' => [$apiDraft], 'cms_user_id' => (int)$otherHead->id, 'confirm' => true])['items'][0]['reason'] === AiSend::REASON_NOT_OWN,
+        'Another head cannot take it');
+
+    // 13. A draft without a mailbox of its owner is not given another's on a change.
+    $noBox = run($admin, 'cms_comm_draft_update', ['draft_id' => $apiDraft, 'subject' => 'Новая тема', 'confirm' => true]);
+    $apiRow = CmsCommDraft::findOne($apiDraft);
+    check($noBox['reason'] === 'no_mailbox' && (int)$apiRow->cms_user_id === (int)$leader->id && $apiRow->cms_comm_account_id === null
+        && $apiRow->subject === 'Передача через API', 'The leader\'s draft without a mailbox stays as it is: no_mailbox');
+
+    // 14. Test mode by the caller's role: an administrator changes an employee's draft in test mode.
+    [$testClient, $testDraft, $testAddress] = $makeDraft('Тестовый режим');
+    Yii::$app->communication->aiTestRecipients = ['lead:'.(int)$testClient->id => [$testAddress]];
+    $testUpdate = run($admin, 'cms_comm_draft_update', ['draft_id' => $testDraft, 'subject' => 'Тестовый режим 2', 'test_mode' => true]);
+    Yii::$app->communication->aiTestRecipients = [];
+    check(($testUpdate['success'] ?? false) && ($testUpdate['test_mode'] ?? false), 'The administrator\'s test mode works on the employee\'s draft: '.json_encode($testUpdate, JSON_UNESCAPED_UNICODE));
+
+    // 15. The day limit of preparing on a change: a draft not yet counted for the caller today takes a place.
+    [, $limitDraft] = $makeDraft('Лимит');
+    $leaderActions = new \skeeks\cms\communication\services\AiActions($leader, 'x', $siteId);
+    Yii::$app->communication->aiLimits = ['perDay' => $leaderActions->usedToday()];
+    $overLimit = run($leader, 'cms_comm_draft_update', ['draft_id' => $limitDraft, 'subject' => 'Сверх лимита', 'confirm' => true]);
+    check($overLimit['reason'] === 'day_limit' && CmsCommDraft::findOne($limitDraft)->subject === 'Лимит', 'Over the limit the leader cannot take an employee\'s draft');
+    Yii::$app->communication->aiLimits = [];
+    check(run($leader, 'cms_comm_draft_update', ['draft_id' => $limitDraft, 'subject' => 'В лимите', 'confirm' => true])['saved'], 'Within the limit he can');
+    Yii::$app->communication->aiLimits = ['perDay' => $leaderActions->usedToday()];
+    check(run($leader, 'cms_comm_draft_update', ['draft_id' => $limitDraft, 'subject' => 'Снова', 'confirm' => true])['saved'], 'A draft counted for him today changes again without a new place');
+    Yii::$app->communication->aiLimits = [];
+
+    // 16. Signatures on a hand-over: the block is replaced whatever the former signature is now; added when there was none.
+    $sigDraft = new CmsCommDraft(['cms_site_id' => $siteId, 'cms_user_id' => (int)$employee->id, 'cms_comm_account_id' => $accountId, 'subject' => 'Старая подпись',
+        'body_html' => '<p>Текст</p><div><br></div>'.MailSignatures::block('<p>Подпись до изменения настроек</p>')]);
+    $sigDraft->save(false);
+    $adminOwners->transfer([$sigDraft], (int)$otherEmployee->id);
+    $sigDraft->refresh();
+    check(mb_strpos((string)$sigDraft->body_html, 'Менеджер Б') !== false && mb_strpos((string)$sigDraft->body_html, 'до изменения') === false
+        && mb_strpos((string)$sigDraft->body_html, 'Текст') !== false, 'A signature changed in the settings since is replaced too: '.$sigDraft->body_html);
+    CmsCommSignature::deleteAll(['cms_user_id' => (int)$employee->id]);
+    $plainDraft = new CmsCommDraft(['cms_site_id' => $siteId, 'cms_user_id' => (int)$employee->id, 'cms_comm_account_id' => $accountId, 'subject' => 'Без подписи', 'body_html' => '<p>Текст</p>']);
+    $plainDraft->save(false);
+    $adminOwners->transfer([$plainDraft], (int)$otherEmployee->id);
+    $plainDraft->refresh();
+    check(mb_strpos((string)$plainDraft->body_html, 'Менеджер Б') !== false, 'Without a former signature the new owner\'s one is added');
+
+    // 17. An inactive employee: his drafts stay available to the administrator; he receives none.
+    $leftDraft = new CmsCommDraft(['cms_site_id' => $siteId, 'cms_user_id' => (int)$otherEmployee->id, 'cms_comm_account_id' => $accountId, 'subject' => 'Уволился', 'body_html' => '<p>Т</p>']);
+    $leftDraft->save(false);
+    CmsUser::updateAll(['is_active' => 0], ['id' => (int)$otherEmployee->id]);
+    $afterLeave = new DraftOwners($admin, $siteId);
+    check($afterLeave->find((int)$leftDraft->id) && isset($afterLeave->employees()[(int)$otherEmployee->id]) && !isset($afterLeave->targets()[(int)$otherEmployee->id]),
+        'An inactive employee\'s drafts stay in the switch; he is not offered for a hand-over');
+    rejects(fn() => $afterLeave->transfer([$plainDraft], (int)$otherEmployee->id), 'работающему', 'A draft is not handed to an inactive employee');
+    check($afterLeave->transfer([$leftDraft], (int)$admin->id) === 1, 'The administrator takes the draft of the employee who left');
+    CmsUser::updateAll(['is_active' => 1], ['id' => (int)$otherEmployee->id]);
+
+    // 18. The mail screen: the window of an employee's draft acts as the owner and only with the draft's own links.
+    Yii::$app->user->setIdentity($leader);
+    \skeeks\cms\crm\CrmAccess::instance()->resetMemo();
+    $controller = Yii::$app->createController('cmsCommunication/admin-cms-comm-message')[0];
+    $request = Yii::$app->request;
+    $post = static function (array $body) use ($request) {
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $request->setBodyParams($body);
+    };
+    [$uiClient, $uiDraft, $uiAddress] = $makeDraft('Окно руководителя');
+    Yii::$app->user->setIdentity($leader);
+    \skeeks\cms\crm\CrmAccess::instance()->resetMemo();
+    // A letter of the employee's mailbox the leader cannot read.
+    $hidden = CmsCommMessage::find()->cmsSite($siteId)->forManager($employee)
+        ->andWhere(['not in', CmsCommMessage::tableName().'.id', CmsCommMessage::find()->cmsSite($siteId)->forManager($leader)->select(CmsCommMessage::tableName().'.id')])
+        ->orderBy([CmsCommMessage::tableName().'.id' => SORT_DESC])->one();
+    $form = ['draft_id' => $uiDraft, 'cms_comm_account_id' => $accountId, 'to' => $uiAddress, 'subject' => 'Окно руководителя', 'body_html' => '<p>Текст</p>'];
+    if ($hidden) {
+        $post(['ComposeForm' => $form + ['reply_to_message_id' => (int)$hidden->id, 'forward_message_id' => (int)$hidden->id], 'draft_owner_id' => (int)$employee->id]);
+        $saved = $controller->saveDraft();
+        $uiRow = CmsCommDraft::findOne($uiDraft);
+        check($saved['success'] && $uiRow->reply_to_message_id === null && $uiRow->forward_message_id === null,
+            'The leader cannot link the employee\'s draft to a letter he cannot read: '.json_encode([$saved, $uiRow->reply_to_message_id, $uiRow->forward_message_id]));
+    }
+    $request->setQueryParams(['q' => 'test-draft-owners', 'draft_id' => $uiDraft]);
+    check($controller->contacts()['items'] === (new MailComposeService($employee, $siteId))->suggestRecipients('test-draft-owners'),
+        'Recipients are suggested as the owner of the draft');
+    // The window opened for the employee, the draft was handed to the leader meanwhile: no save, no send.
+    $adminOwners->transfer([CmsCommDraft::findOne($uiDraft)], (int)$leader->id);
+    $post(['ComposeForm' => $form, 'draft_owner_id' => (int)$employee->id]);
+    $stale = $controller->saveDraft();
+    check(!$stale['success'] && !empty($stale['moved']), 'A window of the former owner does not save');
+    $letters = (int)CmsCommMessage::find()->count();
+    $staleSend = $controller->compose();
+    check(!$staleSend['success'] && (int)CmsCommMessage::find()->count() === $letters, 'A window of the former owner does not send');
+    // Handed to an employee the leader does not manage: the window sends nothing, not even as the leader.
+    $adminOwners->transfer([CmsCommDraft::findOne($uiDraft)], (int)$otherHead->id);
+    $post(['ComposeForm' => $form, 'draft_owner_id' => (int)$leader->id]);
+    $goneSend = $controller->compose();
+    check(!$goneSend['success'] && (int)CmsCommMessage::find()->count() === $letters, 'A draft no longer available sends nothing');
+    // The window of an available employee's draft sends his letter "по поручению".
+    [$sendClient, $sendDraft, $sendAddress] = $makeDraft('Отправка из окна');
+    Yii::$app->user->setIdentity($leader);
+    $post(['ComposeForm' => ['draft_id' => $sendDraft, 'cms_comm_account_id' => $accountId, 'to' => $sendAddress, 'subject' => 'Отправка из окна',
+        'body_html' => (string)CmsCommDraft::findOne($sendDraft)->body_html], 'draft_owner_id' => (int)$employee->id]);
+    $sentUi = $controller->compose();
+    $uiMessage = CmsCommMessage::findOne((int)($sentUi['id'] ?? 0));
+    check($sentUi['success'] && $uiMessage && (int)$uiMessage->sent_by_user_id === (int)$employee->id && (int)$uiMessage->acted_by_user_id === (int)$leader->id
+        && !CmsCommDraft::find()->andWhere(['id' => $sendDraft])->exists(), 'The window sends the employee\'s letter for him: '.json_encode($sentUi, JSON_UNESCAPED_UNICODE));
 } finally {
     $tx->rollBack();
     \skeeks\cms\communication\components\AiApiSettings::reset();

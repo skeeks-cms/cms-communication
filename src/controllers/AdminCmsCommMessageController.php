@@ -231,15 +231,21 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $this->requirePostJson();
         $draftId = (int)(\Yii::$app->request->post((new ComposeForm())->formName())['draft_id'] ?? 0);
         // A draft of an employee the user manages is saved as that employee's (his mailbox, his clients).
-        [$service, $drafts, $draft] = $this->draftContext($draftId);
+        [$service, $drafts, $draft, $draftOwner] = $this->draftContext($draftId);
         if ($draftId && !$draft) {
             return ['success' => false, 'gone' => true];
+        }
+        if ($moved = $this->movedError($draft)) {
+            return ['success' => false, 'moved' => true, 'message' => $moved];
         }
         if (!$service->sendableAccounts()) {
             throw new \yii\web\ForbiddenHttpException('Вам нельзя отправлять письма.');
         }
         $form = new ComposeForm(['service' => $service]);
         $form->load(\Yii::$app->request->post());
+        if ($draftOwner) {
+            self::pinDraftLinks($form, $draft);
+        }
         $draft = $drafts->save($form, $service, $draft);
 
         return [
@@ -326,6 +332,43 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $siteId = (int)\Yii::$app->skeeks->site->id;
 
         return [new MailComposeService($owner, $siteId), new MailDrafts($owner, $siteId), $draft, $owner];
+    }
+
+    /**
+     * The window was opened for another owner of this draft (it was handed over
+     * meanwhile): it must be opened again — never saved or sent as the letter of
+     * whoever holds it now. The form posts the owner it was opened for
+     * (draft_owner_id); a form without it is trusted only with an own draft.
+     */
+    private function movedError(?\skeeks\cms\communication\models\CmsCommDraft $draft): ?string
+    {
+        if (!$draft) {
+            return null;
+        }
+        $posted = \Yii::$app->request->post('draft_owner_id');
+        $expected = $posted !== null && $posted !== '' ? (int)$posted : (int)\Yii::$app->user->id;
+        if ((int)$draft->cms_user_id === $expected) {
+            return null;
+        }
+        $owner = DraftOwners::owner($draft);
+
+        return 'Черновик передан сотруднику '.($owner ? $owner->shortDisplayName : '№'.$draft->cms_user_id).': откройте его заново из «Черновиков».';
+    }
+
+    /**
+     * A draft of another employee keeps the letters and the card it was written for: the
+     * answered and forwarded letter, its attachments and the client come only from the stored
+     * draft, never from the request — the leader cannot reach the employee's letters or cards
+     * through it.
+     */
+    private static function pinDraftLinks(ComposeForm $form, \skeeks\cms\communication\models\CmsCommDraft $draft): void
+    {
+        $form->reply_to_message_id = $draft->reply_to_message_id;
+        $form->forward_message_id = $draft->forward_message_id;
+        $form->reply_all = (int)$draft->is_reply_all;
+        $form->context_model_code = (string)$draft->context_model_code;
+        $form->context_model_id = $draft->context_model_id;
+        $form->file_ids = array_values(array_intersect(array_map('intval', (array)$form->file_ids), $draft->getFileIds()));
     }
 
     /**
@@ -511,7 +554,10 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     {
         \Yii::$app->response->format = Response::FORMAT_JSON;
 
-        return ['items' => $this->composeService()->suggestRecipients(mb_substr((string)\Yii::$app->request->get('q', ''), 0, 100))];
+        // In the window of an employee's draft: the recipients the owner may write to.
+        [$service] = $this->draftContext((int)\Yii::$app->request->get('draft_id') ?: null);
+
+        return ['items' => $service->suggestRecipients(mb_substr((string)\Yii::$app->request->get('q', ''), 0, 100))];
     }
 
     /**
@@ -734,6 +780,7 @@ class AdminCmsCommMessageController extends BackendModelStandartController
                 'drafts' => $drafts,
                 'draftOwnerId' => $ownerId,
                 'draftEmployees' => $owners->hasOthers() ? $owners->employees() : [],
+                'draftTargets' => $owners->targets(),
                 'readIds' => [],
                 'hasMore' => false,
                 'canSend' => (bool)$this->composeService()->sendableAccounts(),
@@ -1055,6 +1102,19 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         [$service, $drafts, $ownerDraft, $draftOwner] = $this->draftContext($draftId ?: null);
         $form = new ComposeForm(['service' => $service]);
 
+        // A window of a draft sent, deleted, handed over or no longer available sends nothing:
+        // never a letter of whoever holds the draft now, never the user's own letter instead.
+        if ($request->isPost && $draftId && !$ownerDraft) {
+            \Yii::$app->response->format = Response::FORMAT_JSON;
+
+            return ['success' => false, 'errors' => ['to' => 'Черновик уже отправлен, удалён или больше вам недоступен: письмо не отправлено.']];
+        }
+        if ($request->isPost && ($moved = $this->movedError($ownerDraft))) {
+            \Yii::$app->response->format = Response::FORMAT_JSON;
+
+            return ['success' => false, 'errors' => ['to' => $moved]];
+        }
+
         // No mailbox that may send (own or shared, CmsCommAccountAccess::send_level): the window
         // explains it instead of the form, and nothing is sent.
         if (!$service->sendableAccounts()) {
@@ -1077,6 +1137,9 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         if ($request->isPost) {
             \Yii::$app->response->format = Response::FORMAT_JSON;
             $form->load($request->post());
+            if ($draftOwner) {
+                self::pinDraftLinks($form, $ownerDraft);
+            }
             // A draft prepared by AI: its mark and mailing topic go with the letter.
             $drafts->applyAiDraft($form);
             // The leader or administrator sends the employee's letter: "по поручению".
@@ -1084,15 +1147,31 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             if (!$form->validate()) {
                 return ['success' => false, 'errors' => $form->getFirstErrors()];
             }
+            $transaction = \Yii::$app->db->beginTransaction();
             try {
+                // The draft is taken for this letter: a send of the same draft elsewhere (the API, the owner's
+                // window) or a hand-over waits, then finds it gone; one draft never makes two letters.
+                $locked = $draftId ? MailDrafts::lock($draftId) : null;
+                if ($draftId && (!$locked || (int)$locked->cms_user_id !== (int)$ownerDraft->cms_user_id)) {
+                    $transaction->rollBack();
+
+                    return ['success' => false, 'errors' => ['to' => 'Черновик уже отправлен или передан другому сотруднику: письмо не отправлено.']];
+                }
                 $message = $service->queue($form);
+                // The letter is on its way: its draft goes. Files the letter took stay with the letter.
+                if ($locked) {
+                    MailDrafts::delete($locked);
+                }
+                $transaction->commit();
             } catch (SendException $e) {
+                $transaction->rollBack();
                 // A package refused its document ("Прикрепить из…"): nothing was sent.
                 return ['success' => false, 'errors' => $e->errors];
-            }
-            // The letter is on its way: its draft goes. Files the letter took stay with the letter.
-            if ($draft = $drafts->find((int)$form->draft_id)) {
-                MailDrafts::delete($draft);
+            } catch (\Throwable $e) {
+                if ($transaction->isActive) {
+                    $transaction->rollBack();
+                }
+                throw $e;
             }
 
             return ['success' => true, 'id' => (int)$message->id, 'message' => $draftOwner ? 'Письмо отправляется из ящика сотрудника '.$draftOwner->shortDisplayName : 'Письмо отправляется',
@@ -1124,9 +1203,11 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $owners = $this->draftOwners();
         $params = [
             'draftOwner' => $draftOwner,
-            // "Передать черновик": employees the user manages, but the current owner.
-            'transferTo' => $owners->hasOthers() && !$request->get('inline')
-                ? array_diff_key($owners->employees(), [(int)($draft ? $draft->cms_user_id : \Yii::$app->user->id) => true]) : [],
+            // Whose letter this window writes: a draft handed over meanwhile is refused (movedError()).
+            'draftOwnerId' => $draft ? (int)$draft->cms_user_id : (int)\Yii::$app->user->id,
+            // "Передать черновик": who may receive it (active employees the user manages, himself), but the current owner.
+            'transferTo' => count($owners->targets()) > 1 && !$request->get('inline')
+                ? array_diff_key($owners->targets(), [(int)($draft ? $draft->cms_user_id : \Yii::$app->user->id) => true]) : [],
             'uploads' => $uploads,
             'signatures' => $templates->signatures(),
             'templates' => $templates->templatesForForm(),
@@ -1211,10 +1292,12 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     {
         \Yii::$app->response->format = Response::FORMAT_JSON;
         $request = \Yii::$app->request;
-        $user = \Yii::$app->user->identity;
+        // In the window of an employee's draft: the documents the owner may send.
+        [$service] = $this->draftContext((int)$request->get('draft_id') ?: null);
+        $user = $service->getUser();
         if ($ref = (string)$request->get('ref')) {
             $form = new \skeeks\cms\communication\forms\ComposeForm(['sendables' => [$ref]]);
-            $item = $this->composeService()->formSendables($form)[0] ?? null;
+            $item = $service->formSendables($form)[0] ?? null;
             if (!$item) {
                 return ['success' => false, 'message' => 'Документ не найден или у вас нет к нему доступа.'];
             }
@@ -1228,7 +1311,7 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         }
         $record = null;
         if ($request->get('context_model_code') && $request->get('context_model_id')) {
-            $record = $this->composeService()->contextRecord((string)$request->get('context_model_code'), (int)$request->get('context_model_id'));
+            $record = $service->contextRecord((string)$request->get('context_model_code'), (int)$request->get('context_model_id'));
         }
         $items = $source->suggest($user, mb_substr(trim((string)$request->get('q')), 0, 100), $record, 20);
 

@@ -143,7 +143,9 @@ Sending through the API is `services\AiSend` only (scope
 of an employee the user manages (`services\DraftOwners` over the core
 `CmsUserQuery::managedBy()`; such a draft is checked and sent as its owner's,
 the letter records `acted_by_user_id`; the same service serves "Черновики" of
-the mail screen: the switch, delete and hand over), a
+the mail screen: the switch, delete and hand over; a send locks the draft row
+(`MailDrafts::lock()`), a window of another employee's draft takes its letter
+links from the stored draft and refuses when the draft moved), a
 check with no side effects (the letter form plus the API rules) whose
 `check_token` the send recomputes, an idempotency key stored in
 `cms_comm_api_send` inside the transaction of `MailComposeService::queue()`.

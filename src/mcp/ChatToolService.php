@@ -472,11 +472,8 @@ class ChatToolService
     /** Sends of the user through the API today, letters and chat messages together. */
     private function sentToday(): int
     {
-        $tz = new \DateTimeZone(\Yii::$app->formatter->timeZone ?: date_default_timezone_get());
-
-        return (int)CmsCommApiSend::find()->andWhere(['cms_site_id' => $this->siteId, 'cms_user_id' => (int)$this->user->id])
-            ->andWhere(['not', ['cms_comm_message_id' => null]])
-            ->andWhere(['>=', 'created_at', (new \DateTime('today', $tz))->getTimestamp()])->count();
+        // One counter with letters: a letter sent for an employee counts against him, not against his leader.
+        return \skeeks\cms\communication\services\AiSend::sentTodayBy($this->siteId, (int)$this->user->id);
     }
 
     private function context(array $a): CrmReadContext

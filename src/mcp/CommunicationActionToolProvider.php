@@ -132,6 +132,15 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                 .'Без confirm=true — только проверка. Пример: {"draft_id":43,"subject":"Новая тема","confirm":true}.',
                 'cms.communication.write', [$this, 'draftUpdate'], $this->object(['draft_id' => ['type' => 'integer'], 'subject' => ['type' => 'string'], 'body_html' => ['type' => 'string'],
                     'address' => ['type' => 'string'], 'cms_comm_topic_id' => ['type' => ['integer', 'null']], 'offer' => ['type' => 'string']] + $purpose + $testMode + $confirm, ['draft_id'])),
+            $this->tool('cms_comm_draft_transfer',
+                'Передать черновики другому сотруднику: себе или работающему сотруднику, которым вы руководите по отделам (администратор — любому). '
+                .'Черновики — ваши или доступных сотрудников (cms_comm_draft_list). Меняется только владелец: письмо уйдёт из его ящика (прежнего, если новый владелец может с него '
+                .'отправлять, иначе из его ящика по умолчанию) и с его подписью вместо прежней. Отказ по строке: not_found, not_own. Перед отправкой — новая cms_comm_draft_check. '
+                .'Без confirm=true — только проверка. Пример: {"draft_ids":[43,44],"cms_user_id":12,"confirm":true}.',
+                'cms.communication.write', [$this, 'draftTransfer'], $this->object([
+                    'draft_ids' => ['type' => 'array', 'minItems' => 1, 'maxItems' => 100, 'items' => ['type' => 'integer']],
+                    'cms_user_id' => ['type' => 'integer', 'description' => 'Кому: вы или сотрудник из employees cms_comm_draft_list.'],
+                ] + $confirm, ['draft_ids', 'cms_user_id'])),
             $this->tool('cms_comm_draft_attachment_add',
                 'Добавить к черновику (вашему или сотрудника, которым вы руководите) файл, загруженный вами через cms_storage_file_upload: вложение или (inline=true) картинку в тексте на месте «{Картинка}» или в конце. '
                 .'Проверяется владелец файла, фактический тип по содержимому (PNG, JPEG, GIF, WEBP, PDF; SVG, HTML, архивы и программы — нет), размер и количество. '
@@ -336,24 +345,35 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
      * A draft of the user or of an employee he manages, with the actions of its owner.
      *
      * @return array [AiActions of the owner (the mark and limits of the user), CmsCommDraft, CmsUser owner]
-     * @throws \DomainException not found or not available (not_own)
+     * @throws \skeeks\cms\communication\services\AiRefusal not_found or not_own (refused() makes the answer)
      */
     private function draftOf(int $draftId): array
     {
         $user = $this->user();
-        $draft = (new DraftOwners($user))->find($draftId);
+        $owners = new DraftOwners($user);
+        $draft = $owners->find($draftId);
         $owner = $draft ? DraftOwners::owner($draft) : null;
         if (!$draft || !$owner) {
-            $other = \skeeks\cms\communication\models\CmsCommDraft::find()->andWhere(['id' => $draftId, 'cms_site_id' => (int)\Yii::$app->skeeks->site->id])->one();
-            throw new \DomainException($other ? AiSend::notOwnMessage($other) : 'Черновик не найден: он отправлен, удалён или не существует.');
+            $refusal = $owners->refusal($draftId);
+            throw new \skeeks\cms\communication\services\AiRefusal($refusal['reason'], $refusal['message']);
         }
 
         return [new AiActions($owner, self::clientName(), null, $user), $draft, $owner];
     }
 
+    /** One refusal of every draft tool: success=false, a stable reason (not_found, not_own…), a message for people. */
+    private static function refused(\skeeks\cms\communication\services\AiRefusal $e): array
+    {
+        return ['success' => false, 'reason' => $e->reason, 'message' => $e->getMessage()];
+    }
+
     public function draftGet(array $arguments): array
     {
-        [, $draft, $owner] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+        try {
+            [, $draft, $owner] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+        } catch (\skeeks\cms\communication\services\AiRefusal $e) {
+            return self::refused($e);
+        }
         $account = $draft->account;
         $record = $draft->context_model_code && $draft->context_model_id
             ? (new \skeeks\cms\communication\services\MailComposeService($owner))->contextRecord((string)$draft->context_model_code, (int)$draft->context_model_id) : null;
@@ -386,9 +406,64 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
         ];
     }
 
+    /** "Передать" of the mail screen through the API: DraftOwners::transfer(), a row per draft. */
+    public function draftTransfer(array $arguments): array
+    {
+        $user = $this->user();
+        $owners = new DraftOwners($user);
+        $apply = self::confirmed($arguments);
+        $toId = (int)($arguments['cms_user_id'] ?? 0);
+        $ids = array_values(array_unique(array_filter(array_map('intval', (array)($arguments['draft_ids'] ?? [])))));
+        if (!$ids) {
+            return ['success' => false, 'reason' => AiActions::REASON_INVALID, 'message' => 'Передайте draft_ids — номера черновиков.'];
+        }
+        $targets = array_map(static fn($u) => ['id' => (int)$u->id, 'name' => (string)$u->shortDisplayName], array_values($owners->targets()));
+        if (!$owners->canReceive($toId)) {
+            return ['success' => false, 'reason' => AiSend::REASON_NOT_OWN, 'targets' => $targets,
+                'message' => 'Передать черновик можно только себе или работающему сотруднику, которым вы руководите (targets).'];
+        }
+        $to = \skeeks\cms\models\CmsUser::findOne($toId);
+        $items = [];
+        $drafts = [];
+        foreach ($ids as $id) {
+            $draft = $owners->find($id);
+            if (!$draft) {
+                $items[$id] = ['draft_id' => $id, 'status' => 'refused'] + $owners->refusal($id);
+                continue;
+            }
+            $drafts[] = $draft;
+            $items[$id] = ['draft_id' => $id, 'from' => (int)$draft->cms_user_id,
+                'status' => (int)$draft->cms_user_id === $toId ? 'unchanged' : ($apply ? 'transferred' : 'ready')];
+        }
+        if ($apply && $drafts) {
+            try {
+                $owners->transfer($drafts, $toId);
+            } catch (\DomainException $e) {
+                return ['success' => false, 'reason' => AiSend::REASON_NOT_OWN, 'message' => $e->getMessage()];
+            }
+            // A draft sent or handed over meanwhile did not move.
+            foreach ($drafts as $draft) {
+                if ($items[(int)$draft->id]['status'] === 'transferred'
+                    && !\skeeks\cms\communication\models\CmsCommDraft::find()->andWhere(['id' => (int)$draft->id, 'cms_user_id' => $toId])->exists()) {
+                    $items[(int)$draft->id] = ['draft_id' => (int)$draft->id, 'status' => 'refused'] + $owners->refusal((int)$draft->id);
+                }
+            }
+        }
+        $this->log('draft_transfer', ['applied' => $apply, 'to' => $toId, 'ids' => $ids,
+            'reasons' => array_values(array_filter(array_column($items, 'reason')))]);
+
+        return ['success' => true, 'saved' => $apply, 'requires_confirmation' => !$apply,
+            'to' => ['id' => $toId, 'name' => $to ? (string)$to->shortDisplayName : null], 'items' => array_values($items),
+            'note' => 'Черновик нового владельца уходит из его ящика с его подписью: перед отправкой снова cms_comm_draft_check.'];
+    }
+
     public function draftUpdate(array $arguments): array
     {
-        [$actions] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+        try {
+            [$actions] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+        } catch (\skeeks\cms\communication\services\AiRefusal $e) {
+            return self::refused($e);
+        }
 
         return $this->run('draft_update', $arguments, static fn(AiActions $ai, bool $apply) => $ai->updateDraft($arguments, $apply), $actions);
     }
@@ -396,7 +471,11 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
     public function attachmentAdd(array $arguments): array
     {
         $user = $this->user();
-        [, $draft] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+        try {
+            [, $draft] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+        } catch (\skeeks\cms\communication\services\AiRefusal $e) {
+            return self::refused($e);
+        }
         // The file is the user's own upload, whoever owns the draft.
         $files = new \skeeks\cms\communication\services\AiDraftFiles($user, (int)\Yii::$app->skeeks->site->id);
         try {
@@ -413,7 +492,11 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
     public function attachmentRemove(array $arguments): array
     {
         $user = $this->user();
-        [, $draft] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+        try {
+            [, $draft] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+        } catch (\skeeks\cms\communication\services\AiRefusal $e) {
+            return self::refused($e);
+        }
         $removed = (new \skeeks\cms\communication\services\AiDraftFiles($user, (int)\Yii::$app->skeeks->site->id))->remove($draft, (int)($arguments['attachment_id'] ?? 0));
         $this->log('draft_attachment_remove', ['draft_id' => (int)$draft->id, 'attachment_id' => (int)($arguments['attachment_id'] ?? 0), 'removed' => $removed]);
 

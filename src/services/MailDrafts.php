@@ -292,6 +292,16 @@ class MailDrafts
         return $upload['token'];
     }
 
+    /**
+     * The draft row locked until the end of the current transaction (SELECT … FOR UPDATE), read anew;
+     * null when it is gone. A send and a hand-over of one draft take it in turn: the second sees the
+     * draft sent (gone) or with its new owner.
+     */
+    public static function lock(int $draftId): ?CmsCommDraft
+    {
+        return CmsCommDraft::findBySql('SELECT * FROM '.CmsCommDraft::tableName().' WHERE id = :id FOR UPDATE', [':id' => $draftId])->one();
+    }
+
     /** Removes a draft with its files (sent, deleted by hand or expired). */
     public static function delete(CmsCommDraft $draft): void
     {

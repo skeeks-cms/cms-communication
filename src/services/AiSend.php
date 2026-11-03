@@ -243,7 +243,7 @@ class AiSend
                 : 'Отправка через API ограничена нулём писем в день («Настройки почты» → «Работа ИИ через API»).');
         }
 
-        return ['form' => $form, 'draft' => $draft, 'owner' => $owner, 'record' => $record, 'problems' => $problems, 'warnings' => $warnings, 'purpose' => $purpose,
+        return ['form' => $form, 'draft' => $draft, 'state' => self::state($draft), 'owner' => $owner, 'record' => $record, 'problems' => $problems, 'warnings' => $warnings, 'purpose' => $purpose,
             'files' => $files, 'token' => $this->token($draft, $form, $purpose, $testMode), 'sendables' => $sendables];
     }
 
@@ -261,7 +261,8 @@ class AiSend
         $files = array_map(static fn($f) => [(string)$f->content_hash, (int)$f->is_inline, (string)$f->name], $draft->getFiles()->all());
 
         return hash('sha256', json_encode([
-            (int)$draft->id, (int)$form->cms_comm_account_id,
+            // The owner too: a draft handed over is another employee's letter (his mailbox rights, limit, signature).
+            (int)$draft->id, (int)$draft->cms_user_id, (int)$form->cms_comm_account_id,
             $form->getToAddresses(), $form->getCcAddresses(), $form->getBccAddresses(),
             trim((string)$form->subject), preg_replace('/\s+/u', ' ', trim($html)),
             $sendables, (string)$purpose, (int)$form->cms_comm_topic_id, (string)$form->context_model_code, (int)$form->context_model_id,
@@ -377,6 +378,15 @@ class AiSend
         $row = null;
         try {
             CmsCommApiSend::getDb()->transaction(function () use ($prepared, $key, $hash, $draftId, $testMode, $campaign, &$row) {
+                // The draft is taken for this send: a parallel send (the owner and his leader, two keys) or a
+                // hand-over waits here and then finds it sent or changed; nothing is queued twice.
+                $locked = MailDrafts::lock($draftId);
+                if (!$locked) {
+                    throw new AiRefusal(AiActions::REASON_NOT_FOUND, 'Черновик уже отправлен или удалён: второе письмо не отправлено.');
+                }
+                if (self::state($locked) !== $prepared['state'] || !(new DraftOwners($this->user, $this->siteId))->canManage((int)$locked->cms_user_id)) {
+                    throw new AiRefusal(self::REASON_CHANGED, 'Черновик изменился, передан другому сотруднику или стал вам недоступен во время отправки.');
+                }
                 $row = new CmsCommApiSend([
                     'cms_site_id' => $this->siteId,
                     'cms_user_id' => (int)$this->user->id,
@@ -405,6 +415,9 @@ class AiSend
             return ['sent' => false, 'state' => 'refused', 'repeated' => false,
                 'problems' => array_map(static fn($m) => ['reason' => AiActions::REASON_OFFER, 'message' => (string)$m], array_values($e->errors)),
                 'next' => 'Ничего не отправлено: документ отказал в отправке.'];
+        } catch (AiRefusal $e) {
+            return ['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => [['reason' => $e->reason, 'message' => $e->getMessage()]],
+                'next' => 'Ничего не отправлено. Проверьте черновик заново (cms_comm_draft_check) или узнайте результат первой отправки (cms_comm_send_status).'];
         } catch (\yii\db\IntegrityException $e) {
             // The same key is being sent by a parallel request: its result is the answer.
             $existing = $this->byKey($key);
@@ -488,13 +501,29 @@ class AiSend
      */
     public function sentToday(?int $senderId = null): int
     {
-        $tz = new \DateTimeZone(\Yii::$app->formatter->timeZone ?: date_default_timezone_get());
-        $senderId = $senderId ?? (int)$this->user->id;
+        return self::sentTodayBy($this->siteId, $senderId ?? (int)$this->user->id);
+    }
 
-        return (int)CmsCommApiSend::find()->andWhere(['cms_site_id' => $this->siteId])
+    /**
+     * The one day counter of API sends of an employee (letters and chat messages, ChatToolService too):
+     * rows whose owner is he (sender_user_id), or — rows without it (chats, sends before 1.21.0) — he sent.
+     */
+    public static function sentTodayBy(int $siteId, int $senderId): int
+    {
+        $tz = new \DateTimeZone(\Yii::$app->formatter->timeZone ?: date_default_timezone_get());
+
+        return (int)CmsCommApiSend::find()->andWhere(['cms_site_id' => $siteId])
             ->andWhere(['or', ['sender_user_id' => $senderId], ['and', ['sender_user_id' => null], ['cms_user_id' => $senderId]]])
             ->andWhere(['not', ['cms_comm_message_id' => null]])
             ->andWhere(['>=', 'created_at', (new \DateTime('today', $tz))->getTimestamp()])->count();
+    }
+
+    /** What of the stored draft a send relies on: owner, mailbox, last change, files. */
+    private static function state(CmsCommDraft $draft): string
+    {
+        $files = array_map(static fn($f) => [(int)$f->id, (string)$f->content_hash, (int)$f->is_inline], $draft->getFiles()->orderBy(['id' => SORT_ASC])->all());
+
+        return hash('sha256', json_encode([(int)$draft->cms_user_id, (int)$draft->cms_comm_account_id, (int)$draft->updated_at, $files]));
     }
 
     /** Why a draft of another employee is not the user's: whose it is and who may work with it. */

@@ -166,20 +166,26 @@ class ComposeForm extends Model
     public function validateContext($attribute)
     {
         $access = \skeeks\cms\crm\CrmAccess::class;
-        if (!method_exists($access, 'clientActionError')) {
+        if (!method_exists($access, 'clientActionError') || !method_exists($access, 'actingWorker')) {
+            return;
+        }
+        // An employee acts now (a web or API session; the console is not limited). The letter is written as
+        // the owner of the form — the employee himself, or the owner of a draft his leader sends: his rights decide.
+        $acting = $access::actingWorker();
+        $worker = $acting && $this->service ? $this->service->getUser() : $acting;
+        if (!$worker) {
             return;
         }
         $record = $this->record instanceof \yii\db\ActiveRecord ? $this->record
             : ($this->service && $this->context_model_code && $this->context_model_id
                 ? $this->service->contextRecord((string)$this->context_model_code, (int)$this->context_model_id) : null);
+        $crm = $access::instance();
         $error = null;
-        if ($record instanceof \skeeks\cms\models\CmsCompany) {
-            $error = $access::instance()->clientActionError((int)$record->id, null, null);
-        } elseif ($record instanceof \skeeks\cms\models\CmsUser && !$record->is_worker) {
-            $error = $access::instance()->clientActionError(null, (int)$record->id, null);
+        if ($record instanceof \skeeks\cms\models\CmsCompany || ($record instanceof \skeeks\cms\models\CmsUser && !$record->is_worker)) {
+            $error = $access::levelsReady() && !$crm->canActOnClient($worker, $record) ? $access::OWN_LEAD_REQUIRED : null;
         } elseif ($record instanceof \skeeks\cms\models\CmsLead) {
             // From a deal: who works on it, and a closed deal only for who acts on its client (LeadActions).
-            $error = \skeeks\cms\communication\services\LeadActions::actingError($record);
+            $error = \skeeks\cms\communication\services\LeadActions::error($worker, $record);
         }
         if ($error) {
             $this->addError($attribute, $error);

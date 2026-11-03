@@ -61,6 +61,8 @@ class AiActions
     public const LIMITS = ['perCall' => 20, 'perDay' => 100, 'recentDays' => 30, 'sendPerDay' => 20];
 
     private CmsUser $user;
+    /** Who calls: the OAuth user (the owner of the drafts, or his leader / an administrator). */
+    private int $actorId;
     private int $siteId;
     private array $mark;
 
@@ -75,7 +77,8 @@ class AiActions
     {
         $this->user = $user instanceof CmsUser ? $user : CmsUser::findOne((int)$user->id);
         $this->siteId = $siteId ?? (int)\Yii::$app->skeeks->site->id;
-        $this->mark = AiMark::make($clientName, (int)($actor ? $actor->id : $this->user->id));
+        $this->actorId = (int)($actor ? $actor->id : $this->user->id);
+        $this->mark = AiMark::make($clientName, $this->actorId);
     }
 
     /**
@@ -205,7 +208,8 @@ class AiActions
             $this->checkTestRecipient($record, $type, $address);
         }
 
-        if ($accountId) {
+        // A stored draft stays its owner's: never the mailbox of the responsible of the client (cms_comm_draft_update).
+        if ($accountId || $draft) {
             $owner = $this->user;
         } else {
             $responsible = Campaigns::responsibleOf($record);
@@ -344,6 +348,11 @@ class AiActions
         if (!$record) {
             throw new \DomainException('Черновик не привязан к клиенту CRM, которого вы видите: такой черновик правят в «Почте».');
         }
+        // The owner's own mailbox: a draft handed to an employee without one is not given somebody else's.
+        if (!$draft->cms_comm_account_id || !(new MailComposeService($this->user, $this->siteId))->canSendFrom((int)$draft->cms_comm_account_id)) {
+            return ['success' => false, 'saved' => false, 'reason' => self::REASON_NO_MAILBOX,
+                'message' => 'У владельца черновика '.$this->user->shortDisplayName.' нет ящика этого черновика, с которого он может отправлять: выберите ящик в «Почте» или передайте черновик сотруднику с ящиком.'];
+        }
         $refs = $draft->getSendableRefs();
         $item = [
             'record_type' => CrmRecords::typeOfCode(method_exists($record, 'getSkeeksModelCode') ? (string)$record->getSkeeksModelCode() : get_class($record)),
@@ -362,6 +371,14 @@ class AiActions
             $plan = $this->planDraft($item, $purpose, $topic, (int)$draft->cms_comm_account_id, $offer, $testMode, $draft);
         } catch (AiRefusal $e) {
             return ['success' => false, 'saved' => false, 'reason' => $e->reason, 'message' => $e->getMessage()];
+        }
+        // A change marks the draft as prepared today by the caller: it takes a place of his day limit,
+        // unless the draft is already counted for him today.
+        $since = (new \DateTime('today', new \DateTimeZone(\Yii::$app->formatter->timeZone ?: date_default_timezone_get())))->getTimestamp();
+        $counted = AiMark::of($draft) && (int)$draft->prepared_user_id === $this->actorId && (int)$draft->prepared_at >= $since;
+        if (!$counted && $this->usedToday() >= self::limits()['perDay']) {
+            return ['success' => false, 'saved' => false, 'reason' => self::REASON_DAY_LIMIT,
+                'message' => 'Дневной лимит ИИ исчерпан: не больше '.self::limits()['perDay'].' черновиков и получателей в день на сотрудника.'];
         }
         if ($apply) {
             $draft = $this->saveDraft($plan, $draft);
@@ -472,7 +489,8 @@ class AiActions
         if (empty($args['test_mode'])) {
             return false;
         }
-        if (!\Yii::$app->authManager || !\Yii::$app->authManager->checkAccess((int)$this->user->id, \skeeks\cms\rbac\CmsManager::PERMISSION_ROLE_ADMIN_ACCESS)) {
+        // The caller's role: an administrator changing an employee's draft, never the owner's role.
+        if (!\Yii::$app->authManager || !\Yii::$app->authManager->checkAccess($this->actorId, \skeeks\cms\rbac\CmsManager::PERMISSION_ROLE_ADMIN_ACCESS)) {
             throw new \DomainException('Тестовый режим доступен только администратору.');
         }
         if (!self::testRecipients()) {

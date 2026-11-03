@@ -43,6 +43,12 @@ class MailComposeService
         $this->addresses = new AddressBook();
     }
 
+    /** The employee the letter is written as: the session user, or the owner of a draft of an employee he manages. */
+    public function getUser(): User
+    {
+        return $this->user;
+    }
+
     /** @return CmsCommAccount[] active mailboxes with a connection the employee may send from */
     public function sendableAccounts(): array
     {

@@ -17,6 +17,7 @@
  * @var $drafts skeeks\cms\communication\models\CmsCommDraft[]|null the "Черновики" folder
  * @var $draftOwnerId int whose drafts are shown: the employee or one he manages
  * @var $draftEmployees skeeks\cms\models\CmsUser[] id => employee whose drafts he may see (himself first); empty — only his own
+ * @var $draftTargets skeeks\cms\models\CmsUser[] id => who may receive a draft ("Передать"): himself and active employees he manages
  * @var $assignee string filter: "", "me", "none" or an employee id
  * @var $linked string filter: "", "yes" (linked to the CRM), "no" (not sorted)
  * @var $assignees array id => name: other employees responsible for visible conversations
@@ -56,13 +57,14 @@ foreach ($labels as $l) {
 $drafts = $drafts ?? null;
 $draftOwnerId = (int)($draftOwnerId ?? \Yii::$app->user->id);
 $draftEmployees = $draftEmployees ?? [];
+$draftTargets = $draftTargets ?? [];
 if ($drafts !== null) {
     $listParams['owner'] = $draftOwnerId !== (int)\Yii::$app->user->id ? $draftOwnerId : null;
     $total = count($drafts);
 }
 // "Передать": employees the user manages, as options of the select (the shown owner has them already).
 $transferItems = ['' => 'Передать…'];
-foreach ($draftEmployees as $id => $employee) {
+foreach ($draftTargets as $id => $employee) {
     if ((int)$id !== $draftOwnerId) {
         $transferItems[(string)$id] = ((int)$id === (int)\Yii::$app->user->id ? 'Себе: ' : '').$employee->shortDisplayName;
     }
