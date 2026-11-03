@@ -26,7 +26,15 @@ use skeeks\cms\models\User;
 
 /**
  * Sending a personal letter through MCP/REST: only a saved draft of the
- * OAuth user, only after a check, only with an idempotency key.
+ * OAuth user or of an employee he manages (services\DraftOwners: his
+ * subordinates, every employee for an administrator), only after a check,
+ * only with an idempotency key.
+ *
+ * A draft of another employee is checked and sent as his: his letter form,
+ * mailbox rights, "own clients only", signature and day limit of API sends;
+ * the letter records the OAuth user as acted_by_user_id ("по поручению") and
+ * the CmsCommApiSend row keeps both (cms_user_id — the API user, his keys and
+ * status reads; sender_user_id — the owner of the draft).
  *
  * - check() reads the draft as the letter form of the mail screen does
  *   (MailDrafts::fill(), applyAiDraft(), ComposeForm::validate(): mailbox
@@ -84,9 +92,12 @@ class AiSend
         $prepared = $this->prepare($draftId, $testMode);
         $form = $prepared['form'];
         $problems = $prepared['problems'];
+        $owner = $prepared['owner'] ?? null;
         $result = [
             'ok' => !$problems,
-            'draft' => ['id' => $draftId, 'owner' => ['id' => (int)$this->user->id, 'name' => (string)$this->user->shortDisplayName]],
+            'draft' => ['id' => $draftId, 'owner' => $owner ? ['id' => (int)$owner->id, 'name' => (string)$owner->shortDisplayName] : null,
+                // A draft of an employee the user manages: it leaves from the employee's mailbox, "по поручению" of the user.
+                'acting_for' => $owner && (int)$owner->id !== (int)$this->user->id],
             'test_mode' => $testMode,
         ];
         if ($form) {
@@ -112,24 +123,24 @@ class AiSend
     private function prepare(int $draftId, bool $testMode = false): array
     {
         $problem = static fn(string $reason, string $message) => ['reason' => $reason, 'message' => $message];
-        $drafts = new MailDrafts($this->user, $this->siteId);
-        $draft = $drafts->find($draftId);
-        if (!$draft) {
+        $draft = (new DraftOwners($this->user, $this->siteId))->find($draftId);
+        $owner = $draft ? DraftOwners::owner($draft) : null;
+        if (!$draft || !$owner) {
             $other = CmsCommDraft::find()->andWhere(['id' => $draftId, 'cms_site_id' => $this->siteId])->one();
-            $owner = $other ? CmsUser::findOne((int)$other->cms_user_id) : null;
-            $message = $other
-                ? 'Черновик лежит в «Черновиках» сотрудника '.($owner ? $owner->shortDisplayName : '№'.$other->cms_user_id)
-                    .': отправить его может только он. Для отправки через API создайте черновик в своём ящике (cms_comm_draft_create с cms_comm_account_id).'
-                : 'Черновик не найден: он отправлен, удалён или не существует.';
+            $message = $other ? self::notOwnMessage($other) : 'Черновик не найден: он отправлен, удалён или не существует.';
 
             return ['form' => null, 'draft' => null, 'record' => null, 'problems' => [$problem($other ? self::REASON_NOT_OWN : AiActions::REASON_NOT_FOUND, $message)], 'token' => null];
         }
 
-        $service = new MailComposeService($this->user, $this->siteId);
+        // Everything as the owner of the draft: his mailbox, rights, clients and signature.
+        $drafts = new MailDrafts($owner, $this->siteId);
+        $service = new MailComposeService($owner, $this->siteId);
         $form = new ComposeForm(['service' => $service]);
         $drafts->fill($form, $draft);
         $form->cms_comm_account_id = $form->cms_comm_account_id ?: $service->defaultAccountId();
         $drafts->applyAiDraft($form);
+        $form->actedBy = (int)$owner->id !== (int)$this->user->id ? (int)$this->user->id : null;
+        $whose = (int)$owner->id === (int)$this->user->id ? 'У вас' : 'У сотрудника '.$owner->shortDisplayName;
         $problems = [];
         $warnings = [];
 
@@ -207,11 +218,11 @@ class AiSend
         }
 
         // The signature: never invented by AI; the employee's own for this mailbox, or a warning.
-        $signature = self::signature((int)$this->user->id, (int)$form->cms_comm_account_id, $form->getHtml());
+        $signature = self::signature((int)$owner->id, (int)$form->cms_comm_account_id, $form->getHtml());
         if ($signature === null) {
-            $warnings[] = 'У вас нет подписи для этого ящика («Почта» → «Мои настройки почты» → «Подписи»): письмо уйдёт без подписи.';
+            $warnings[] = $whose.' нет подписи для этого ящика («Почта» → «Мои настройки почты» → «Подписи»): письмо уйдёт без подписи.';
         } elseif (!$signature['in_letter']) {
-            $warnings[] = 'Вашей подписи этого ящика нет в тексте: письмо уйдёт без неё (cms_comm_draft_update с body_html добавит её).';
+            $warnings[] = 'Подписи отправителя для этого ящика нет в тексте: письмо уйдёт без неё (cms_comm_draft_update с body_html добавит её).';
         }
 
         // Files: what the draft holds now, within the limits.
@@ -226,13 +237,13 @@ class AiSend
                 .'«Настройки» → «Настройки почты» → «Работа ИИ через API» → «Разрешить отправку писем через API». Черновик остаётся в «Черновиках»: его можно отправить из «Почты».');
         }
         $limit = AiActions::limits()['sendPerDay'];
-        if ($this->sentToday() >= $limit) {
+        if ($this->sentToday((int)$owner->id) >= $limit) {
             $problems[] = $problem(self::REASON_SEND_LIMIT, $limit > 0
-                ? 'Дневной лимит отправок через API исчерпан: не больше '.$limit.' писем в день на сотрудника («Настройки почты» → «Работа ИИ через API»).'
+                ? 'Дневной лимит отправок через API исчерпан: не больше '.$limit.' писем в день из черновиков сотрудника («Настройки почты» → «Работа ИИ через API»).'
                 : 'Отправка через API ограничена нулём писем в день («Настройки почты» → «Работа ИИ через API»).');
         }
 
-        return ['form' => $form, 'draft' => $draft, 'record' => $record, 'problems' => $problems, 'warnings' => $warnings, 'purpose' => $purpose,
+        return ['form' => $form, 'draft' => $draft, 'owner' => $owner, 'record' => $record, 'problems' => $problems, 'warnings' => $warnings, 'purpose' => $purpose,
             'files' => $files, 'token' => $this->token($draft, $form, $purpose, $testMode), 'sendables' => $sendables];
     }
 
@@ -294,7 +305,7 @@ class AiSend
             'purpose' => $prepared['purpose'] ? ['code' => $prepared['purpose'], 'name' => LetterPurpose::names()[$prepared['purpose']],
                 'opt_out' => $form->withOptOut()] : null,
             // The sender's signature of this mailbox: it is in the text above, the preview shows the letter as it leaves.
-            'signature' => self::signature((int)$this->user->id, (int)$form->cms_comm_account_id, $form->getHtml()),
+            'signature' => self::signature((int)$prepared['owner']->id, (int)$form->cms_comm_account_id, $form->getHtml()),
             // Will the letter carry the opt-out line and the List-Unsubscribe headers.
             'unsubscribe' => ['line' => $form->withOptOut(), 'headers' => $form->withOptOut()],
             'topic' => $topic ? ['id' => (int)$topic->id, 'name' => (string)$topic->name,
@@ -352,7 +363,7 @@ class AiSend
         }
         $campaign = null;
         if ($campaignId) {
-            [$campaign, $refusal] = $this->flowCampaign($campaignId, $prepared['record']);
+            [$campaign, $refusal] = $this->flowCampaign($campaignId, $prepared['record'], (int)$prepared['owner']->id);
             if ($refusal) {
                 return ['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => [['reason' => AiActions::REASON_INVALID, 'message' => $refusal]],
                     'next' => 'Ничего не отправлено.'];
@@ -369,6 +380,7 @@ class AiSend
                 $row = new CmsCommApiSend([
                     'cms_site_id' => $this->siteId,
                     'cms_user_id' => (int)$this->user->id,
+                    'sender_user_id' => (int)$prepared['owner']->id,
                     'client' => mb_substr('mcp:'.($this->clientName !== '' ? $this->clientName : 'клиент'), 0, 190),
                     'idempotency_key' => $key,
                     'request_hash' => $hash,
@@ -381,7 +393,7 @@ class AiSend
                 if (is_array($prepared['form']->aiMark)) {
                     $prepared['form']->aiMark['sent_via'] = $row->client;
                 }
-                $message = (new MailComposeService($this->user, $this->siteId))->queue($prepared['form']);
+                $message = (new MailComposeService($prepared['owner'], $this->siteId))->queue($prepared['form']);
                 $row->cms_comm_message_id = (int)$message->id;
                 $row->save(false, ['cms_comm_message_id', 'updated_at']);
                 if ($campaign) {
@@ -412,7 +424,7 @@ class AiSend
      *
      * @return array [CmsCommCampaign|null, string|null refusal]
      */
-    private function flowCampaign(int $campaignId, $record): array
+    private function flowCampaign(int $campaignId, $record, int $senderId): array
     {
         $campaign = CmsCommCampaign::find()->andWhere(['id' => $campaignId, 'cms_site_id' => $this->siteId])->one();
         if (!$campaign) {
@@ -435,7 +447,7 @@ class AiSend
             $code = $client instanceof \skeeks\cms\models\CmsCompany ? 'company' : ($client instanceof \skeeks\cms\models\CmsUser ? 'client' : null);
             if ($code && $protection::state($code, (int)$client->id) !== $protection::FREE) {
                 $mainId = \skeeks\cms\crm\CrmAccess::instance()->mainResponsibleId($code, (int)$client->id);
-                if ($mainId && $mainId !== (int)$this->user->id) {
+                if ($mainId && $mainId !== $senderId) {
                     return [null, 'Клиент под защитой у другого менеджера: в поток его не берём, пишет только основной ответственный.'];
                 }
             }
@@ -456,7 +468,7 @@ class AiSend
             'record_id' => (int)$record->primaryKey,
             'address' => mb_substr((string)($to[0] ?? ''), 0, 255),
             'name' => mb_substr(CrmRecords::name($record), 0, 255) ?: null,
-            'sender_user_id' => (int)$this->user->id,
+            'sender_user_id' => (int)$prepared['owner']->id,
             'cms_comm_account_id' => $prepared['form']->cms_comm_account_id ? (int)$prepared['form']->cms_comm_account_id : null,
             'cms_comm_message_id' => (int)$message->id,
             'status' => CmsCommCampaignRecipient::STATUS_SENT,
@@ -470,14 +482,29 @@ class AiSend
         return CmsCommApiSend::find()->andWhere(['cms_site_id' => $this->siteId, 'cms_user_id' => (int)$this->user->id, 'idempotency_key' => $key])->one();
     }
 
-    /** Letters the user sent through the API today (CRM time zone). */
-    public function sentToday(): int
+    /**
+     * Letters sent through the API today (CRM time zone) from the drafts of an employee (the user by default),
+     * whoever sent them: the day limit belongs to the owner of the mailbox.
+     */
+    public function sentToday(?int $senderId = null): int
     {
         $tz = new \DateTimeZone(\Yii::$app->formatter->timeZone ?: date_default_timezone_get());
+        $senderId = $senderId ?? (int)$this->user->id;
 
-        return (int)CmsCommApiSend::find()->andWhere(['cms_site_id' => $this->siteId, 'cms_user_id' => (int)$this->user->id])
+        return (int)CmsCommApiSend::find()->andWhere(['cms_site_id' => $this->siteId])
+            ->andWhere(['or', ['sender_user_id' => $senderId], ['and', ['sender_user_id' => null], ['cms_user_id' => $senderId]]])
             ->andWhere(['not', ['cms_comm_message_id' => null]])
             ->andWhere(['>=', 'created_at', (new \DateTime('today', $tz))->getTimestamp()])->count();
+    }
+
+    /** Why a draft of another employee is not the user's: whose it is and who may work with it. */
+    public static function notOwnMessage(CmsCommDraft $draft): string
+    {
+        $owner = CmsUser::findOne((int)$draft->cms_user_id);
+
+        return 'Черновик лежит в «Черновиках» сотрудника '.($owner ? $owner->shortDisplayName : '№'.$draft->cms_user_id)
+            .': работать с ним может он сам, его руководитель по отделам или администратор. '
+            .'Попросите сотрудника или его руководителя передать черновик вам («Почта» → «Черновики» → «Передать») или создайте свой (cms_comm_draft_create с cms_comm_account_id).';
     }
 
     /* Status */
@@ -528,6 +555,8 @@ class AiSend
                 'from' => (string)$message->from_address,
                 'to' => array_keys($message->getTo()),
                 'sent_by' => $message->sent_by_user_id ? (int)$message->sent_by_user_id : null,
+                // Who actually sent a letter of the employee: his leader or an administrator ("по поручению").
+                'acted_by' => $message->hasAttribute('acted_by_user_id') && $message->acted_by_user_id ? (int)$message->acted_by_user_id : null,
                 'message_at' => self::date((int)$message->message_at),
                 'purpose' => $row->purpose,
                 'test_mode' => (bool)$row->test_mode,

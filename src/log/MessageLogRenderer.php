@@ -101,6 +101,10 @@ class MessageLogRenderer extends CmsLogEntryRenderer
                 ? implode(', ', array_map(static fn($phone, $name) => SendContacts::formatPhone((string)$phone).($name ? ' ('.$name.')' : ''),
                     array_keys($message->getTo()), $message->getTo()))
                 : $message->getToAsText());
+        // A letter of an employee sent by his leader or an administrator.
+        if (!$incoming && ($acted = $message->getActedByText())) {
+            $entry->details[] = Html::encode($acted);
+        }
         if ($message->cms_comm_campaign_id && ($name = CmsCommCampaign::find()->select('name')->andWhere(['id' => (int)$message->cms_comm_campaign_id])->scalar())) {
             $entry->details[] = 'Рассылка «'.Html::encode((string)$name).'»';
         }

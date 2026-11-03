@@ -65,13 +65,17 @@ class AiActions
     private array $mark;
 
     /**
+     * @param User $user whose drafts these are: the OAuth user, or the owner of a draft of an employee he
+     *     manages (services\DraftOwners) — the letter form, mailbox rights and clients are the owner's
      * @param string $clientName the OAuth client of the AI ("Claude Code (skeeks)")
+     * @param User|null $actor the OAuth user when he works with a draft of another employee: the mark
+     *     "по запросу" and the day limits of preparing are his
      */
-    public function __construct(User $user, string $clientName, ?int $siteId = null)
+    public function __construct(User $user, string $clientName, ?int $siteId = null, ?User $actor = null)
     {
         $this->user = $user instanceof CmsUser ? $user : CmsUser::findOne((int)$user->id);
         $this->siteId = $siteId ?? (int)\Yii::$app->skeeks->site->id;
-        $this->mark = AiMark::make($clientName, (int)$this->user->id);
+        $this->mark = AiMark::make($clientName, (int)($actor ? $actor->id : $this->user->id));
     }
 
     /**
@@ -123,7 +127,7 @@ class AiActions
     {
         $tz = new \DateTimeZone(\Yii::$app->formatter->timeZone ?: date_default_timezone_get());
         $since = (new \DateTime('today', $tz))->getTimestamp();
-        $uid = (int)$this->user->id;
+        $uid = (int)$this->mark['user_id'];
         $drafts = CmsCommDraft::find()->andWhere(['cms_site_id' => $this->siteId, 'prepared_by' => AiMark::BY_AI, 'prepared_user_id' => $uid])
             ->andWhere(['>=', 'prepared_at', $since])->count();
         $letters = CmsCommMessage::find()->andWhere(['cms_site_id' => $this->siteId, 'prepared_by' => AiMark::BY_AI, 'prepared_user_id' => $uid, 'cms_comm_campaign_id' => null])

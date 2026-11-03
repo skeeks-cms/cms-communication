@@ -15,6 +15,8 @@
  * @var $hasMore bool
  * @var $canSend bool
  * @var $drafts skeeks\cms\communication\models\CmsCommDraft[]|null the "Черновики" folder
+ * @var $draftOwnerId int whose drafts are shown: the employee or one he manages
+ * @var $draftEmployees skeeks\cms\models\CmsUser[] id => employee whose drafts he may see (himself first); empty — only his own
  * @var $assignee string filter: "", "me", "none" or an employee id
  * @var $linked string filter: "", "yes" (linked to the CRM), "no" (not sorted)
  * @var $assignees array id => name: other employees responsible for visible conversations
@@ -52,6 +54,19 @@ foreach ($labels as $l) {
     $labelItems[(string)$l->id] = 'Метка: '.$l->name;
 }
 $drafts = $drafts ?? null;
+$draftOwnerId = (int)($draftOwnerId ?? \Yii::$app->user->id);
+$draftEmployees = $draftEmployees ?? [];
+if ($drafts !== null) {
+    $listParams['owner'] = $draftOwnerId !== (int)\Yii::$app->user->id ? $draftOwnerId : null;
+    $total = count($drafts);
+}
+// "Передать": employees the user manages, as options of the select (the shown owner has them already).
+$transferItems = ['' => 'Передать…'];
+foreach ($draftEmployees as $id => $employee) {
+    if ((int)$id !== $draftOwnerId) {
+        $transferItems[(string)$id] = ((int)$id === (int)\Yii::$app->user->id ? 'Себе: ' : '').$employee->shortDisplayName;
+    }
+}
 $assigneeItems = ['' => 'Ответственный: все', MailFolders::ASSIGNEE_ME => 'Ответственный: я', MailFolders::ASSIGNEE_NONE => 'Без ответственного'];
 foreach ($assignees as $id => $name) {
     $assigneeItems[(string)$id] = 'Ответственный: '.$name;
@@ -122,6 +137,8 @@ $hotkeys = [
      data-refresh-url="<?= Html::encode(Url::to(['refresh'])) ?>"
      data-list-url="<?= Html::encode(Url::to($listParams)) ?>"
      data-draft-delete-url="<?= Html::encode(Url::to(['draft-delete'])) ?>"
+     data-draft-transfer-url="<?= Html::encode(Url::to(['draft-transfer'])) ?>"
+     data-drafts="<?= $drafts !== null ? 1 : 0 ?>"
      data-move-url="<?= Html::encode(Url::to(['move'])) ?>"
      data-server-folders-url="<?= Html::encode(Url::to(['server-folders'])) ?>"
      data-labels-url="<?= Html::encode(Url::to(['labels'])) ?>"
@@ -169,13 +186,36 @@ $hotkeys = [
         <div class="sx-mail__head">
             <form class="sx-mail__search" method="get" action="<?= Html::encode(Url::to(['mail'])) ?>" data-pjax="1">
                 <input type="hidden" name="folder" value="<?= Html::encode($folder) ?>">
+                <?php if (!empty($listParams['owner'])) : ?>
+                    <input type="hidden" name="owner" value="<?= (int)$listParams['owner'] ?>">
+                <?php endif; ?>
                 <span class="sx-mail__search-icon"><?= MailUi::icon('search', 18) ?></span>
                 <input type="search" name="q" value="<?= Html::encode($search) ?>" placeholder="Поиск в папке «<?= Html::encode($title) ?>»" aria-label="Поиск писем" data-sx-mail-search>
             </form>
 
             <div class="sx-mail__toolbar">
                 <?php if ($drafts !== null) : ?>
-                <span class="sx-mail__toolbar-title"><?= Html::encode($title) ?><?= $search !== '' ? ' · поиск «'.Html::encode($search).'»' : '' ?></span>
+                <label class="sx-mail__check" title="Выбрать все черновики">
+                    <input type="checkbox" data-sx-mail-all>
+                </label>
+                <button type="button" class="sx-mail__tool sx-mail__tool--icon" data-sx-mail-drafts-delete disabled title="Удалить выбранные черновики"><?= MailUi::icon('trash', 17) ?> <span class="sx-mail__tool-text">Удалить</span></button>
+                <?php if (count($transferItems) > 1) : ?>
+                    <select class="sx-mail__select" data-sx-mail-drafts-transfer disabled title="Передать выбранные черновики другому сотруднику" aria-label="Передать черновики">
+                        <?php foreach ($transferItems as $value => $label) : ?>
+                            <option value="<?= Html::encode($value) ?>"><?= Html::encode($label) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                <?php endif; ?>
+                <?php if (count($draftEmployees) > 1) : ?>
+                    <span class="sx-mail__tool-sep"></span>
+                    <?php // "Мои / сотрудник": the option value is the URL to open, as the list filters. ?>
+                    <select class="sx-mail__select<?= $draftOwnerId !== (int)\Yii::$app->user->id ? ' is-active' : '' ?>" data-sx-mail-filter title="Чьи черновики показать" aria-label="Чьи черновики">
+                        <?php foreach ($draftEmployees as $id => $employee) : ?>
+                            <option value="<?= Html::encode(Url::to(array_merge($listParams, ['owner' => (int)$id !== (int)\Yii::$app->user->id ? (int)$id : null]))) ?>" <?= (int)$id === $draftOwnerId ? 'selected' : '' ?>><?= Html::encode((int)$id === (int)\Yii::$app->user->id ? 'Мои черновики' : 'Черновики: '.$employee->shortDisplayName) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                <?php endif; ?>
+                <span class="sx-mail__toolbar-title"><?= Html::encode($title) ?><?= isset($draftEmployees[$draftOwnerId]) && $draftOwnerId !== (int)\Yii::$app->user->id ? ' · '.Html::encode($draftEmployees[$draftOwnerId]->shortDisplayName) : '' ?><?= $search !== '' ? ' · поиск «'.Html::encode($search).'»' : '' ?></span>
                 <?php else : ?>
                 <label class="sx-mail__check" title="Выбрать все показанные">
                     <input type="checkbox" data-sx-mail-all>
@@ -222,7 +262,7 @@ $hotkeys = [
 
         <?php if ($drafts !== null) : ?>
             <?php if (!$drafts) : ?>
-                <div class="sx-mail__empty"><?= $search !== '' ? 'Ничего не найдено.' : 'Черновиков нет. Начатое письмо сохраняется здесь само, пока вы его пишете.' ?></div>
+                <div class="sx-mail__empty"><?= $search !== '' ? 'Ничего не найдено.' : ($draftOwnerId !== (int)\Yii::$app->user->id ? 'У сотрудника нет черновиков.' : 'Черновиков нет. Начатое письмо сохраняется здесь само, пока вы его пишете.') ?></div>
             <?php endif; ?>
             <div class="sx-mail__rows" data-sx-mail-rows>
                 <?= $this->render('_drafts', ['drafts' => $drafts]) ?>
@@ -249,6 +289,16 @@ $hotkeys = [
             <button type="button" class="sx-mail__selection-all" data-sx-mail-select-folder hidden></button>
         </span>
         <span class="sx-mail__selection-actions">
+            <?php if ($drafts !== null) : ?>
+            <button type="button" class="sx-mail__selection-action" data-sx-mail-drafts-delete><?= MailUi::icon('trash', 17) ?> <span class="sx-mail__tool-text">Удалить</span></button>
+            <?php if (count($transferItems) > 1) : ?>
+                <select class="sx-mail__select" data-sx-mail-drafts-transfer title="Передать выбранные черновики другому сотруднику" aria-label="Передать черновики">
+                    <?php foreach ($transferItems as $value => $label) : ?>
+                        <option value="<?= Html::encode($value) ?>"><?= Html::encode($label) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            <?php endif; ?>
+            <?php else : ?>
             <button type="button" class="sx-mail__selection-action" data-sx-mail-mark="1">Прочитано</button>
             <button type="button" class="sx-mail__selection-action" data-sx-mail-mark="0">Не прочитано</button>
             <?php foreach ($moveActions as $a) : ?>
@@ -257,6 +307,7 @@ $hotkeys = [
             <?php if ($moveActions) : ?>
                 <button type="button" class="sx-mail__selection-action" data-sx-mail-folder-menu title="В папку почтового ящика"><?= MailUi::icon('folder', 17) ?> <span class="sx-mail__tool-text">В папку</span></button>
                 <button type="button" class="sx-mail__selection-action" data-sx-mail-labels-menu title="Метки"><?= MailUi::icon('tag', 17) ?> <span class="sx-mail__tool-text">Метки</span></button>
+            <?php endif; ?>
             <?php endif; ?>
         </span>
         <button type="button" class="sx-mail__selection-close" data-sx-mail-clear aria-label="Снять выбор" title="Снять выбор">×</button>

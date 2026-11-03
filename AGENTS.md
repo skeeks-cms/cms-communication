@@ -139,7 +139,11 @@ access and "Настройки почты" open by the right of mail management
 (`AdminCmsCommSettingsController::PERMISSION`, given to administrators),
 not by the administrator role.
 Sending through the API is `services\AiSend` only (scope
-`cms.communication.mail_send`, separate from preparing): an own draft, a
+`cms.communication.mail_send`, separate from preparing): an own draft or one
+of an employee the user manages (`services\DraftOwners` over the core
+`CmsUserQuery::managedBy()`; such a draft is checked and sent as its owner's,
+the letter records `acted_by_user_id`; the same service serves "Черновики" of
+the mail screen: the switch, delete and hand over), a
 check with no side effects (the letter form plus the API rules) whose
 `check_token` the send recomputes, an idempotency key stored in
 `cms_comm_api_send` inside the transaction of `MailComposeService::queue()`.

@@ -1,7 +1,8 @@
 <?php
 /**
  * Rows of the "Черновики" folder: a draft opens in the letter window and is
- * written further there; × removes it with its files.
+ * written further there; × removes it with its files; the check chooses it
+ * for "Удалить" and "Передать" (several drafts at once).
  *
  * @var $this yii\web\View
  * @var $drafts skeeks\cms\communication\models\CmsCommDraft[]
@@ -30,7 +31,7 @@ $shortDate = static function ($timestamp) use ($formatter) {
     ?>
     <div class="sx-mail__row sx-mail__row--draft" data-id="draft-<?= (int)$d->id ?>" data-draft-id="<?= (int)$d->id ?>"
          data-url="<?= Html::encode($url) ?>" tabindex="-1" role="button">
-        <span class="sx-mail__check"></span>
+        <label class="sx-mail__check" title="Выбрать (x)"><input type="checkbox" data-sx-mail-select value="<?= (int)$d->id ?>" tabindex="-1"></label>
         <span class="sx-mail__avatar" style="--sx-mail-hue: <?= (int)MailUi::hue((string)($to[0] ?? '?')) ?>"><?= Html::encode(MailUi::initials((string)($to[0] ?? '?'))) ?></span>
         <span class="sx-mail__who" title="<?= Html::encode($name) ?>"><span class="sx-mail__draft-mark">Черновик</span> <?= AiMark::badge(AiMark::of($d)) ?> <?= Html::encode($name) ?></span>
         <span class="sx-mail__dot" aria-hidden="true"></span>

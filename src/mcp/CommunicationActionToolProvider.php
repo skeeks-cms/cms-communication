@@ -9,6 +9,8 @@ namespace skeeks\cms\communication\mcp;
 
 use skeeks\cms\communication\services\AiActions;
 use skeeks\cms\communication\services\AiSend;
+use skeeks\cms\communication\services\DraftOwners;
+use skeeks\cms\communication\services\MailDrafts;
 use skeeks\cms\communication\services\MailingTopics;
 use skeeks\cms\mcp\services\ApiLogService;
 use skeeks\cms\mcp\tools\CallbackTool;
@@ -24,7 +26,13 @@ use yii\base\Component;
  *   personal letters (AiActions), mailing topics (MailingTopics, the
  *   administrator's right);
  * - sending (scope cms.communication.mail_send, never implied by preparing):
- *   a checked own draft with an idempotency key (AiSend);
+ *   a checked draft with an idempotency key (AiSend);
+ *
+ * Drafts are the user's own or of an employee he manages (DraftOwners: his
+ * subordinates by departments, every employee for an administrator): such a
+ * draft is read, changed, checked and sent as its owner's (his mailbox,
+ * signature, clients, day limit), the letter records who actually sent it.
+ * A draft of anyone else is refused with not_own.
  * - the result of a send (cms.communication.read).
  *
  * The OAuth user, their rights and forManager() apply; the "Подготовлено
@@ -88,7 +96,7 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
             $this->tool('cms_comm_draft_create',
                 'Черновики личных писем клиентам: своя тема и текст каждому, предложение, файлы. Черновик появляется в «Черновиках» почты у ответственного за клиента сотрудника '
                 .'(его ящик по умолчанию) или в вашем ящике cms_comm_account_id, если вам можно с него отправлять. Сам черновик ничего не отправляет: его отправляет сотрудник в «Почте», '
-                .'а через API — только черновик в вашем ящике после cms_comm_draft_check и cms_comm_draft_send (отдельное право). '
+                .'а через API — после cms_comm_draft_check и cms_comm_draft_send (отдельное право) ваш черновик или черновик сотрудника, которым вы руководите (администратор — любого). '
                 .'purpose — назначение: advertising (тема рассылки, «Отписаться»), individual_offer (индивидуальное предложение: тема только для проверки отказов, offer обязателен, без «Отписаться»), personal (рабочая переписка), service (служебное). '
                 .'offer — предложение «proposal:<id>»: общая Презентация или КП этого клиента (cms_proposal_library_get, cms_proposal_list); личная ссылка создаётся при отправке, открытие видно в ленте и ставит задачу по правилам предложения. '
                 .'attachments — ваши загруженные файлы: вложения или картинки в тексте. '
@@ -103,30 +111,43 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                         'offer' => ['type' => 'string'],
                     ] + $attachments, ['record_type', 'record_id', 'subject', 'body_html'])],
                 ] + $testMode + $confirm, ['items'])),
+            $this->tool('cms_comm_draft_list',
+                'Черновики писем из «Почты»: ваши или сотрудника, которым вы руководите по отделам (администратору — любого сотрудника), cms_user_id — чьи. '
+                .'Возвращает employees — чьи черновики вам доступны (id, имя, сколько черновиков), и drafts: id, владелец, ящик, получатели, клиент CRM, тема, начало текста, '
+                .'назначение, отметка ИИ, когда изменён. Черновик сотрудника читается, правится, проверяется и отправляется так же, как ваш: письмо уйдёт из его ящика, '
+                .'с его подписью и в счёт его дневного лимита, а в ленте клиента будет видно, кто фактически отправил («по поручению»). '
+                .'Пример: {"cms_user_id":12,"q":"плитка"}.',
+                'cms.communication.read', [$this, 'draftList'], $this->object([
+                    'cms_user_id' => ['type' => 'integer', 'description' => 'Чьи черновики: вы (по умолчанию) или доступный сотрудник из employees.'],
+                    'q' => ['type' => 'string', 'description' => 'Поиск по теме, получателям и тексту.'],
+                    'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100, 'description' => 'Сколько черновиков, по умолчанию 50; сначала свежие.'],
+                ])),
             $this->tool('cms_comm_draft_get',
-                'Ваш черновик (в ваших «Черновиках»): получатель, клиент, ящик, назначение, будут ли строка и заголовки отписки (unsubscribe), тема рассылки и её роль, тема и полный текст письма (body_html), предложение, фактический состав файлов '
+                'Черновик — ваш или сотрудника, которым вы руководите (cms_comm_draft_list): владелец, получатель, клиент, ящик, назначение, будут ли строка и заголовки отписки (unsubscribe), тема рассылки и её роль, тема и полный текст письма (body_html), предложение, фактический состав файлов '
                 .'(id, имя, MIME, размер, картинка в тексте или вложение, итог и лимиты), отметка ИИ. Пример: {"draft_id":43}.',
                 'cms.communication.read', [$this, 'draftGet'], $this->object(['draft_id' => ['type' => 'integer']], ['draft_id'])),
             $this->tool('cms_comm_draft_update',
-                'Изменить ваш черновик ИИ: только переданные поля — subject, body_html, address (другой адрес из карточки клиента), purpose, cms_comm_topic_id, offer. '
+                'Изменить черновик ИИ — ваш или сотрудника, которым вы руководите (проверки — как у владельца: его ящик и клиенты): только переданные поля — subject, body_html, address (другой адрес из карточки клиента), purpose, cms_comm_topic_id, offer. '
                 .'Файлы остаются (новый текст получает картинки на местах «{Картинка}» или в конце). Те же проверки, что при создании. После изменения нужна новая cms_comm_draft_check. '
                 .'Без confirm=true — только проверка. Пример: {"draft_id":43,"subject":"Новая тема","confirm":true}.',
                 'cms.communication.write', [$this, 'draftUpdate'], $this->object(['draft_id' => ['type' => 'integer'], 'subject' => ['type' => 'string'], 'body_html' => ['type' => 'string'],
                     'address' => ['type' => 'string'], 'cms_comm_topic_id' => ['type' => ['integer', 'null']], 'offer' => ['type' => 'string']] + $purpose + $testMode + $confirm, ['draft_id'])),
             $this->tool('cms_comm_draft_attachment_add',
-                'Добавить к вашему черновику файл, загруженный вами через cms_storage_file_upload: вложение или (inline=true) картинку в тексте на месте «{Картинка}» или в конце. '
+                'Добавить к черновику (вашему или сотрудника, которым вы руководите) файл, загруженный вами через cms_storage_file_upload: вложение или (inline=true) картинку в тексте на месте «{Картинка}» или в конце. '
                 .'Проверяется владелец файла, фактический тип по содержимому (PNG, JPEG, GIF, WEBP, PDF; SVG, HTML, архивы и программы — нет), размер и количество. '
                 .'Тот же файл повторно не добавляется (вернётся уже добавленный). В письмо идёт копия, ваш файл в хранилище не меняется. '
                 .'После добавления нужна новая cms_comm_draft_check. Пример: {"draft_id":43,"cms_storage_file_id":501,"inline":true}.',
                 'cms.communication.write', [$this, 'attachmentAdd'], $this->object(['draft_id' => ['type' => 'integer'], 'cms_storage_file_id' => ['type' => 'integer'],
                     'inline' => ['type' => 'boolean']], ['draft_id', 'cms_storage_file_id'])),
             $this->tool('cms_comm_draft_attachment_remove',
-                'Убрать файл из вашего черновика по id из cms_comm_draft_get (картинка уходит и из текста). Загруженный вами файл в хранилище остаётся. '
+                'Убрать файл из черновика (вашего или сотрудника, которым вы руководите) по id из cms_comm_draft_get (картинка уходит и из текста). Загруженный вами файл в хранилище остаётся. '
                 .'Пример: {"draft_id":43,"attachment_id":7}.',
                 'cms.communication.write', [$this, 'attachmentRemove'], $this->object(['draft_id' => ['type' => 'integer'], 'attachment_id' => ['type' => 'integer']],
                     ['draft_id', 'attachment_id'])),
             $this->tool('cms_comm_draft_check',
-                'Проверка вашего черновика перед отправкой через API. Ничего не отправляет, не создаёт личную ссылку и не засчитывает открытие. '
+                'Проверка черновика перед отправкой через API: вашего или сотрудника, которым вы руководите по отделам (администратору — любого; чужой — отказ not_own). '
+                .'Черновик сотрудника проверяется как его: его ящик и право отправки, его клиенты, его подпись и дневной лимит (draft.owner, draft.acting_for). '
+                .'Ничего не отправляет, не создаёт личную ссылку и не засчитывает открытие. '
                 .'Проверяет то же, что форма письма в «Почте» (ящик и право отправки с него, адреса, «только свои клиенты», MailingPolicy темы, документ), и правила ИИ: '
                 .'одному адресу из карточки клиента CRM, без копий, нет письма клиенту и отправки этого предложения за '.$limits['recentDays'].' дней, предложение можно отправить (срок, адрес страницы), '
                 .'дневной лимит отправок ('.$limits['sendPerDay'].'). Возвращает получателя, отправителя, тему, предложение, предпросмотр (тема, текст, HTML с неработающей кнопкой) и problems. '
@@ -136,11 +157,12 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
                 .'Пройденная проверка даёт check_token — отпечаток получателя, отправителя, назначения, темы, текста, предложения, файлов (по содержимому) и тестового режима; '
                 .'он нужен для cms_comm_draft_send. Пример: {"draft_id":43}.',
                 'cms.communication.write', [$this, 'draftCheck'], $this->object([
-                    'draft_id' => ['type' => 'integer', 'description' => 'Черновик в ваших «Черновиках» (cms_comm_draft_create возвращает draft_id).'],
+                    'draft_id' => ['type' => 'integer', 'description' => 'Черновик: ваш или доступного сотрудника (cms_comm_draft_create возвращает draft_id, cms_comm_draft_list — список).'],
                 ] + $testMode, ['draft_id'])),
             $this->tool('cms_comm_draft_send',
                 'Отправить проверенный черновик клиенту: только после cms_comm_draft_check и явного согласия человека на этого получателя, отправителя, текст и предложение. '
                 .'Нужны draft_id, check_token из проверки, idempotency_key и confirm=true. Если черновик изменился после проверки — отказ changed_after_check, ничего не отправлено. '
+                .'Черновик сотрудника, которым вы руководите, уходит из его ящика с его подписью и в счёт его лимита; в письме и ленте клиента записано, что отправили вы по его поручению. '
                 .'idempotency_key — новый уникальный ключ на каждое письмо (8–128 символов): повтор с тем же ключом и теми же данными вернёт прежний результат без второго письма, '
                 .'с другими данными — отказ idempotency_key_reused. Если ответ потерян (тайм-аут), не отправляйте заново, а узнайте результат по ключу: cms_comm_send_status. '
                 .'Отказ api_send_disabled — отправка через API выключена в настройках сайта («Настройки» → «Настройки почты» → «Работа ИИ через API»): черновик остаётся, его отправляют из «Почты». '
@@ -255,17 +277,94 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
         return $result;
     }
 
+    /** Drafts of the user or of an employee he manages, and whose drafts he may see. */
+    public function draftList(array $arguments): array
+    {
+        $user = $this->user();
+        $owners = new DraftOwners($user);
+        $ownerId = (int)($arguments['cms_user_id'] ?? 0) ?: (int)$user->id;
+        if (!$owners->canManage($ownerId)) {
+            return ['success' => false, 'reason' => AiSend::REASON_NOT_OWN,
+                'message' => 'Черновики этого сотрудника вам недоступны: вы не его руководитель по отделам и не администратор. Доступные — в employees.',
+                'employees' => $this->draftEmployees($owners)];
+        }
+        $owner = \skeeks\cms\models\CmsUser::findOne($ownerId);
+        $limit = max(1, min(100, (int)($arguments['limit'] ?? 50)));
+        $drafts = (new MailDrafts($owner))->query(mb_substr((string)($arguments['q'] ?? ''), 0, 100))->with('account')->limit($limit)->all();
+        $compose = new \skeeks\cms\communication\services\MailComposeService($owner);
+
+        return [
+            'success' => true,
+            'owner' => ['id' => (int)$owner->id, 'name' => (string)$owner->shortDisplayName, 'is_me' => (int)$owner->id === (int)$user->id],
+            'employees' => $this->draftEmployees($owners),
+            'drafts' => array_map(static function ($draft) use ($compose) {
+                $record = $draft->context_model_code && $draft->context_model_id ? $compose->contextRecord((string)$draft->context_model_code, (int)$draft->context_model_id) : null;
+
+                return [
+                    'id' => (int)$draft->id,
+                    'owner_id' => (int)$draft->cms_user_id,
+                    'sender' => $draft->account ? ['cms_comm_account_id' => (int)$draft->account->id, 'address' => (string)$draft->account->address] : null,
+                    'to' => $draft->getToAddresses(),
+                    'client' => $record ? ['type' => \skeeks\cms\communication\services\CrmRecords::typeOfCode(get_class($record)), 'id' => (int)$record->primaryKey,
+                        'name' => \skeeks\cms\communication\services\CrmRecords::name($record)] : null,
+                    'subject' => (string)$draft->subject,
+                    'snippet' => $draft->getSnippet(200),
+                    'purpose' => \skeeks\cms\communication\services\LetterPurpose::of($draft->purpose, $draft->cms_comm_topic_id ? (int)$draft->cms_comm_topic_id : null),
+                    'offers' => $draft->getSendableRefs(),
+                    'prepared' => \skeeks\cms\communication\services\AiMark::forApi(\skeeks\cms\communication\services\AiMark::of($draft)),
+                    'updated_at' => $draft->updated_at ? date('c', (int)$draft->updated_at) : null,
+                ];
+            }, $drafts),
+        ];
+    }
+
+    /** @return array[] id, name, drafts — employees whose drafts the user may work with, himself first */
+    private function draftEmployees(DraftOwners $owners): array
+    {
+        $counts = \skeeks\cms\communication\models\CmsCommDraft::find()->select(['cnt' => 'COUNT(*)', 'cms_user_id'])
+            ->andWhere(['cms_site_id' => (int)\Yii::$app->skeeks->site->id, 'cms_user_id' => $owners->ids()])
+            ->groupBy('cms_user_id')->indexBy('cms_user_id')->column();
+        $result = [];
+        foreach ($owners->employees() as $id => $employee) {
+            $result[] = ['id' => (int)$id, 'name' => (string)$employee->shortDisplayName, 'drafts' => (int)($counts[$id] ?? 0)];
+        }
+
+        return $result;
+    }
+
+    /**
+     * A draft of the user or of an employee he manages, with the actions of its owner.
+     *
+     * @return array [AiActions of the owner (the mark and limits of the user), CmsCommDraft, CmsUser owner]
+     * @throws \DomainException not found or not available (not_own)
+     */
+    private function draftOf(int $draftId): array
+    {
+        $user = $this->user();
+        $draft = (new DraftOwners($user))->find($draftId);
+        $owner = $draft ? DraftOwners::owner($draft) : null;
+        if (!$draft || !$owner) {
+            $other = \skeeks\cms\communication\models\CmsCommDraft::find()->andWhere(['id' => $draftId, 'cms_site_id' => (int)\Yii::$app->skeeks->site->id])->one();
+            throw new \DomainException($other ? AiSend::notOwnMessage($other) : 'Черновик не найден: он отправлен, удалён или не существует.');
+        }
+
+        return [new AiActions($owner, self::clientName(), null, $user), $draft, $owner];
+    }
+
     public function draftGet(array $arguments): array
     {
-        $draft = (new AiActions($this->user(), self::clientName()))->ownDraft((int)($arguments['draft_id'] ?? 0));
+        [, $draft, $owner] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
         $account = $draft->account;
         $record = $draft->context_model_code && $draft->context_model_id
-            ? (new \skeeks\cms\communication\services\MailComposeService($this->user()))->contextRecord((string)$draft->context_model_code, (int)$draft->context_model_id) : null;
+            ? (new \skeeks\cms\communication\services\MailComposeService($owner))->contextRecord((string)$draft->context_model_code, (int)$draft->context_model_id) : null;
         $purpose = \skeeks\cms\communication\services\LetterPurpose::of($draft->purpose, $draft->cms_comm_topic_id ? (int)$draft->cms_comm_topic_id : null);
         $topic = $draft->cms_comm_topic_id ? \skeeks\cms\communication\models\CmsCommTopic::findOne((int)$draft->cms_comm_topic_id) : null;
 
         return [
             'id' => (int)$draft->id,
+            'owner' => ['id' => (int)$owner->id, 'name' => (string)$owner->shortDisplayName],
+            // A draft of an employee the user manages: it leaves from the employee's mailbox, "по поручению" of the user.
+            'acting_for' => (int)$owner->id !== (int)$this->user()->id,
             'to' => $draft->getToAddresses(),
             'client' => $record ? ['type' => \skeeks\cms\communication\services\CrmRecords::typeOfCode(get_class($record)), 'id' => (int)$record->primaryKey,
                 'name' => \skeeks\cms\communication\services\CrmRecords::name($record)] : null,
@@ -279,7 +378,7 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
             'subject' => (string)$draft->subject,
             'snippet' => $draft->getSnippet(500),
             'body_html' => (string)$draft->body_html,
-            'signature' => \skeeks\cms\communication\services\AiSend::signature((int)$this->user()->id, (int)$draft->cms_comm_account_id, (string)$draft->body_html),
+            'signature' => \skeeks\cms\communication\services\AiSend::signature((int)$owner->id, (int)$draft->cms_comm_account_id, (string)$draft->body_html),
             'offers' => $draft->getSendableRefs(),
             'attachments' => \skeeks\cms\communication\services\AiDraftFiles::describe($draft),
             'prepared' => \skeeks\cms\communication\services\AiMark::forApi(\skeeks\cms\communication\services\AiMark::of($draft)),
@@ -289,13 +388,16 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
 
     public function draftUpdate(array $arguments): array
     {
-        return $this->run('draft_update', $arguments, static fn(AiActions $ai, bool $apply) => $ai->updateDraft($arguments, $apply));
+        [$actions] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+
+        return $this->run('draft_update', $arguments, static fn(AiActions $ai, bool $apply) => $ai->updateDraft($arguments, $apply), $actions);
     }
 
     public function attachmentAdd(array $arguments): array
     {
         $user = $this->user();
-        $draft = (new AiActions($user, self::clientName()))->ownDraft((int)($arguments['draft_id'] ?? 0));
+        [, $draft] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+        // The file is the user's own upload, whoever owns the draft.
         $files = new \skeeks\cms\communication\services\AiDraftFiles($user, (int)\Yii::$app->skeeks->site->id);
         try {
             $file = $files->add($draft, (int)($arguments['cms_storage_file_id'] ?? 0), !empty($arguments['inline']));
@@ -311,7 +413,7 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
     public function attachmentRemove(array $arguments): array
     {
         $user = $this->user();
-        $draft = (new AiActions($user, self::clientName()))->ownDraft((int)($arguments['draft_id'] ?? 0));
+        [, $draft] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
         $removed = (new \skeeks\cms\communication\services\AiDraftFiles($user, (int)\Yii::$app->skeeks->site->id))->remove($draft, (int)($arguments['attachment_id'] ?? 0));
         $this->log('draft_attachment_remove', ['draft_id' => (int)$draft->id, 'attachment_id' => (int)($arguments['attachment_id'] ?? 0), 'removed' => $removed]);
 
@@ -369,12 +471,11 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
             'changed' => $result['changed'], 'topic' => MailingTopics::data($result['model'])];
     }
 
-    /** The action for the OAuth user and client; the journal entry of what was done. */
-    private function run(string $action, array $arguments, callable $callback): array
+    /** The action for the OAuth user and client (or the given actions: a draft of an employee); the journal entry of what was done. */
+    private function run(string $action, array $arguments, callable $callback, ?AiActions $actions = null): array
     {
         $apply = self::confirmed($arguments);
-        $client = self::clientName();
-        $result = $callback(new AiActions($this->user(), $client), $apply);
+        $result = $callback($actions ?? new AiActions($this->user(), self::clientName()), $apply);
 
         $this->log($action, [
             'applied' => $apply,

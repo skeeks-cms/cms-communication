@@ -2771,3 +2771,21 @@ a.sx-letter__mark:focus {
     flex: none;
     cursor: help;
 }
+
+/* "Черновики": hand the chosen drafts over to another employee (the selection bar, the draft window). */
+.sx-mail__selection .sx-mail__select {
+    height: 28px;
+    border-radius: 999px;
+}
+
+.sx-compose__transfer {
+    max-width: 220px;
+    height: 28px;
+    padding: 0 22px 0 8px;
+    border: 1px solid var(--sx-color-border, #dedede);
+    border-radius: var(--sx-radius-sm, 6px);
+    background-color: var(--sx-color-surface, #fff);
+    color: var(--sx-color-text-muted, #6f7484);
+    font-size: 12px;
+    cursor: pointer;
+}

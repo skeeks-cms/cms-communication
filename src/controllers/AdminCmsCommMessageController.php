@@ -16,6 +16,7 @@ use skeeks\cms\communication\helpers\MailUi;
 use skeeks\cms\communication\models\CmsCommContact;
 use skeeks\cms\communication\models\CmsCommMessage;
 use skeeks\cms\communication\services\AiMark;
+use skeeks\cms\communication\services\DraftOwners;
 use skeeks\cms\communication\services\MailComposeService;
 use skeeks\cms\communication\services\MailDrafts;
 use skeeks\cms\communication\services\MailFileFetcher;
@@ -181,8 +182,10 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'fetch-status' => $hidden([$this, 'fetchStatus']),
             // POST the letter form: save it as a draft (autosave), JSON.
             'draft' => $hidden([$this, 'saveDraft']),
-            // POST id: remove a draft with its files.
+            // POST id (or ids[]): remove drafts with their files — own ones or of employees the user manages.
             'draft-delete' => $hidden([$this, 'deleteDraft']),
+            // POST ids[], user_id: hand drafts over to another employee the user manages (DraftOwners).
+            'draft-transfer' => $hidden([$this, 'transferDraft']),
             // GET pk: the window "Привязать письмо" (standard CRM choice with search);
             // POST pk, type, id, conversation=1|0: link, JSON.
             'link' => [
@@ -226,36 +229,103 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     public function saveDraft()
     {
         $this->requirePostJson();
-        $service = $this->composeService();
+        $draftId = (int)(\Yii::$app->request->post((new ComposeForm())->formName())['draft_id'] ?? 0);
+        // A draft of an employee the user manages is saved as that employee's (his mailbox, his clients).
+        [$service, $drafts, $draft] = $this->draftContext($draftId);
+        if ($draftId && !$draft) {
+            return ['success' => false, 'gone' => true];
+        }
         if (!$service->sendableAccounts()) {
             throw new \yii\web\ForbiddenHttpException('Вам нельзя отправлять письма.');
         }
         $form = new ComposeForm(['service' => $service]);
         $form->load(\Yii::$app->request->post());
-        $drafts = $this->drafts();
-        $draft = $drafts->find((int)$form->draft_id);
-        if ($form->draft_id && !$draft) {
-            return ['success' => false, 'gone' => true];
-        }
         $draft = $drafts->save($form, $service, $draft);
 
         return [
             'success' => true,
             'id' => (int)$draft->id,
             'savedAt' => \Yii::$app->formatter->asTime($draft->updated_at, 'php:H:i'),
-            'counters' => [MailFolders::DRAFTS => $drafts->count()],
+            'counters' => [MailFolders::DRAFTS => $this->drafts()->count()],
         ];
     }
 
     public function deleteDraft()
     {
         $this->requirePostJson();
-        $drafts = $this->drafts();
-        if ($draft = $drafts->find((int)\Yii::$app->request->post('id'))) {
+        $request = \Yii::$app->request;
+        $ids = array_merge((array)$request->post('ids', []), [(int)$request->post('id')]);
+        $removed = 0;
+        foreach ($this->draftOwners()->findAll($ids) as $draft) {
             MailDrafts::delete($draft);
+            $removed++;
         }
 
-        return ['success' => true, 'counters' => [MailFolders::DRAFTS => $drafts->count()]];
+        return ['success' => true, 'removed' => $removed,
+            'message' => $removed ? self::draftsText($removed, 'удалён', 'удалено') : 'Черновики не найдены: их уже отправили, удалили или они вам недоступны.',
+            'counters' => [MailFolders::DRAFTS => $this->drafts()->count()]];
+    }
+
+    /**
+     * "Передать": the chosen drafts (own or of employees the user manages) get
+     * another owner the user manages — himself included.
+     */
+    public function transferDraft()
+    {
+        $this->requirePostJson();
+        $request = \Yii::$app->request;
+        $owners = $this->draftOwners();
+        $drafts = $owners->findAll((array)$request->post('ids', []));
+        if (!$drafts) {
+            return ['success' => false, 'message' => 'Черновики не найдены: их отправили, удалили или они вам недоступны.'];
+        }
+        try {
+            $count = $owners->transfer($drafts, (int)$request->post('user_id'));
+        } catch (\DomainException $e) {
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+        $to = \skeeks\cms\models\CmsUser::findOne((int)$request->post('user_id'));
+
+        return ['success' => true, 'transferred' => $count,
+            'message' => $count ? self::draftsText($count, 'передан', 'передано').': '.($to ? $to->shortDisplayName : '') : 'Черновики уже у этого сотрудника.',
+            'counters' => [MailFolders::DRAFTS => $this->drafts()->count()]];
+    }
+
+    /** "3 черновика удалено", "Черновик передан". */
+    private static function draftsText(int $n, string $one, string $many): string
+    {
+        if ($n === 1) {
+            return 'Черновик '.$one;
+        }
+        $mod10 = $n % 10;
+        $mod100 = $n % 100;
+        $word = $mod10 === 1 && $mod100 !== 11 ? 'черновик' : ($mod10 >= 2 && $mod10 <= 4 && ($mod100 < 10 || $mod100 >= 20) ? 'черновика' : 'черновиков');
+
+        return $n.' '.$word.' '.$many;
+    }
+
+    private function draftOwners(): DraftOwners
+    {
+        return new DraftOwners(\Yii::$app->user->identity, (int)\Yii::$app->skeeks->site->id);
+    }
+
+    /**
+     * The letter form of a draft: of the user, or — a draft of an employee he
+     * manages — of that employee (his mailbox rights, clients, signature), so
+     * the screen saves and sends it exactly as the owner would.
+     *
+     * @return array [MailComposeService, MailDrafts, CmsCommDraft|null, CmsUser|null the other owner]
+     */
+    private function draftContext(?int $draftId): array
+    {
+        $draft = $draftId ? $this->draftOwners()->find($draftId) : null;
+        $owner = $draft && (int)$draft->cms_user_id !== (int)\Yii::$app->user->id ? DraftOwners::owner($draft) : null;
+        if (!$owner) {
+            return [$this->composeService(), $this->drafts(), $draft, null];
+        }
+        $siteId = (int)\Yii::$app->skeeks->site->id;
+
+        return [new MailComposeService($owner, $siteId), new MailDrafts($owner, $siteId), $draft, $owner];
     }
 
     /**
@@ -477,7 +547,8 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     public function upload()
     {
         $this->requirePostJson();
-        if (!$this->composeService()->sendableAccounts()) {
+        // A leader without a mailbox of his own may still put files into an employee's draft.
+        if (!$this->composeService()->sendableAccounts() && !$this->draftOwners()->hasOthers()) {
             throw new \yii\web\ForbiddenHttpException('Вам нельзя отправлять письма.');
         }
         $file = \yii\web\UploadedFile::getInstanceByName('file');
@@ -643,7 +714,12 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $portion = max(1, (int)$request->get('portion', 1));
 
         if ($folder === MailFolders::DRAFTS) {
-            $drafts = $this->drafts()->query($search)->with(['files', 'replyTo', 'forwarded'])->limit(200)->all();
+            // "Мои / сотрудник": drafts of an employee the user manages (?owner=ID).
+            $owners = $this->draftOwners();
+            $ownerId = (int)$request->get('owner') ?: (int)\Yii::$app->user->id;
+            $ownerId = $owners->canManage($ownerId) ? $ownerId : (int)\Yii::$app->user->id;
+            $owner = $ownerId === (int)\Yii::$app->user->id ? \Yii::$app->user->identity : \skeeks\cms\models\CmsUser::findOne($ownerId);
+            $drafts = (new MailDrafts($owner, (int)\Yii::$app->skeeks->site->id))->query($search)->with(['files', 'replyTo', 'forwarded'])->limit(200)->all();
             if ($request->get('portion')) {
                 \Yii::$app->response->format = Response::FORMAT_JSON;
                 return ['html' => '', 'hasMore' => false];
@@ -656,6 +732,8 @@ class AdminCmsCommMessageController extends BackendModelStandartController
                 'unreadOnly' => false,
                 'messages' => [],
                 'drafts' => $drafts,
+                'draftOwnerId' => $ownerId,
+                'draftEmployees' => $owners->hasOthers() ? $owners->employees() : [],
                 'readIds' => [],
                 'hasMore' => false,
                 'canSend' => (bool)$this->composeService()->sendableAccounts(),
@@ -972,7 +1050,9 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     public function compose()
     {
         $request = \Yii::$app->request;
-        $service = $this->composeService();
+        // A draft of an employee the user manages opens, saves and sends as that employee's letter.
+        $draftId = $request->isPost ? (int)($request->post((new ComposeForm())->formName())['draft_id'] ?? 0) : (int)$request->get('draft');
+        [$service, $drafts, $ownerDraft, $draftOwner] = $this->draftContext($draftId ?: null);
         $form = new ComposeForm(['service' => $service]);
 
         // No mailbox that may send (own or shared, CmsCommAccountAccess::send_level): the window
@@ -998,7 +1078,9 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             \Yii::$app->response->format = Response::FORMAT_JSON;
             $form->load($request->post());
             // A draft prepared by AI: its mark and mailing topic go with the letter.
-            $this->drafts()->applyAiDraft($form);
+            $drafts->applyAiDraft($form);
+            // The leader or administrator sends the employee's letter: "по поручению".
+            $form->actedBy = $draftOwner ? (int)\Yii::$app->user->id : null;
             if (!$form->validate()) {
                 return ['success' => false, 'errors' => $form->getFirstErrors()];
             }
@@ -1009,18 +1091,16 @@ class AdminCmsCommMessageController extends BackendModelStandartController
                 return ['success' => false, 'errors' => $e->errors];
             }
             // The letter is on its way: its draft goes. Files the letter took stay with the letter.
-            $drafts = $this->drafts();
             if ($draft = $drafts->find((int)$form->draft_id)) {
                 MailDrafts::delete($draft);
             }
 
-            return ['success' => true, 'id' => (int)$message->id, 'message' => 'Письмо отправляется',
-                'counters' => [MailFolders::DRAFTS => $drafts->count()]];
+            return ['success' => true, 'id' => (int)$message->id, 'message' => $draftOwner ? 'Письмо отправляется из ящика сотрудника '.$draftOwner->shortDisplayName : 'Письмо отправляется',
+                'counters' => [MailFolders::DRAFTS => $this->drafts()->count()]];
         }
 
         // ?draft=ID opens a draft; "Ответить" / "Переслать" continue a draft of that letter.
-        $drafts = $this->drafts();
-        $draft = $request->get('draft') ? $drafts->find((int)$request->get('draft')) : null;
+        $draft = $ownerDraft;
         if (!$draft) {
             $service->prefill($form,
                 $request->get('to'),
@@ -1039,8 +1119,14 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             $form->cms_comm_account_id = $form->cms_comm_account_id ?: $service->defaultAccountId();
             $uploads = $drafts->fill($form, $draft);
         }
-        $templates = new MailTemplates(\Yii::$app->user->identity);
+        // The signatures and templates of the owner: the letter leaves with his signature.
+        $templates = new MailTemplates($draftOwner ?: \Yii::$app->user->identity);
+        $owners = $this->draftOwners();
         $params = [
+            'draftOwner' => $draftOwner,
+            // "Передать черновик": employees the user manages, but the current owner.
+            'transferTo' => $owners->hasOthers() && !$request->get('inline')
+                ? array_diff_key($owners->employees(), [(int)($draft ? $draft->cms_user_id : \Yii::$app->user->id) => true]) : [],
             'uploads' => $uploads,
             'signatures' => $templates->signatures(),
             'templates' => $templates->templatesForForm(),

@@ -167,7 +167,7 @@ if ($canManage) {
             <?php endif; ?>
             <?php if (!$incoming) : ?>
                 <div class="sx-letter__muted">
-                    <?= Html::encode($model->getStatusName()) ?><?= $model->sentBy ? ' · отправил '.Html::encode($model->sentBy->shortDisplayName) : '' ?>
+                    <?= Html::encode($model->getStatusName()) ?><?= ($acted = $model->getActedByText()) ? ' · '.Html::encode($acted) : ($model->sentBy ? ' · отправил '.Html::encode($model->sentBy->shortDisplayName) : '') ?>
                     <?php if ($model->error) : ?><div class="sx-letter__error"><?= Html::encode($model->error) ?></div><?php endif; ?>
                 </div>
                 <?php // Delivery by the events of a mailing service: "Отправлено" alone only means the service took the letter.

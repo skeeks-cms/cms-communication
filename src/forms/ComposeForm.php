@@ -112,6 +112,16 @@ class ComposeForm extends Model
     public $aiMark;
 
     /**
+     * The employee who actually sends a draft of another employee he manages
+     * (services\DraftOwners: a leader, an administrator): the letter stays the
+     * owner's and records him as acted_by_user_id ("по поручению"). Set in
+     * code, never loaded from a request.
+     *
+     * @var int|null
+     */
+    public $actedBy;
+
+    /**
      * The purpose of a letter AI prepared (services\LetterPurpose: advertising,
      * individual_offer, personal, service), from its draft (MailDrafts::applyAiDraft()); null for
      * a letter an employee writes. Its rules are checked here, so the mail

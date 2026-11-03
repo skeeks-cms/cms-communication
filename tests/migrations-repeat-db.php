@@ -33,8 +33,9 @@ $migrations = [
     'm261109_100000__alter_table__cms_comm_campaign_lead_on_view' => ['cms_comm_campaign'],
     'm261109_110000__alter_table__cms_comm_campaign_flow' => ['cms_comm_campaign'],
     'm261109_130000__update_cms_comm_no_pool' => ['cms_comm_campaign', 'cms_comm_import'],
+    'm261110_100000__alter_tables__cms_comm_acted_by' => ['cms_comm_message', 'cms_comm_api_send'],
 ];
-$copy = ['cms_site', 'cms_comm_audience', 'cms_comm_import', 'cms_comm_import_row', 'cms_comm_campaign', 'cms_comm_message'];
+$copy = ['cms_site', 'cms_comm_audience', 'cms_comm_import', 'cms_comm_import_row', 'cms_comm_campaign', 'cms_comm_message', 'cms_comm_api_send', 'cms_user'];
 
 $server = new PDO('mysql:host='.$host, $user, $password, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 $server->exec("DROP DATABASE IF EXISTS `$name`; CREATE DATABASE `$name` CHARACTER SET utf8mb4");

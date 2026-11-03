@@ -337,6 +337,8 @@ class MailReadService extends AbstractCmsService
             'cms_comm_conversation_id' => (int)$m->cms_comm_conversation_id,
             'cms_comm_account_id' => $m->cms_comm_account_id ? (int)$m->cms_comm_account_id : null,
             'sent_by' => $m->sentBy ? ['id' => (int)$m->sent_by_user_id, 'name' => (string)$m->sentBy->shortDisplayName] : null,
+            // A letter of the employee sent by his leader or an administrator ("по поручению").
+            'acted_by' => $m->hasAttribute('acted_by_user_id') && $m->acted_by_user_id && $m->actedBy ? ['id' => (int)$m->acted_by_user_id, 'name' => (string)$m->actedBy->shortDisplayName] : null,
             'is_auto' => (bool)$m->is_auto,
             'attachments' => array_map(static function ($f) { return (string)$f->name; }, $m->getAttachmentFiles()) ?: array_values(array_filter(array_map(static function ($f) { return (string)($f['name'] ?? ''); }, $m->getAttachmentList()))),
             'links' => $this->links($m),

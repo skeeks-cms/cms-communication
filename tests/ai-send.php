@@ -205,10 +205,14 @@ try {
     $draftAgain = run('cms_comm_draft_create', ['cms_comm_topic_id' => $topicId, 'cms_comm_account_id' => $accountId,
         'items' => [['record_type' => 'lead', 'record_id' => (int)$lead1->id, 'subject' => 'Ещё', 'body_html' => '<p>Ещё</p>']]]);
     check($draftAgain['items'][0]['reason'] === 'recent_letter', 'A client written to just now gets no new draft');
-    $foreign = new CmsCommDraft(['cms_site_id' => $siteId, 'cms_user_id' => (int)$worker->id, 'to_list' => 'test-ai-send-2@skeeks.com', 'subject' => 'x', 'body_html' => '<p>x</p>']);
+    // A draft of someone the user does not manage (an employee and the administrator's draft); drafts of
+    // managed employees are tests/draft-owners-stand.php.
+    $foreign = new CmsCommDraft(['cms_site_id' => $siteId, 'cms_user_id' => (int)$admin->id, 'to_list' => 'test-ai-send-2@skeeks.com', 'subject' => 'x', 'body_html' => '<p>x</p>']);
     $foreign->save(false);
+    Yii::$app->user->setIdentity($worker);
     $notOwn = run('cms_comm_draft_check', ['draft_id' => (int)$foreign->id]);
-    check(!$notOwn['ok'] && $notOwn['problems'][0]['reason'] === AiSend::REASON_NOT_OWN, 'A draft of another employee cannot be sent by API');
+    Yii::$app->user->setIdentity($admin);
+    check(!$notOwn['ok'] && $notOwn['problems'][0]['reason'] === AiSend::REASON_NOT_OWN, 'A draft of an employee the user does not manage cannot be sent by API');
     $noTopic = new CmsCommDraft(['cms_site_id' => $siteId, 'cms_user_id' => (int)$admin->id, 'cms_comm_account_id' => $accountId, 'to_list' => 'test-ai-send-2@skeeks.com',
         'subject' => 'x', 'body_html' => '<p>x</p>', 'context_model_code' => CmsLead::class, 'context_model_id' => (int)$lead2->id]);
     $noTopic->save(false);

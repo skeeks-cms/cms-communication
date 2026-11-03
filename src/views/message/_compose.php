@@ -20,6 +20,8 @@
  * @var $aiMark array|null the opened draft was prepared by AI (services\AiMark)
  * @var $aiTopic skeeks\cms\communication\models\CmsCommTopic|null its mailing topic
  * @var $aiPurpose string|null its services\LetterPurpose
+ * @var $draftOwner skeeks\cms\models\CmsUser|null the draft is of this employee (the user manages him): it leaves from his mailbox
+ * @var $transferTo skeeks\cms\models\CmsUser[] id => employee the draft may be handed over to ("Передать черновик")
  */
 
 use skeeks\cms\communication\helpers\MailUi;
@@ -33,6 +35,8 @@ $noDrafts = $noDrafts ?? false;
 $aiMark = $aiMark ?? null;
 $aiTopic = $aiTopic ?? null;
 $aiPurpose = $aiPurpose ?? null;
+$draftOwner = $draftOwner ?? null;
+$transferTo = $transferTo ?? [];
 // "Прикрепить из…": kinds of things installed packages send (communication.sendables).
 $sendableSources = MailUi::sendableSources();
 $forward = (bool)$form->forward_message_id;
@@ -72,6 +76,7 @@ $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByPar
       data-upload-url="<?= Html::encode(Url::to(['upload'])) ?>"
       data-draft-url="<?= Html::encode(Url::to(['draft'])) ?>"
       data-draft-delete-url="<?= Html::encode(Url::to(['draft-delete'])) ?>"
+      data-draft-transfer-url="<?= Html::encode(Url::to(['draft-transfer'])) ?>"
       data-personal-url="<?= Html::encode($personalUrl) ?>"
       data-signatures="<?= Html::encode(\yii\helpers\Json::encode((object)$signatures)) ?>"
       data-templates="<?= Html::encode(\yii\helpers\Json::encode($templates)) ?>"
@@ -86,6 +91,13 @@ $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByPar
     <?= Html::hiddenInput($name('forward_message_id'), $form->forward_message_id) ?>
     <?= Html::hiddenInput($name('reply_all'), (int)$form->reply_all) ?>
     <?= Html::hiddenInput($name('draft_id'), $form->draft_id, ['data-sx-compose-draft-id' => true]) ?>
+
+    <?php if ($draftOwner) : ?>
+        <div class="sx-compose__ai sx-compose__owner" data-sx-compose-owner>
+            <span class="sx-status sx-status--accent"><?= MailUi::icon('user', 12) ?> <?= Html::encode($draftOwner->shortDisplayName) ?></span>
+            <span>Черновик сотрудника <?= Html::encode($draftOwner->shortDisplayName) ?>: письмо уйдёт из его ящика, с его подписью и по его правам. В истории клиента будет видно, что отправили вы по его поручению.</span>
+        </div>
+    <?php endif; ?>
 
     <?php if ($aiMark) : ?>
         <div class="sx-compose__ai" data-sx-compose-ai>
@@ -242,6 +254,14 @@ $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByPar
         <span class="sx-compose__draft" data-sx-compose-draft-status><?= $form->draft_id ? 'Черновик' : '' ?></span>
         <button type="button" class="sx-compose__link sx-compose__draft-delete" data-sx-compose-draft-delete
                 title="Удалить черновик" <?= $form->draft_id ? '' : 'hidden' ?>>Удалить черновик</button>
+        <?php if ($transferTo && !$noDrafts) : ?>
+            <select class="sx-compose__transfer" data-sx-compose-draft-transfer title="Передать черновик другому сотруднику: письмо уйдёт из его ящика" aria-label="Передать черновик">
+                <option value="">Передать черновик…</option>
+                <?php foreach ($transferTo as $id => $employee) : ?>
+                    <option value="<?= (int)$id ?>"><?= Html::encode(((int)$id === (int)\Yii::$app->user->id ? 'Себе: ' : '').$employee->shortDisplayName) ?></option>
+                <?php endforeach; ?>
+            </select>
+        <?php endif; ?>
         <?php if ($inline) : ?>
             <button type="button" class="sx-compose__link sx-compose__cancel" data-sx-compose-cancel>Отменить</button>
         <?php endif; ?>

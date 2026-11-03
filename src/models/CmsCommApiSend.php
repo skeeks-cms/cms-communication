@@ -19,7 +19,8 @@ use yii\db\ActiveRecord;
  * @property int|null    $created_at
  * @property int|null    $updated_at
  * @property int         $cms_site_id
- * @property int         $cms_user_id
+ * @property int         $cms_user_id the API user who sent (his keys, his status reads)
+ * @property int|null    $sender_user_id whose draft was sent: his mailbox and day limit (the API user himself, or an employee he manages)
  * @property string|null $client "mcp:<OAuth client>"
  * @property string      $idempotency_key
  * @property string      $request_hash

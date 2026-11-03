@@ -583,6 +583,10 @@ class MailComposeService
             if ($bcc && $message->hasAttribute('bcc_list')) {
                 $message->bcc_list = Json::encode($bcc);
             }
+            // A draft of an employee sent by his leader or an administrator: the letter is the owner's, "по поручению".
+            if ($form->actedBy && (int)$form->actedBy !== (int)$this->user->id && $message->hasAttribute('acted_by_user_id')) {
+                $message->acted_by_user_id = (int)$form->actedBy;
+            }
             if ($form->cms_comm_campaign_id && $message->hasAttribute('cms_comm_campaign_id')) {
                 $message->cms_comm_campaign_id = (int)$form->cms_comm_campaign_id;
             }

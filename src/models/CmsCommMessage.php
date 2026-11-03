@@ -45,6 +45,7 @@ use yii\helpers\Json;
  * @property string|null             $box_state   trash or junk: in the trash or spam of all its mailboxes (services\MailboxActions::refreshState())
  * @property int|null                $message_at
  * @property int|null                $sent_by_user_id
+ * @property int|null                $acted_by_user_id who actually sent a letter of sent_by_user_id: his leader or an administrator ("по поручению", services\DraftOwners)
  * @property string|null             $error
  * @property int|null                $cms_comm_campaign_id the mailing campaign that sent the letter
  * @property string|null             $prepared_by "ai" when AI prepared the letter (services\AiMark), null — an employee
@@ -277,6 +278,22 @@ class CmsCommMessage extends ActiveRecord
     public function getSentBy()
     {
         return $this->hasOne(CmsUser::class, ['id' => 'sent_by_user_id']);
+    }
+
+    /** Who actually sent a letter of the employee (his leader, an administrator), or null. */
+    public function getActedBy()
+    {
+        return $this->hasOne(CmsUser::class, ['id' => 'acted_by_user_id']);
+    }
+
+    /** "Отправил Семенов А. по поручению сотрудника Иванов Д." for a letter sent for its owner, or null. */
+    public function getActedByText(): ?string
+    {
+        if (!$this->hasAttribute('acted_by_user_id') || !$this->acted_by_user_id || !$this->actedBy) {
+            return null;
+        }
+
+        return 'Отправил '.$this->actedBy->shortDisplayName.' по поручению сотрудника '.($this->sentBy ? $this->sentBy->shortDisplayName : '№'.$this->sent_by_user_id);
     }
 
     private function decodeList($value): array

@@ -430,8 +430,8 @@
         $rows.each(function () {
             $(this).toggleClass('is-selected', $(this).find('[data-sx-mail-select]').is(':checked'));
         });
-        $mail().find('.sx-mail__toolbar').find('[data-sx-mail-mark], [data-sx-mail-move], [data-sx-mail-folder-menu], [data-sx-mail-labels-menu]')
-            .prop('disabled', ids.length === 0);
+        $mail().find('.sx-mail__toolbar').find('[data-sx-mail-mark], [data-sx-mail-move], [data-sx-mail-folder-menu], [data-sx-mail-labels-menu], '
+            + '[data-sx-mail-drafts-delete], [data-sx-mail-drafts-transfer]').prop('disabled', ids.length === 0);
         var $all = $mail().find('[data-sx-mail-all]');
         var everyRow = ids.length > 0 && ids.length === $rows.length;
         $all.prop('checked', everyRow);
@@ -473,12 +473,60 @@
 
     function plural(n) {
         var mod10 = n % 10, mod100 = n % 100;
-        var word = (mod10 === 1 && mod100 !== 11) ? 'письмо'
-            : (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) ? 'письма' : 'писем';
+        var forms = isDrafts() ? ['черновик', 'черновика', 'черновиков'] : ['письмо', 'письма', 'писем'];
+        var word = (mod10 === 1 && mod100 !== 11) ? forms[0]
+            : (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) ? forms[1] : forms[2];
         return 'Выбрано ' + n + ' ' + word;
     }
 
+    /** The "Черновики" folder: the checks choose drafts, not letters. */
+    function isDrafts() {
+        return String($mail().data('drafts')) === '1';
+    }
+
+    // "Черновики": delete the chosen drafts.
+    $(document).on('click', root + ' [data-sx-mail-drafts-delete]', function () {
+        var ids = selectedIds();
+        if (!ids.length || !window.confirm(ids.length === 1 ? 'Удалить черновик?' : 'Удалить выбранные черновики: ' + ids.length + '?')) {
+            return;
+        }
+        $.post($mail().data('draft-delete-url'), csrf({ids: ids})).done(function (response) {
+            applyCounters(response.counters);
+            notify('success', response.message);
+            $.pjax.reload({container: '#sx-mail-pjax', timeout: 15000});
+        }).fail(function () {
+            notify('error', 'Не удалось удалить черновики.');
+        });
+    });
+
+    // "Черновики": hand the chosen drafts over to another employee.
+    $(document).on('change', root + ' [data-sx-mail-drafts-transfer]', function () {
+        var userId = this.value;
+        var name = $(this).find('option:selected').text();
+        this.value = '';
+        var ids = selectedIds();
+        if (!userId || !ids.length || !window.confirm((ids.length === 1 ? 'Передать черновик' : 'Передать выбранные черновики (' + ids.length + ')')
+            + ' — ' + name + '? Письма уйдут из ящика нового владельца, с его подписью.')) {
+            return;
+        }
+        $.post($mail().data('draft-transfer-url'), csrf({ids: ids, user_id: userId})).done(function (response) {
+            if (!response.success) {
+                notify('error', response.message);
+                return;
+            }
+            applyCounters(response.counters);
+            notify('success', response.message);
+            $.pjax.reload({container: '#sx-mail-pjax', timeout: 15000});
+        }).fail(function () {
+            notify('error', 'Не удалось передать черновики.');
+        });
+    });
+
     function markSelected(read) {
+        // Drafts have no read marks: their ids are not letters.
+        if (isDrafts()) {
+            return;
+        }
         var target = chosen();
         if (!target) {
             return;
@@ -1530,6 +1578,39 @@
             reloadList('drafts');
         });
     }
+
+    // "Передать черновик" in the draft window: the form is saved first, then the draft gets its new owner.
+    $(document).on('change', '[data-sx-compose] [data-sx-compose-draft-transfer]', function () {
+        var $form = $(this).closest('[data-sx-compose]');
+        var userId = this.value;
+        var name = $(this).find('option:selected').text();
+        this.value = '';
+        if (!userId) {
+            return;
+        }
+        clearTimeout($form.data('draftTimer'));
+        var wait = $form.data('dirty') || !draftId($form) ? saveDraft($form) : ($form.data('draftXhr') || $.Deferred().resolve().promise());
+        $.when(wait).always(function () {
+            var id = draftId($form);
+            if (!id || !window.confirm('Передать черновик — ' + name + '? Письмо уйдёт из ящика нового владельца, с его подписью.')) {
+                return;
+            }
+            $.post($form.data('draft-transfer-url'), csrf({ids: [id], user_id: userId})).done(function (response) {
+                if (!response.success) {
+                    notify('error', response.message);
+                    return;
+                }
+                notify('success', response.message);
+                applyMainCounters(response.counters);
+                reloadList('drafts');
+                // The window opens the draft again: now as the letter of its new owner.
+                $form.data('sent', true);
+                window.location.reload();
+            }).fail(function () {
+                notify('error', 'Не удалось передать черновик.');
+            });
+        });
+    });
 
     $(document).on('click', '[data-sx-compose-draft-delete]', function () {
         var $form = $(this).closest('[data-sx-compose]');
