@@ -243,7 +243,7 @@ class AiSend
                 : 'Отправка через API ограничена нулём писем в день («Настройки почты» → «Работа ИИ через API»).');
         }
 
-        return ['form' => $form, 'draft' => $draft, 'state' => self::state($draft), 'owner' => $owner, 'record' => $record, 'problems' => $problems, 'warnings' => $warnings, 'purpose' => $purpose,
+        return ['form' => $form, 'draft' => $draft, 'version' => MailDrafts::version($draft), 'owner' => $owner, 'record' => $record, 'problems' => $problems, 'warnings' => $warnings, 'purpose' => $purpose,
             'files' => $files, 'token' => $this->token($draft, $form, $purpose, $testMode), 'sendables' => $sendables];
     }
 
@@ -350,24 +350,31 @@ class AiSend
 
             return ['repeated' => true] + $this->status($existing);
         }
+        // A refusal is the answer only when no send of this key and request exists by now: a parallel
+        // repeat of the same request finds the draft gone because the first one sent it — its result is the answer.
+        $refused = function (array $refusal) use ($key, $hash): array {
+            $existing = $this->byKey($key);
+
+            return $existing && $existing->request_hash === $hash ? ['repeated' => true] + $this->status($existing) : $refusal;
+        };
 
         $prepared = $this->prepare($draftId, $testMode);
         if ($prepared['problems']) {
-            return ['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => $prepared['problems'],
-                'next' => 'Ничего не отправлено. Исправьте причины и повторите cms_comm_draft_check.'];
+            return $refused(['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => $prepared['problems'],
+                'next' => 'Ничего не отправлено. Исправьте причины и повторите cms_comm_draft_check.']);
         }
         if (!hash_equals((string)$prepared['token'], $checkToken)) {
-            return ['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => [[
+            return $refused(['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => [[
                 'reason' => self::REASON_CHANGED,
                 'message' => 'Черновик, отправитель, получатель, текст или предложение изменились после проверки (или check_token от другого черновика).',
-            ]], 'next' => 'Ничего не отправлено. Повторите cms_comm_draft_check, покажите изменения человеку и отправьте с новым check_token.'];
+            ]], 'next' => 'Ничего не отправлено. Повторите cms_comm_draft_check, покажите изменения человеку и отправьте с новым check_token.']);
         }
         $campaign = null;
         if ($campaignId) {
             [$campaign, $refusal] = $this->flowCampaign($campaignId, $prepared['record'], (int)$prepared['owner']->id);
             if ($refusal) {
-                return ['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => [['reason' => AiActions::REASON_INVALID, 'message' => $refusal]],
-                    'next' => 'Ничего не отправлено.'];
+                return $refused(['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => [['reason' => AiActions::REASON_INVALID, 'message' => $refusal]],
+                    'next' => 'Ничего не отправлено.']);
             }
         }
         if (!$confirm) {
@@ -384,9 +391,12 @@ class AiSend
                 if (!$locked) {
                     throw new AiRefusal(AiActions::REASON_NOT_FOUND, 'Черновик уже отправлен или удалён: второе письмо не отправлено.');
                 }
-                if (self::state($locked) !== $prepared['state'] || !(new DraftOwners($this->user, $this->siteId))->canManage((int)$locked->cms_user_id)) {
+                // What was checked is what leaves: the version of the locked row (every field, every file) and the rights on it.
+                if (!hash_equals($prepared['version'], MailDrafts::version($locked)) || !(new DraftOwners($this->user, $this->siteId))->canManage((int)$locked->cms_user_id)) {
                     throw new AiRefusal(self::REASON_CHANGED, 'Черновик изменился, передан другому сотруднику или стал вам недоступен во время отправки.');
                 }
+                // The day limit of the owner, taken atomically with letters and chat messages of other requests.
+                self::reserveDay($this->siteId, (int)$prepared['owner']->id);
                 $row = new CmsCommApiSend([
                     'cms_site_id' => $this->siteId,
                     'cms_user_id' => (int)$this->user->id,
@@ -409,15 +419,15 @@ class AiSend
                 if ($campaign) {
                     $this->joinCampaign($campaign, $message, $prepared);
                 }
-                MailDrafts::delete($prepared['draft']);
+                MailDrafts::delete($locked);
             });
         } catch (SendException $e) {
             return ['sent' => false, 'state' => 'refused', 'repeated' => false,
                 'problems' => array_map(static fn($m) => ['reason' => AiActions::REASON_OFFER, 'message' => (string)$m], array_values($e->errors)),
                 'next' => 'Ничего не отправлено: документ отказал в отправке.'];
         } catch (AiRefusal $e) {
-            return ['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => [['reason' => $e->reason, 'message' => $e->getMessage()]],
-                'next' => 'Ничего не отправлено. Проверьте черновик заново (cms_comm_draft_check) или узнайте результат первой отправки (cms_comm_send_status).'];
+            return $refused(['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => [['reason' => $e->reason, 'message' => $e->getMessage()]],
+                'next' => 'Ничего не отправлено. Проверьте черновик заново (cms_comm_draft_check) или узнайте результат первой отправки (cms_comm_send_status).']);
         } catch (\yii\db\IntegrityException $e) {
             // The same key is being sent by a parallel request: its result is the answer.
             $existing = $this->byKey($key);
@@ -518,12 +528,22 @@ class AiSend
             ->andWhere(['>=', 'created_at', (new \DateTime('today', $tz))->getTimestamp()])->count();
     }
 
-    /** What of the stored draft a send relies on: owner, mailbox, last change, files. */
-    private static function state(CmsCommDraft $draft): string
+    /**
+     * Takes a place of the day limit of API sends of an employee (letters and chat messages alike): his
+     * row is locked to the end of the transaction, so parallel sends of his drafts and messages count in
+     * turn and never pass the limit together. Called inside the transaction that writes the send row.
+     *
+     * @throws AiRefusal send_day_limit
+     */
+    public static function reserveDay(int $siteId, int $senderId): void
     {
-        $files = array_map(static fn($f) => [(int)$f->id, (string)$f->content_hash, (int)$f->is_inline], $draft->getFiles()->orderBy(['id' => SORT_ASC])->all());
-
-        return hash('sha256', json_encode([(int)$draft->cms_user_id, (int)$draft->cms_comm_account_id, (int)$draft->updated_at, $files]));
+        CmsUser::getDb()->createCommand('SELECT id FROM '.CmsUser::tableName().' WHERE id = :id FOR UPDATE', [':id' => $senderId])->queryScalar();
+        $limit = AiActions::limits()['sendPerDay'];
+        if (self::sentTodayBy($siteId, $senderId) >= $limit) {
+            throw new AiRefusal(self::REASON_SEND_LIMIT, $limit > 0
+                ? 'Дневной лимит отправок через API исчерпан: не больше '.$limit.' писем и сообщений в день от сотрудника («Настройки почты» → «Работа ИИ через API»).'
+                : 'Отправка через API ограничена нулём писем в день («Настройки почты» → «Работа ИИ через API»).');
+        }
     }
 
     /** Why a draft of another employee is not the user's: whose it is and who may work with it. */

@@ -141,6 +141,7 @@ $hotkeys = [
      data-draft-delete-url="<?= Html::encode(Url::to(['draft-delete'])) ?>"
      data-draft-transfer-url="<?= Html::encode(Url::to(['draft-transfer'])) ?>"
      data-drafts="<?= $drafts !== null ? 1 : 0 ?>"
+     data-draft-owner="<?= $drafts !== null ? $draftOwnerId : '' ?>"
      data-move-url="<?= Html::encode(Url::to(['move'])) ?>"
      data-server-folders-url="<?= Html::encode(Url::to(['server-folders'])) ?>"
      data-labels-url="<?= Html::encode(Url::to(['labels'])) ?>"

@@ -426,6 +426,149 @@ try {
     $uiMessage = CmsCommMessage::findOne((int)($sentUi['id'] ?? 0));
     check($sentUi['success'] && $uiMessage && (int)$uiMessage->sent_by_user_id === (int)$employee->id && (int)$uiMessage->acted_by_user_id === (int)$leader->id
         && !CmsCommDraft::find()->andWhere(['id' => $sendDraft])->exists(), 'The window sends the employee\'s letter for him: '.json_encode($sentUi, JSON_UNESCAPED_UNICODE));
+    // --- Second review: operations interleaved with a hand-over, a change or another send ---
+    // $interleave runs $action once, when the draft is read by the operation under test (inTransaction:
+    // only on the read inside its own transaction, i.e. the locked one); the returned function removes the hook.
+    $interleave = static function (int $id, callable $action, bool $inTransaction = false) {
+        $armed = true;
+        $handler = static function ($event) use (&$armed, $id, $action, $inTransaction) {
+            $transaction = Yii::$app->db->getTransaction();
+            if ($armed && (int)$event->sender->id === $id && (!$inTransaction || ($transaction && $transaction->level > 1))) {
+                $armed = false;
+                $action();
+            }
+        };
+        yii\base\Event::on(CmsCommDraft::class, yii\db\ActiveRecord::EVENT_AFTER_FIND, $handler);
+
+        return static function () use ($handler, &$armed) {
+            yii\base\Event::off(CmsCommDraft::class, yii\db\ActiveRecord::EVENT_AFTER_FIND, $handler);
+
+            return !$armed;
+        };
+    };
+    $asLeader = static function () use ($leader) {
+        Yii::$app->user->setIdentity($leader);
+        \skeeks\cms\crm\CrmAccess::instance()->resetMemo();
+    };
+
+    // 19. Handed to another department after the leader's request read the draft: the autosave writes nothing.
+    [, $r1Draft, $r1Address] = $makeDraft('Перехват автосохранения');
+    $asLeader();
+    $done = $interleave($r1Draft, static fn() => $adminOwners->transfer([CmsCommDraft::findOne($r1Draft)], (int)$otherHead->id));
+    $post(['ComposeForm' => ['draft_id' => $r1Draft, 'cms_comm_account_id' => $accountId, 'to' => $r1Address, 'subject' => 'Правка руководителя', 'body_html' => '<p>Т</p>'],
+        'draft_owner_id' => (int)$employee->id]);
+    $r1Save = $controller->saveDraft();
+    $r1Row = CmsCommDraft::findOne($r1Draft);
+    check($done() && !$r1Save['success'] && (int)$r1Row->cms_user_id === (int)$otherHead->id && $r1Row->subject === 'Перехват автосохранения',
+        'An autosave racing a hand-over to another department writes nothing: '.json_encode($r1Save, JSON_UNESCAPED_UNICODE));
+    // The same for deleting: the draft of the other department stays.
+    [, $r1Delete] = $makeDraft('Перехват удаления');
+    $asLeader();
+    $done = $interleave($r1Delete, static fn() => $adminOwners->transfer([CmsCommDraft::findOne($r1Delete)], (int)$otherHead->id));
+    $post(['ids' => [$r1Delete], 'draft_owner_id' => (int)$employee->id]);
+    $r1Deleted = $controller->deleteDraft();
+    check($done() && $r1Deleted['removed'] === 0 && CmsCommDraft::find()->andWhere(['id' => $r1Delete])->exists(), 'A delete racing a hand-over leaves the draft');
+    // And a change through the API.
+    [, $r1Api] = $makeDraft('Перехват правки API');
+    $done = $interleave($r1Api, static fn() => $adminOwners->transfer([CmsCommDraft::findOne($r1Api)], (int)$otherHead->id));
+    $r1Update = run($leader, 'cms_comm_draft_update', ['draft_id' => $r1Api, 'subject' => 'Правка через API', 'confirm' => true]);
+    check($done() && $r1Update['success'] === false && in_array($r1Update['reason'], ['not_own', 'moved'], true)
+        && CmsCommDraft::findOne($r1Api)->subject === 'Перехват правки API', 'An API change racing a hand-over writes nothing: '.json_encode($r1Update, JSON_UNESCAPED_UNICODE));
+    // A list or window of the former owner hands over nothing.
+    [, $r7Draft] = $makeDraft('Старое окно');
+    $adminOwners->transfer([CmsCommDraft::findOne($r7Draft)], (int)$leader->id);
+    $asLeader();
+    $post(['ids' => [$r7Draft], 'user_id' => (int)$leader->id, 'draft_owner_id' => (int)$employee->id]);
+    $r7 = $controller->transferDraft();
+    check((int)$r7['transferred'] === 0 && (int)CmsCommDraft::findOne($r7Draft)->cms_user_id === (int)$leader->id, 'A stale window hands over nothing');
+    check((new DraftOwners($leader, $siteId))->transfer([CmsCommDraft::findOne($r7Draft)], (int)$employee->id, (int)$otherHead->id) === 0,
+        'A hand-over expecting another owner moves nothing');
+
+    // 20. A delegated window suggests only who both see: never a correspondent of the employee's other letters.
+    $connection = \skeeks\cms\communication\models\CmsCommAccount::findOne($accountId)->cms_comm_connection_id;
+    $secret = 'secret-'.$sfx.'@skeeks.com';
+    $conversation = new \skeeks\cms\communication\models\CmsCommConversation(['cms_site_id' => $siteId, 'channel' => 'email', 'thread_key' => 'secret-'.$sfx, 'subject' => 'Секрет']);
+    $conversation->save(false);
+    $letter = new CmsCommMessage(['cms_site_id' => $siteId, 'cms_comm_conversation_id' => (int)$conversation->id, 'cms_comm_account_id' => $accountId, 'channel' => 'email',
+        'direction' => CmsCommMessage::DIRECTION_IN, 'status' => CmsCommMessage::STATUS_RECEIVED, 'external_id' => 'secret-'.$sfx, 'from_address' => $secret,
+        'from_name' => 'Секретный корреспондент', 'subject' => 'Секрет', 'message_at' => time()]);
+    $letter->save(false);
+    (new \skeeks\cms\communication\models\CmsCommMessageMailbox(['cms_comm_message_id' => (int)$letter->id, 'cms_comm_account_id' => $accountId,
+        'cms_comm_connection_id' => $connection]))->save(false);
+    $emails = static fn(array $items) => array_column($items, 'email');
+    check(in_array($secret, $emails((new MailComposeService($employee, $siteId))->suggestRecipients('secret-'.$sfx)), true)
+        && !in_array($secret, $emails((new MailComposeService($leader, $siteId))->suggestRecipients('secret-'.$sfx)), true), 'The employee sees the correspondent, the leader does not');
+    [, $r2Draft] = $makeDraft('Подсказки');
+    $asLeader();
+    $request->setQueryParams(['q' => 'secret-'.$sfx, 'draft_id' => $r2Draft]);
+    check(!in_array($secret, $emails($controller->contacts()['items']), true), 'The employee\'s draft does not open his correspondents to the leader');
+    $request->setQueryParams(['q' => 'test-draft-owners', 'draft_id' => $r2Draft]);
+    check(count($controller->contacts()['items']) > 0, 'Clients both see are still suggested');
+
+    // 21. The version: a change between the check and the lock (the same updated_at second) refuses the send.
+    [, $r3Draft] = $makeDraft('Версия');
+    $r3Check = run($leader, 'cms_comm_draft_check', ['draft_id' => $r3Draft]);
+    $stamp = (int)CmsCommDraft::findOne($r3Draft)->updated_at;
+    // The change lands after the send has read and checked the draft, before it takes the lock.
+    $done = $interleave($r3Draft, static fn() => CmsCommDraft::updateAll(['subject' => 'Свежая правка', 'updated_at' => $stamp], ['id' => $r3Draft]));
+    $r3Send = run($leader, 'cms_comm_draft_send', ['draft_id' => $r3Draft, 'check_token' => $r3Check['check_token'], 'idempotency_key' => 'r3-'.$sfx, 'confirm' => true]);
+    check($done() && $r3Send['state'] === 'refused' && $r3Send['problems'][0]['reason'] === AiSend::REASON_CHANGED
+        && CmsCommDraft::findOne($r3Draft)->subject === 'Свежая правка', 'A change within the same second refuses the API send and stays');
+    // The window: it holds the version it opened with; a change elsewhere refuses its send and its save.
+    [, $r3Window, $r3Address] = $makeDraft('Версия окна');
+    $opened = \skeeks\cms\communication\services\MailDrafts::version(CmsCommDraft::findOne($r3Window));
+    CmsCommDraft::updateAll(['subject' => 'Правка в другом окне'], ['id' => $r3Window]);
+    $asLeader();
+    $windowForm = ['ComposeForm' => ['draft_id' => $r3Window, 'cms_comm_account_id' => $accountId, 'to' => $r3Address, 'subject' => 'Старое окно', 'body_html' => '<p>Т</p>'],
+        'draft_owner_id' => (int)$employee->id, 'draft_version' => $opened];
+    $letters = (int)CmsCommMessage::find()->count();
+    $post($windowForm);
+    $r3Ui = $controller->compose();
+    check(!$r3Ui['success'] && (int)CmsCommMessage::find()->count() === $letters && CmsCommDraft::findOne($r3Window)->subject === 'Правка в другом окне',
+        'A window of an older version does not send and keeps the newer change');
+    $post($windowForm);
+    check(!empty($controller->saveDraft()['moved']) && CmsCommDraft::findOne($r3Window)->subject === 'Правка в другом окне', 'Nor does it save over it');
+
+    // 22. The day limit is taken atomically: two drafts of one owner at once never pass it together.
+    [, $r4a] = $makeDraft('Лимит A');
+    [, $r4b] = $makeDraft('Лимит Б');
+    $r4aCheck = run($leader, 'cms_comm_draft_check', ['draft_id' => $r4a]);
+    $r4bToken = (new AiSend($employee, 'x', $siteId))->check($r4b)['check_token'] ?? '';
+    Yii::$app->communication->aiLimits = ['sendPerDay' => AiSend::sentTodayBy($siteId, (int)$employee->id) + 1];
+    $r4Owner = null;
+    $done = $interleave($r4a, static function () use (&$r4Owner, $employee, $siteId, $r4b, $r4bToken, $sfx) {
+        $r4Owner = (new AiSend($employee, 'x', $siteId))->send($r4b, $r4bToken, 'r4-owner-'.$sfx, true);
+    }, true);
+    $r4Leader = run($leader, 'cms_comm_draft_send', ['draft_id' => $r4a, 'check_token' => $r4aCheck['check_token'], 'idempotency_key' => 'r4-leader-'.$sfx, 'confirm' => true]);
+    $limit = Yii::$app->communication->aiLimits['sendPerDay'];
+    Yii::$app->communication->aiLimits = [];
+    // The owner's send ran inside the leader's transaction (one test connection) and went back with its
+    // refusal; on two connections it commits. What matters: the leader's send saw it and took no place.
+    check($done() && ($r4Owner['sent'] ?? false) && $r4Leader['state'] === 'refused' && $r4Leader['problems'][0]['reason'] === AiSend::REASON_SEND_LIMIT
+        && !CmsCommApiSend::find()->andWhere(['idempotency_key' => 'r4-leader-'.$sfx])->exists() && $limit > 0,
+        'The last place of the limit goes to one send only: '.json_encode($r4Leader['problems'] ?? $r4Leader, JSON_UNESCAPED_UNICODE));
+
+    // 23. A parallel repeat of the same key and request returns the first result, not a refusal.
+    [, $r5Draft] = $makeDraft('Повтор ключа');
+    $r5Check = run($leader, 'cms_comm_draft_check', ['draft_id' => $r5Draft]);
+    $r5Args = ['draft_id' => $r5Draft, 'check_token' => $r5Check['check_token'], 'idempotency_key' => 'r5-'.$sfx, 'confirm' => true];
+    $r5Inner = null;
+    $done = $interleave($r5Draft, static function () use (&$r5Inner, $leader, $r5Draft, $r5Args) {
+        $r5Inner = (new AiSend($leader, 'x', (int)Yii::$app->skeeks->site->id))->send($r5Draft, $r5Args['check_token'], $r5Args['idempotency_key'], true);
+    });
+    $r5Outer = run($leader, 'cms_comm_draft_send', $r5Args);
+    check($done() && ($r5Inner['sent'] ?? false) && $r5Outer['repeated'] && (int)$r5Outer['message']['id'] === (int)$r5Inner['message']['id'],
+        'The repeat that waited for the first send answers with its letter: '.json_encode($r5Outer, JSON_UNESCAPED_UNICODE));
+
+    // 24. Signatures: the author's own "--" line and what follows it stay.
+    $authored = '<p>Начало</p><p>--</p><p>Важные условия</p>';
+    check(DraftOwners::replaceSignature($authored, null, null) === $authored, 'An author\'s "--" line is not a signature');
+    $withNew = DraftOwners::replaceSignature($authored, null, '<p>Новая подпись</p>');
+    check(mb_strpos($withNew, 'Важные условия') !== false && mb_strpos($withNew, 'Новая подпись') !== false, 'The new signature is added below the whole text');
+    $middle = '<p>Текст</p>'.MailSignatures::block('<p>Подпись</p>').'<p>Постскриптум автора</p>';
+    check(mb_strpos(DraftOwners::replaceSignature($middle, null, null), 'Постскриптум автора') !== false, 'A block in the middle of the text is the author\'s');
+    check(mb_strpos(DraftOwners::replaceSignature('<p>Текст</p><div><br></div>'.MailSignatures::block('<p>Старая</p>'), null, '<p>Новая</p>'), 'Старая') === false,
+        'The block of the form at the end is replaced');
 } finally {
     $tx->rollBack();
     \skeeks\cms\communication\components\AiApiSettings::reset();

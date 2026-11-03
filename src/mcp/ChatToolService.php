@@ -210,6 +210,8 @@ class ChatToolService
         $row = null;
         try {
             CmsCommApiSend::getDb()->transaction(function () use ($prepared, $key, $hash, &$row) {
+                // The day limit shared with letters, taken atomically (parallel sends count in turn).
+                \skeeks\cms\communication\services\AiSend::reserveDay($this->siteId, (int)$this->user->id);
                 $row = new CmsCommApiSend([
                     'cms_site_id' => $this->siteId,
                     'cms_user_id' => (int)$this->user->id,
@@ -227,6 +229,8 @@ class ChatToolService
         } catch (SendException $e) {
             return ['sent' => false, 'state' => 'refused', 'repeated' => false,
                 'problems' => array_map(static fn($m) => ['reason' => self::REASON_NOT_ALLOWED, 'message' => (string)$m], array_values($e->errors))];
+        } catch (\skeeks\cms\communication\services\AiRefusal $e) {
+            return ['sent' => false, 'state' => 'refused', 'repeated' => false, 'problems' => [['reason' => $e->reason, 'message' => $e->getMessage()]]];
         } catch (\yii\db\IntegrityException $e) {
             $existing = $this->byKey($key);
             if ($existing && $existing->request_hash === $hash) {

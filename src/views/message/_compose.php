@@ -23,6 +23,7 @@
  * @var $draftOwner skeeks\cms\models\CmsUser|null the draft is of this employee (the user manages him): it leaves from his mailbox
  * @var $transferTo skeeks\cms\models\CmsUser[] id => employee the draft may be handed over to ("Передать черновик")
  * @var $draftOwnerId int whose letter the window writes (the owner of the draft, or the user for a new letter)
+ * @var $draftVersion string services\MailDrafts::version() of the opened draft, empty for a new letter
  */
 
 use skeeks\cms\communication\helpers\MailUi;
@@ -93,7 +94,9 @@ $personalUrl = (string)\skeeks\cms\backend\helpers\BackendUrlHelper::createByPar
     <?= Html::hiddenInput($name('reply_all'), (int)$form->reply_all) ?>
     <?= Html::hiddenInput($name('draft_id'), $form->draft_id, ['data-sx-compose-draft-id' => true]) ?>
     <?php // Whose letter the window writes: a draft handed over meanwhile is neither saved nor sent from it. ?>
-    <?= Html::hiddenInput('draft_owner_id', (int)($draftOwnerId ?? \Yii::$app->user->id)) ?>
+    <?= Html::hiddenInput('draft_owner_id', (int)($draftOwnerId ?? \Yii::$app->user->id), ['data-sx-compose-draft-owner' => true]) ?>
+    <?php // The version of the draft the window holds: a save or a send after a change elsewhere is refused. ?>
+    <?= Html::hiddenInput('draft_version', (string)($draftVersion ?? ''), ['data-sx-compose-draft-version' => true]) ?>
 
     <?php if ($draftOwner) : ?>
         <div class="sx-compose__ai sx-compose__owner" data-sx-compose-owner>

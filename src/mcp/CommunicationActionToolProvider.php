@@ -459,27 +459,27 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
 
     public function draftUpdate(array $arguments): array
     {
+        // The change is made on the locked draft of the same owner: a hand-over or a send meanwhile refuses it.
         try {
-            [$actions] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+            [$actions, $draft, $owner] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+            $owners = new DraftOwners($this->user());
+
+            return $this->run('draft_update', $arguments, static fn(AiActions $ai, bool $apply) => $owners->withLocked((int)$draft->id,
+                static fn() => $ai->updateDraft($arguments, $apply), (int)$owner->id), $actions);
         } catch (\skeeks\cms\communication\services\AiRefusal $e) {
             return self::refused($e);
         }
-
-        return $this->run('draft_update', $arguments, static fn(AiActions $ai, bool $apply) => $ai->updateDraft($arguments, $apply), $actions);
     }
 
     public function attachmentAdd(array $arguments): array
     {
         $user = $this->user();
-        try {
-            [, $draft] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
-        } catch (\skeeks\cms\communication\services\AiRefusal $e) {
-            return self::refused($e);
-        }
-        // The file is the user's own upload, whoever owns the draft.
+        // The file is the user's own upload, whoever owns the draft; it is added to the locked draft of the same owner.
         $files = new \skeeks\cms\communication\services\AiDraftFiles($user, (int)\Yii::$app->skeeks->site->id);
         try {
-            $file = $files->add($draft, (int)($arguments['cms_storage_file_id'] ?? 0), !empty($arguments['inline']));
+            [, $draft, $owner] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+            $file = (new DraftOwners($user))->withLocked((int)$draft->id,
+                static fn($locked) => $files->add($locked, (int)($arguments['cms_storage_file_id'] ?? 0), !empty($arguments['inline'])), (int)$owner->id);
         } catch (\skeeks\cms\communication\services\AiRefusal $e) {
             return ['success' => false, 'reason' => $e->reason, 'message' => $e->getMessage()];
         }
@@ -492,12 +492,14 @@ class CommunicationActionToolProvider extends Component implements McpToolProvid
     public function attachmentRemove(array $arguments): array
     {
         $user = $this->user();
+        $files = new \skeeks\cms\communication\services\AiDraftFiles($user, (int)\Yii::$app->skeeks->site->id);
         try {
-            [, $draft] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+            [, $draft, $owner] = $this->draftOf((int)($arguments['draft_id'] ?? 0));
+            $removed = (new DraftOwners($user))->withLocked((int)$draft->id,
+                static fn($locked) => $files->remove($locked, (int)($arguments['attachment_id'] ?? 0)), (int)$owner->id);
         } catch (\skeeks\cms\communication\services\AiRefusal $e) {
             return self::refused($e);
         }
-        $removed = (new \skeeks\cms\communication\services\AiDraftFiles($user, (int)\Yii::$app->skeeks->site->id))->remove($draft, (int)($arguments['attachment_id'] ?? 0));
         $this->log('draft_attachment_remove', ['draft_id' => (int)$draft->id, 'attachment_id' => (int)($arguments['attachment_id'] ?? 0), 'removed' => $removed]);
 
         return ['success' => $removed, 'message' => $removed ? null : 'Такого файла в черновике нет.', 'attachments' => \skeeks\cms\communication\services\AiDraftFiles::describe($draft)];

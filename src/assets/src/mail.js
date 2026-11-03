@@ -407,7 +407,7 @@
         if (!window.confirm('Удалить черновик?')) {
             return;
         }
-        $.post($mail().data('draft-delete-url'), csrf({id: $(this).data('sx-mail-draft-delete')})).done(function (response) {
+        $.post($mail().data('draft-delete-url'), csrf({id: $(this).data('sx-mail-draft-delete'), draft_owner_id: $mail().data('draft-owner')})).done(function (response) {
             $row.remove();
             applyCounters(response.counters);
         }).fail(function () {
@@ -490,7 +490,7 @@
         if (!ids.length || !window.confirm(ids.length === 1 ? 'Удалить черновик?' : 'Удалить выбранные черновики: ' + ids.length + '?')) {
             return;
         }
-        $.post($mail().data('draft-delete-url'), csrf({ids: ids})).done(function (response) {
+        $.post($mail().data('draft-delete-url'), csrf({ids: ids, draft_owner_id: $mail().data('draft-owner')})).done(function (response) {
             applyCounters(response.counters);
             notify('success', response.message);
             $.pjax.reload({container: '#sx-mail-pjax', timeout: 15000});
@@ -509,7 +509,7 @@
             + ' — ' + name + '? Письма уйдут из ящика нового владельца, с его подписью.')) {
             return;
         }
-        $.post($mail().data('draft-transfer-url'), csrf({ids: ids, user_id: userId})).done(function (response) {
+        $.post($mail().data('draft-transfer-url'), csrf({ids: ids, user_id: userId, draft_owner_id: $mail().data('draft-owner')})).done(function (response) {
             if (!response.success) {
                 notify('error', response.message);
                 return;
@@ -1523,6 +1523,7 @@
         var xhr = $.post($form.data('draft-url'), $form.serialize()).done(function (response) {
             if (response.success) {
                 $form.find('[data-sx-compose-draft-id]').val(response.id);
+                $form.find('[data-sx-compose-draft-version]').val(response.version || '');
                 $form.find('[data-sx-compose-draft-status]').text('Черновик сохранён в ' + response.savedAt);
                 $form.find('[data-sx-compose-draft-delete]').prop('hidden', false);
                 applyMainCounters(response.counters);
@@ -1579,7 +1580,7 @@
         if (!id) {
             return $.Deferred().resolve().promise();
         }
-        return $.post($form.data('draft-delete-url'), csrf({id: id})).done(function (response) {
+        return $.post($form.data('draft-delete-url'), csrf({id: id, draft_owner_id: $form.find('[data-sx-compose-draft-owner]').val()})).done(function (response) {
             applyMainCounters(response.counters);
             reloadList('drafts');
         });
@@ -1593,7 +1594,8 @@
     function savedDraft($form) {
         var done = $.Deferred();
         var step = function (round) {
-            if (round > 200) {
+            // A closed window (sent, gone, handed over meanwhile) acts on nothing.
+            if ($form.data('sent') || round > 200) {
                 done.reject();
             } else if (isUploading($form)) {
                 setTimeout(function () {
@@ -1637,7 +1639,9 @@
             if (!id || !window.confirm('Передать черновик — ' + name + '? Письмо уйдёт из ящика нового владельца, с его подписью.')) {
                 return;
             }
-            $.post($form.data('draft-transfer-url'), csrf({ids: [id], user_id: userId})).done(function (response) {
+            // The owner the window holds: the server hands over nothing that has another owner by now.
+            $.post($form.data('draft-transfer-url'), csrf({ids: [id], user_id: userId,
+                draft_owner_id: $form.find('[data-sx-compose-draft-owner]').val()})).done(function (response) {
                 if (!response.success) {
                     notify('error', response.message);
                     return;

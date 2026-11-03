@@ -243,14 +243,30 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         }
         $form = new ComposeForm(['service' => $service]);
         $form->load(\Yii::$app->request->post());
-        if ($draftOwner) {
-            self::pinDraftLinks($form, $draft);
+        if ($draft) {
+            // The rights, the owner and the version are checked on the locked row and the draft is written
+            // under that lock (files included): a hand-over or another change meanwhile is never overwritten.
+            try {
+                $draft = $this->draftOwners()->withLocked((int)$draft->id, function ($locked) use ($form, $service, $drafts, $draftOwner) {
+                    if ($draftOwner) {
+                        self::pinDraftLinks($form, $locked);
+                    }
+
+                    return $drafts->save($form, $service, $locked);
+                }, $this->expectedOwnerId(), $this->postedVersion());
+            } catch (\skeeks\cms\communication\services\AiRefusal $e) {
+                return $e->reason === \skeeks\cms\communication\services\AiActions::REASON_NOT_FOUND
+                    ? ['success' => false, 'gone' => true] : ['success' => false, 'moved' => true, 'message' => $e->getMessage()];
+            }
+        } else {
+            $draft = $drafts->save($form, $service, null);
         }
-        $draft = $drafts->save($form, $service, $draft);
 
         return [
             'success' => true,
             'id' => (int)$draft->id,
+            // The version the window holds now: its next save or send is refused if the draft changes elsewhere.
+            'version' => MailDrafts::version($draft),
             'savedAt' => \Yii::$app->formatter->asTime($draft->updated_at, 'php:H:i'),
             'counters' => [MailFolders::DRAFTS => $this->drafts()->count()],
         ];
@@ -261,10 +277,16 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $this->requirePostJson();
         $request = \Yii::$app->request;
         $ids = array_merge((array)$request->post('ids', []), [(int)$request->post('id')]);
+        $owners = $this->draftOwners();
         $removed = 0;
-        foreach ($this->draftOwners()->findAll($ids) as $draft) {
-            MailDrafts::delete($draft);
-            $removed++;
+        foreach ($owners->findAll($ids) as $draft) {
+            // Checked on the locked row: a draft handed over meanwhile (to someone the user does not manage,
+            // or away from the employee whose list or window this is) stays.
+            try {
+                $owners->withLocked((int)$draft->id, static fn($locked) => MailDrafts::delete($locked), $this->expectedOwnerId(true));
+                $removed++;
+            } catch (\skeeks\cms\communication\services\AiRefusal $e) {
+            }
         }
 
         return ['success' => true, 'removed' => $removed,
@@ -286,15 +308,38 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             return ['success' => false, 'message' => 'Черновики не найдены: их отправили, удалили или они вам недоступны.'];
         }
         try {
-            $count = $owners->transfer($drafts, (int)$request->post('user_id'));
+            $count = $owners->transfer($drafts, (int)$request->post('user_id'), $this->expectedOwnerId(true));
         } catch (\DomainException $e) {
             return ['success' => false, 'message' => $e->getMessage()];
         }
         $to = \skeeks\cms\models\CmsUser::findOne((int)$request->post('user_id'));
 
         return ['success' => true, 'transferred' => $count,
-            'message' => $count ? self::draftsText($count, 'передан', 'передано').': '.($to ? $to->shortDisplayName : '') : 'Черновики уже у этого сотрудника.',
+            'message' => $count ? self::draftsText($count, 'передан', 'передано').': '.($to ? $to->shortDisplayName : '')
+                : 'Ничего не передано: черновики уже у этого сотрудника или их передали, отправили, изменили в другом месте — обновите список.',
             'counters' => [MailFolders::DRAFTS => $this->drafts()->count()]];
+    }
+
+    /**
+     * The owner the window or the list was opened for (draft_owner_id of the request). Without it:
+     * the user himself for a form, or no expectation ($optional) for the list actions of old pages.
+     */
+    private function expectedOwnerId(bool $optional = false): ?int
+    {
+        $posted = \Yii::$app->request->post('draft_owner_id');
+        if ($posted !== null && $posted !== '') {
+            return (int)$posted;
+        }
+
+        return $optional ? null : (int)\Yii::$app->user->id;
+    }
+
+    /** MailDrafts::version() the window holds (draft_version of the request), or null for a form without it. */
+    private function postedVersion(): ?string
+    {
+        $version = (string)\Yii::$app->request->post('draft_version', '');
+
+        return $version !== '' ? $version : null;
     }
 
     /** "3 черновика удалено", "Черновик передан". */
@@ -369,6 +414,10 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         $form->context_model_code = (string)$draft->context_model_code;
         $form->context_model_id = $draft->context_model_id;
         $form->file_ids = array_values(array_intersect(array_map('intval', (array)$form->file_ids), $draft->getFileIds()));
+        // Documents: those of the draft, and new ones only when the user may see them too.
+        $sends = new SendService(\Yii::$app->user->identity, (int)$draft->cms_site_id);
+        $form->sendables = array_values(array_filter((array)$form->sendables,
+            static fn($ref) => in_array((string)$ref, $draft->getSendableRefs(), true) || (bool)$sends->findRef((string)$ref)));
     }
 
     /**
@@ -554,10 +603,17 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     {
         \Yii::$app->response->format = Response::FORMAT_JSON;
 
-        // In the window of an employee's draft: the recipients the owner may write to.
-        [$service] = $this->draftContext((int)\Yii::$app->request->get('draft_id') ?: null);
+        $q = mb_substr((string)\Yii::$app->request->get('q', ''), 0, 100);
+        // In the window of an employee's draft: only who both the owner and the user may see — a draft never
+        // opens the owner's correspondents (letters of his mailbox, his clients) to his leader.
+        [$service, , , $draftOwner] = $this->draftContext((int)\Yii::$app->request->get('draft_id') ?: null);
+        if (!$draftOwner) {
+            return ['items' => $service->suggestRecipients($q)];
+        }
+        $mine = array_column($this->composeService()->suggestRecipients($q, 200), 'email');
 
-        return ['items' => $service->suggestRecipients(mb_substr((string)\Yii::$app->request->get('q', ''), 0, 100))];
+        return ['items' => array_slice(array_values(array_filter($service->suggestRecipients($q, 50),
+            static fn($item) => in_array($item['email'], $mine, true))), 0, 10)];
     }
 
     /**
@@ -1137,44 +1193,42 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         if ($request->isPost) {
             \Yii::$app->response->format = Response::FORMAT_JSON;
             $form->load($request->post());
-            if ($draftOwner) {
-                self::pinDraftLinks($form, $ownerDraft);
-            }
-            // A draft prepared by AI: its mark and mailing topic go with the letter.
-            $drafts->applyAiDraft($form);
             // The leader or administrator sends the employee's letter: "по поручению".
             $form->actedBy = $draftOwner ? (int)\Yii::$app->user->id : null;
-            if (!$form->validate()) {
-                return ['success' => false, 'errors' => $form->getFirstErrors()];
-            }
-            $transaction = \Yii::$app->db->beginTransaction();
-            try {
-                // The draft is taken for this letter: a send of the same draft elsewhere (the API, the owner's
-                // window) or a hand-over waits, then finds it gone; one draft never makes two letters.
-                $locked = $draftId ? MailDrafts::lock($draftId) : null;
-                if ($draftId && (!$locked || (int)$locked->cms_user_id !== (int)$ownerDraft->cms_user_id)) {
-                    $transaction->rollBack();
-
-                    return ['success' => false, 'errors' => ['to' => 'Черновик уже отправлен или передан другому сотруднику: письмо не отправлено.']];
+            $send = function ($locked) use ($form, $service, $drafts, $draftOwner) {
+                if ($draftOwner && $locked) {
+                    self::pinDraftLinks($form, $locked);
+                }
+                // A draft prepared by AI: its mark and mailing topic go with the letter.
+                $drafts->applyAiDraft($form);
+                if (!$form->validate()) {
+                    return ['success' => false, 'errors' => $form->getFirstErrors()];
                 }
                 $message = $service->queue($form);
                 // The letter is on its way: its draft goes. Files the letter took stay with the letter.
                 if ($locked) {
                     MailDrafts::delete($locked);
                 }
-                $transaction->commit();
+
+                return ['success' => true, 'id' => (int)$message->id];
+            };
+            try {
+                // A draft is sent under its lock, checked on the locked row: the owner and the version the window
+                // holds (a change in another window or by the API, a hand-over, a send elsewhere refuse it).
+                $result = $draftId
+                    ? $this->draftOwners()->withLocked($draftId, $send, $this->expectedOwnerId(), $this->postedVersion())
+                    : $send(null);
+            } catch (\skeeks\cms\communication\services\AiRefusal $e) {
+                return ['success' => false, 'errors' => ['to' => $e->getMessage().' Письмо не отправлено.']];
             } catch (SendException $e) {
-                $transaction->rollBack();
                 // A package refused its document ("Прикрепить из…"): nothing was sent.
                 return ['success' => false, 'errors' => $e->errors];
-            } catch (\Throwable $e) {
-                if ($transaction->isActive) {
-                    $transaction->rollBack();
-                }
-                throw $e;
+            }
+            if (!$result['success']) {
+                return $result;
             }
 
-            return ['success' => true, 'id' => (int)$message->id, 'message' => $draftOwner ? 'Письмо отправляется из ящика сотрудника '.$draftOwner->shortDisplayName : 'Письмо отправляется',
+            return $result + ['message' => $draftOwner ? 'Письмо отправляется из ящика сотрудника '.$draftOwner->shortDisplayName : 'Письмо отправляется',
                 'counters' => [MailFolders::DRAFTS => $this->drafts()->count()]];
         }
 
@@ -1205,6 +1259,8 @@ class AdminCmsCommMessageController extends BackendModelStandartController
             'draftOwner' => $draftOwner,
             // Whose letter this window writes: a draft handed over meanwhile is refused (movedError()).
             'draftOwnerId' => $draft ? (int)$draft->cms_user_id : (int)\Yii::$app->user->id,
+            // The version the window opens with: a save or a send after a change elsewhere is refused.
+            'draftVersion' => $draft ? MailDrafts::version($draft) : '',
             // "Передать черновик": who may receive it (active employees the user manages, himself), but the current owner.
             'transferTo' => count($owners->targets()) > 1 && !$request->get('inline')
                 ? array_diff_key($owners->targets(), [(int)($draft ? $draft->cms_user_id : \Yii::$app->user->id) => true]) : [],
@@ -1292,13 +1348,13 @@ class AdminCmsCommMessageController extends BackendModelStandartController
     {
         \Yii::$app->response->format = Response::FORMAT_JSON;
         $request = \Yii::$app->request;
-        // In the window of an employee's draft: the documents the owner may send.
-        [$service] = $this->draftContext((int)$request->get('draft_id') ?: null);
+        // In the window of an employee's draft: the documents the owner may send and the user may see, both.
+        [$service, , , $draftOwner] = $this->draftContext((int)$request->get('draft_id') ?: null);
         $user = $service->getUser();
         if ($ref = (string)$request->get('ref')) {
             $form = new \skeeks\cms\communication\forms\ComposeForm(['sendables' => [$ref]]);
             $item = $service->formSendables($form)[0] ?? null;
-            if (!$item) {
+            if (!$item || ($draftOwner && !$this->composeService()->formSendables($form))) {
                 return ['success' => false, 'message' => 'Документ не найден или у вас нет к нему доступа.'];
             }
 
@@ -1313,7 +1369,14 @@ class AdminCmsCommMessageController extends BackendModelStandartController
         if ($request->get('context_model_code') && $request->get('context_model_id')) {
             $record = $service->contextRecord((string)$request->get('context_model_code'), (int)$request->get('context_model_id'));
         }
-        $items = $source->suggest($user, mb_substr(trim((string)$request->get('q')), 0, 100), $record, 20);
+        $q = mb_substr(trim((string)$request->get('q')), 0, 100);
+        $items = $source->suggest($user, $q, $record, $draftOwner ? 50 : 20);
+        if ($draftOwner) {
+            $mineRecord = $request->get('context_model_code') && $request->get('context_model_id')
+                ? $this->composeService()->contextRecord((string)$request->get('context_model_code'), (int)$request->get('context_model_id')) : null;
+            $mine = array_map('intval', array_column($source->suggest(\Yii::$app->user->identity, $q, $mineRecord, 200), 'id'));
+            $items = array_slice(array_values(array_filter($items, static fn($i) => in_array((int)$i['id'], $mine, true))), 0, 20);
+        }
 
         return ['success' => true, 'items' => array_map(static fn($i) => [
             'ref' => $request->get('type').':'.(int)$i['id'],

@@ -147,6 +147,40 @@ class DraftOwners
             : ['reason' => AiActions::REASON_NOT_FOUND, 'message' => 'Черновик не найден: он отправлен, удалён или не существует.'];
     }
 
+    public const REASON_MOVED = 'moved';
+
+    /**
+     * Runs an operation on a draft with its row locked to the end of the
+     * transaction (MailDrafts::lock()): the rights are checked on the locked
+     * row, so a hand-over, a send or a change made meanwhile is seen, and none
+     * can come between the check and the write (files included).
+     *
+     * @param callable $operation function (CmsCommDraft $locked): mixed
+     * @param int|null $expectedOwnerId the owner the caller worked as (a window, a tool call): another one — moved
+     * @param string|null $expectedVersion MailDrafts::version() the caller saw: another one — changed meanwhile
+     * @throws AiRefusal not_found, not_own, moved, changed_after_check (nothing is written)
+     */
+    public function withLocked(int $draftId, callable $operation, ?int $expectedOwnerId = null, ?string $expectedVersion = null)
+    {
+        return CmsCommDraft::getDb()->transaction(function () use ($draftId, $operation, $expectedOwnerId, $expectedVersion) {
+            $draft = $draftId ? MailDrafts::lock($draftId) : null;
+            if (!$draft || (int)$draft->cms_site_id !== $this->siteId || !$this->canManage((int)$draft->cms_user_id)) {
+                $refusal = $this->refusal($draftId);
+                throw new AiRefusal($refusal['reason'], $refusal['message']);
+            }
+            if ($expectedOwnerId !== null && (int)$draft->cms_user_id !== $expectedOwnerId) {
+                $owner = self::owner($draft);
+                throw new AiRefusal(self::REASON_MOVED, 'Черновик передан сотруднику '.($owner ? $owner->shortDisplayName : '№'.$draft->cms_user_id)
+                    .': откройте его заново.');
+            }
+            if ($expectedVersion !== null && $expectedVersion !== '' && !hash_equals(MailDrafts::version($draft), $expectedVersion)) {
+                throw new AiRefusal(AiSend::REASON_CHANGED, 'Черновик изменён в другом окне или через API: откройте его заново, чтобы не потерять эти правки.');
+            }
+
+            return $operation($draft);
+        });
+    }
+
     /** The owner of a draft: the user the letter form, the mailbox rights and the signature belong to. */
     public static function owner(CmsCommDraft $draft): ?CmsUser
     {
@@ -169,10 +203,12 @@ class DraftOwners
      * actor does not manage, or to one he may not hand it to, is refused.
      *
      * @param CmsCommDraft[] $drafts
+     * @param int|null $expectedOwnerId the owner the caller saw (a window, a list of one employee): a draft
+     *     that has another owner now is skipped — a stale screen never hands over someone else's draft
      * @return int how many drafts changed the owner
      * @throws \DomainException
      */
-    public function transfer(array $drafts, int $toUserId): int
+    public function transfer(array $drafts, int $toUserId, ?int $expectedOwnerId = null): int
     {
         if (!$this->canReceive($toUserId)) {
             throw new \DomainException('Передать черновик можно только себе или работающему сотруднику, которым вы руководите.');
@@ -190,9 +226,10 @@ class DraftOwners
         $default = $compose->defaultAccountId();
         $count = 0;
         foreach ($drafts as $loaded) {
-            $count += (int)CmsCommDraft::getDb()->transaction(function () use ($loaded, $toUserId, $compose, $default) {
+            $count += (int)CmsCommDraft::getDb()->transaction(function () use ($loaded, $toUserId, $compose, $default, $expectedOwnerId) {
                 $draft = MailDrafts::lock((int)$loaded->id);
-                if (!$draft || !$this->canManage((int)$draft->cms_user_id) || (int)$draft->cms_user_id === $toUserId) {
+                if (!$draft || !$this->canManage((int)$draft->cms_user_id) || (int)$draft->cms_user_id === $toUserId
+                    || ($expectedOwnerId !== null && (int)$draft->cms_user_id !== $expectedOwnerId)) {
                     return false;
                 }
                 $fromId = (int)$draft->cms_user_id;
@@ -226,9 +263,9 @@ class DraftOwners
      * letter form ("-- " and the signature below it, MailSignatures::block()
      * and mail.js setSignature(); the editor drops its marker attribute, the
      * "-- " line stays) is replaced by the new one, whatever signature it
-     * holds now; without such a block the former signature found as it is now
-     * is replaced; otherwise the new signature is added below the text. No new
-     * signature — the block goes.
+     * holds now; without such a block the block of the former signature written
+     * as it is now is replaced; otherwise the author's text stays whole and the
+     * new signature is added below it. No new signature — the block goes.
      */
     public static function replaceSignature(string $html, ?string $old, ?string $new): string
     {
@@ -237,14 +274,10 @@ class DraftOwners
             return $html;
         }
         $without = self::withoutSignatureBlock($html);
-        if ($without === null && $old !== null) {
-            foreach ([MailSignatures::block($old), $old] as $needle) {
-                $at = mb_strrpos($html, $needle);
-                if ($at !== false) {
-                    $without = mb_substr($html, 0, $at).mb_substr($html, $at + mb_strlen($needle));
-                    break;
-                }
-            }
+        // The block exactly as MailSignatures::block() wrote it with the former signature (a text the
+        // structure check did not take); never a bare fragment that may be the author's.
+        if ($without === null && $old !== null && ($at = mb_strrpos($html, MailSignatures::block($old))) !== false) {
+            $without = mb_substr($html, 0, $at).mb_substr($html, $at + mb_strlen(MailSignatures::block($old)));
         }
         $html = $without ?? $html;
 
@@ -252,8 +285,11 @@ class DraftOwners
     }
 
     /**
-     * The text without its last signature block: the element whose first child is the "-- " line
-     * (the line alone when it is not inside a block: it and everything after it). Null — no block.
+     * The text without its signature block, or null when it has none that can be told for sure. The
+     * block is what the letter form and MailSignatures::block() put below the text: a <div> at the end
+     * of the text (nothing but empty lines after it) whose first element is a <div> line "-- " and
+     * which has more inside. A "--" written by the author elsewhere — a lone line, a paragraph, a block
+     * in the middle — is the author's text and stays.
      */
     public static function withoutSignatureBlock(string $html): ?string
     {
@@ -269,37 +305,50 @@ class DraftOwners
         if (!$root) {
             return null;
         }
-        $line = null;
-        foreach ((new \DOMXPath($doc))->query('.//*', $root) as $element) {
-            $text = trim(str_replace("\xC2\xA0", ' ', (string)$element->textContent));
-            if ($text === '--' && $element->getElementsByTagName('*')->length === 0) {
-                $line = $element;
-            }
-        }
-        if (!$line) {
-            return null;
-        }
-        $parent = $line->parentNode;
-        $first = $parent;
-        foreach ($parent->childNodes as $child) {
-            if ($child instanceof \DOMElement || trim((string)$child->textContent) !== '') {
-                $first = $child;
+        $empty = static fn(\DOMNode $node) => trim(str_replace("\xC2\xA0", ' ', (string)$node->textContent)) === ''
+            && !($node instanceof \DOMElement && $node->getElementsByTagName('img')->length);
+        // The last meaningful top-level node: the block must be it.
+        $block = null;
+        for ($node = $root->lastChild; $node; $node = $node->previousSibling) {
+            if (!$empty($node)) {
+                $block = $node;
                 break;
             }
         }
-        if ($parent !== $root && $first === $line) {
-            $parent->parentNode->removeChild($parent);
-        } else {
-            while ($line->nextSibling) {
-                $parent->removeChild($line->nextSibling);
+        if (!$block instanceof \DOMElement || strtolower($block->nodeName) !== 'div') {
+            return null;
+        }
+        $first = null;
+        $more = false;
+        foreach ($block->childNodes as $child) {
+            if ($first === null) {
+                if ($child instanceof \DOMElement) {
+                    $first = $child;
+                } elseif (!$empty($child)) {
+                    return null;
+                }
+            } elseif (!$empty($child)) {
+                $more = true;
             }
-            $parent->removeChild($line);
+        }
+        if (!$first || strtolower($first->nodeName) !== 'div' || !$more
+            || trim(str_replace("\xC2\xA0", ' ', (string)$first->textContent)) !== '--' || $first->getElementsByTagName('*')->length > 0) {
+            return null;
+        }
+        // The block, the empty lines after it and the empty line the form puts above it go.
+        while ($block->nextSibling) {
+            $root->removeChild($block->nextSibling);
+        }
+        $above = $block->previousSibling;
+        $root->removeChild($block);
+        if ($above instanceof \DOMElement && $empty($above)) {
+            $root->removeChild($above);
         }
         $result = '';
         foreach ($root->childNodes as $child) {
             $result .= $doc->saveHTML($child);
         }
-        // The empty line the form puts above the block goes with it.
-        return (string)preg_replace('~(<div><br\s*/?></div>|<p><br\s*/?></p>)\s*$~i', '', rtrim($result));
+
+        return rtrim($result);
     }
 }

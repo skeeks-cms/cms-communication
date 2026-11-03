@@ -302,6 +302,27 @@ class MailDrafts
         return CmsCommDraft::findBySql('SELECT * FROM '.CmsCommDraft::tableName().' WHERE id = :id FOR UPDATE', [':id' => $draftId])->one();
     }
 
+    /**
+     * The version of a draft: a fingerprint of everything a letter takes from it (owner, mailbox,
+     * recipients, subject, text, links, documents, purpose, files by content) — it changes with every
+     * change, unlike updated_at that two changes within a second share. Upload tokens of pictures are
+     * not part of it: reopening a draft in another window renews them without changing the letter.
+     */
+    public static function version(CmsCommDraft $draft): string
+    {
+        $body = (string)preg_replace('~data-sx-upload="[^"]*"~i', 'data-sx-upload', (string)$draft->body_html);
+        $files = array_map(static fn($f) => [(int)$f->id, (string)$f->content_hash, (int)$f->is_inline, (string)$f->name],
+            $draft->getFiles()->orderBy(['id' => SORT_ASC])->all());
+
+        return hash('sha256', json_encode([
+            (int)$draft->id, (int)$draft->cms_user_id, (int)$draft->cms_comm_account_id,
+            (string)$draft->to_list, (string)$draft->cc_list, (string)$draft->bcc_list, (string)$draft->subject, $body,
+            (int)$draft->reply_to_message_id, (int)$draft->forward_message_id, (int)$draft->is_reply_all, (int)$draft->include_quote,
+            (string)$draft->context_model_code, (int)$draft->context_model_id, $draft->getFileIds(), $draft->getSendableRefs(),
+            (string)$draft->purpose, (int)$draft->cms_comm_topic_id, (string)$draft->prepared_hash, $files,
+        ], JSON_UNESCAPED_UNICODE));
+    }
+
     /** Removes a draft with its files (sent, deleted by hand or expired). */
     public static function delete(CmsCommDraft $draft): void
     {
